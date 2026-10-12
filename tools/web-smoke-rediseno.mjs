@@ -7,7 +7,7 @@ const WEB = process.env.WEBDIR || 'C:/CASCO INTELIGENTE/web';
 const OUT = 'C:/CASCO INTELIGENTE/out';
 const TAG = process.argv[2] || 'a';
 const SB = 'https://zgfvhjpdzkohouktakvt.supabase.co';
-const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript', '.png': 'image/png' };
 
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
@@ -20,7 +20,7 @@ await new Promise(r => server.listen(0, '127.0.0.1', r));
 const BASE = 'http://127.0.0.1:' + server.address().port + '/';
 
 const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
-const JWT = b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64({ sub: 'u1', role: 'authenticated', exp: 4102444800, app_metadata: { role: 'admin' } }) + '.sig';
+const jwtOf = role => b64({ alg: 'HS256', typ: 'JWT' }) + '.' + b64({ sub: 'u1', role: 'authenticated', exp: 4102444800, app_metadata: { role } }) + '.sig';
 const iso = ms => new Date(Date.now() - ms).toISOString();
 const events = [
   { id: 'e-sos', device_id: '4132', type: 'sos', created_at: iso(192000), lat: -34.6, lng: -58.4, battery: 15, payload: null, media_path: null },
@@ -41,6 +41,20 @@ const locs = [
   { device_id: '4133', created_at: iso(50000), lat: -34.601, lng: -58.402, battery: 70 },
   { device_id: '4133', created_at: iso(10000), lat: 0, lng: 0, battery: 70 },
 ];
+const T4_EVENTS = [
+  { id: 'e-nw', device_id: '4140', type: 'not_worn', created_at: iso(50000), lat: null, lng: null, battery: 50, payload: null, media_path: null },
+  { id: 'e-in', device_id: '4133', type: 'inactive', created_at: iso(45000), lat: null, lng: null, battery: 70, payload: { still_s: 310 }, media_path: null },
+  { id: 'e-eq', device_id: '4132', type: 'equip', created_at: iso(120000), lat: null, lng: null, battery: 15, payload: { kind: 'bat_low', level: 18 }, media_path: null },
+  { id: 'e-fc', device_id: '4133', type: 'fall_cancel', created_at: iso(130000), lat: null, lng: null, battery: 70, payload: {}, media_path: null },
+  { id: 'e-ph2', device_id: '4132', type: 'photo', created_at: iso(5000), lat: null, lng: null, battery: 15, payload: { cmd: 'cmd-1' }, media_path: '4132/1.jpg' },
+];
+const T4_HB = { device_id: '4160', created_at: iso(15000), battery: 80, type: 'heartbeat', payload: { bat: 80 } };
+const REP = Array.from({ length: 120 }, (_, i) => ({ event_id: 'r' + String(i).padStart(3, '0'), created_at: iso((i + 1) * 3600000), device_id: i % 2 ? '4132' : '4133',
+  type: ['sos', 'fall', 'geofence', 'not_worn', 'inactive'][i % 5], payload: i % 5 === 1 ? { reason: 'hombre_caido', still_s: 20 } : null,
+  lat: -34.6 - i / 10000, lng: -58.4, acked_at: i % 3 === 0 ? iso((i + 1) * 3600000 - 95000) : null, acked_by_email: i % 3 === 0 ? 'sup@demo.test' : null,
+  note: i % 3 === 0 ? 'Nota; con punto y coma' : null, tta_s: i % 3 === 0 ? 95 : null }));
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+const NEWT = ['device_commands', 'device_command_acks', 'device_config', 'incident_report'];
 const devicesT = [
   { device_id: '4132', name: 'Casco Perforación', model: 'rd_aqm6816', group_id: 'g1', sector: 'Pozo 12', status: 'activo', imei: '860000000000001' },
   { device_id: '4133', name: 'Casco Mantenimiento', model: 'rd_aqm6816', group_id: 'g1', sector: 'Planta', status: 'activo' },
@@ -67,19 +81,49 @@ async function mock(ctx, opts = {}) {
     const req = route.request(), u = new URL(req.url());
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
     const json = (o, status = 200) => route.fulfill({ status, headers: { ...CORS, 'content-type': 'application/json' }, body: JSON.stringify(o) });
-    if (u.pathname.includes('/auth/v1/token')) return json({ access_token: JWT, token_type: 'bearer', expires_in: 3600, refresh_token: 'r', user: { id: 'u1', email: 'supervisor@demo.test', app_metadata: { role: 'admin' }, aud: 'authenticated', created_at: iso(0) } });
-    if (u.pathname.includes('/auth/v1/user')) return json({ id: 'u1', email: 'supervisor@demo.test', app_metadata: { role: 'admin' } });
-    if (u.pathname.includes('/storage/')) return json({ signedURL: '/x' });
+    const role = opts.role || 'admin', S = opts.state || (opts.state = {});
+    if (u.pathname.includes('/auth/v1/token')) return json({ access_token: jwtOf(role), token_type: 'bearer', expires_in: 3600, refresh_token: 'r', user: { id: 'u1', email: 'supervisor@demo.test', app_metadata: { role }, aud: 'authenticated', created_at: iso(0) } });
+    if (u.pathname.includes('/auth/v1/user')) return json({ id: 'u1', email: 'supervisor@demo.test', app_metadata: { role } });
+    if (u.pathname.includes('/storage/')) {
+      if (req.method() === 'GET') return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'image/png' }, body: PNG });
+      return json({ signedURL: '/object/sign/casco-media/x.jpg?token=t' });
+    }
     const t = u.pathname.split('/rest/v1/')[1] || '';
-    if (req.method() !== 'GET' && req.method() !== 'HEAD') return json(req.method() === 'POST' ? [{ id: 'new' }] : [], 201);
+    if (opts.noNew && NEWT.includes(t)) { S.hits = (S.hits || []).concat(t); return json({ code: 'PGRST205', message: "Could not find the table 'public." + t + "' in the schema cache" }, 404); }
+    if (req.method() !== 'GET' && req.method() !== 'HEAD') {
+      let body = null; try { body = JSON.parse(req.postData() || 'null'); } catch {}
+      (S.posts = S.posts || []).push({ t, method: req.method(), body });
+      if (t === 'device_commands') { const n = (S.cmdSeq = (S.cmdSeq || 0) + 1); return json({ id: 'cmd-' + n, created_at: new Date().toISOString() }, 201); }
+      if (t === 'broadcasts') return json({ id: 'bc-' + Date.now(), kind: body.kind, message: body.message, device_ids: body.device_ids, repeat: body.repeat, created_at: new Date().toISOString(), created_by_email: 'supervisor@demo.test' }, 201);
+      return json(req.method() === 'POST' ? [{ id: 'new' }] : [], 201);
+    }
     const q = u.search;
+    if (t === 'device_command_acks') {
+      const ids = ((u.searchParams.get('command_id') || '').match(/[\w-]+/g) || []).slice(1);
+      return json((S.acks || []).filter(a => ids.includes(a.command_id)));
+    }
+    if (t === 'device_config') return json(S.cfg ? [{ config: S.cfg, updated_at: iso(1000) }] : []);
+    if (t === 'incident_report') {
+      let rows = REP.slice();
+      const g = k => u.searchParams.get(k);
+      if (g('type')) rows = rows.filter(r => 'eq.' + r.type === g('type'));
+      if (g('device_id')) rows = rows.filter(r => 'eq.' + r.device_id === g('device_id'));
+      if (g('acked_at') === 'is.null') rows = rows.filter(r => !r.acked_at);
+      if (g('acked_at') === 'not.is.null') rows = rows.filter(r => r.acked_at);
+      const m = (g('or') || '').match(/created_at\.lt\.([^,]+),and\(created_at\.eq\.[^,]+,event_id\.lt\.([^)]+)\)/);
+      if (m) rows = rows.filter(r => r.created_at < m[1] || (r.created_at === m[1] && r.event_id < m[2]));
+      return json(rows.slice(0, Number(g('limit')) || 1000));
+    }
+    if (t === 'broadcasts' && opts.t4) return json([{ id: 'b1', kind: 'mensaje', message: 'Revisar EPP', device_ids: ['4132', '4133'], repeat: 1, created_at: iso(300000), created_by_email: 'sup@demo.test' }]);
+    if (t === 'broadcast_acks' && opts.t4) return json([{ broadcast_id: 'b1', device_id: '4132', played_at: iso(290000) }]);
     if (t === 'events') {
       if (opts.failEvents === 'srv') return json({ code: 'XX000', message: 'Error de servidor' }, 500);
       if (opts.failEvents) return json({ code: 'PGRST301', message: 'JWT expired' }, 401);
-      if (q.includes('type=eq.heartbeat')) return json(hbs);
+      if (q.includes('type=eq.heartbeat')) return json(opts.t4 ? [...hbs, T4_HB] : hbs);
       if (q.includes('type=eq.location')) return json(locs);
-      if (q.includes('type=in.')) return json([...events, ...(opts.old || [])]);
-      return json([...((opts.state && opts.state.extra) || []), ...events]);
+      const ex = opts.t4 ? T4_EVENTS : [];
+      if (q.includes('type=in.')) return json([...events, ...ex, ...(opts.old || [])]);
+      return json([...((opts.state && opts.state.extra) || []), ...events, ...ex]);
     }
     if (t === 'event_acks') {
       const one = (q.match(/event_id=eq\.([^&]+)/) || [])[1];   // maybeSingle() tras Atender
@@ -363,7 +407,7 @@ for (const deny of [false, true]) {
   await page.locator('#pendList .pitem', { hasText: '4132' }).first().locator('button.attend').click();
   await page.waitForSelector('#saveOverlay:not([hidden])', { timeout: 10000 });
   const body = await page.locator('#saveOverlay').innerText();
-  check(/Casco 4132/.test(body) && /casco-4132_/.test(body) && /duración/.test(body), tag + 'cartel de guardado muestra casco, duracion y archivo');
+  check(/Casco 4132/.test(body) && /vigia-4132_/.test(body) && /duración/.test(body), tag + 'cartel de guardado muestra casco, duracion y archivo');
   check(/solo en tu PC/.test(body) && /Informá al personal/.test(body), tag + 'cartel incluye aviso de guardado solo en la PC');
   if (deny) check(/sin micrófono/.test(body), tag + 'cartel avisa que no hay micrófono');
   else check(/micrófono y del casco/.test(body), tag + 'cartel indica audio de micrófono y casco');
@@ -373,7 +417,7 @@ for (const deny of [false, true]) {
   check(/¿Descartar sin guardar\?/.test(await page.locator('#saveOverlay').innerText()), tag + 'descartar pide confirmacion');
   await page.locator('#saveOverlay button', { hasText: 'Volver' }).click();
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }).catch(() => null), page.locator('#saveOverlay button', { hasText: 'Guardar en mi PC' }).click()]);
-  check(!!dl && /^casco-4132_.*\.(webm|mp4)$/.test(dl.suggestedFilename()), tag + 'Guardar en mi PC descarga el archivo: ' + (dl && dl.suggestedFilename()));
+  check(!!dl && /^vigia-4132_.*\.(webm|mp4)$/.test(dl.suggestedFilename()), tag + 'Guardar en mi PC descarga el archivo: ' + (dl && dl.suggestedFilename()));
   await shot(page, `${TAG}-cartel-guardado-${deny ? 'sinmic' : 'conmic'}`);
   await page.locator('#saveOverlay button', { hasText: 'Cerrar' }).click();
   check(!(await page.locator('#saveOverlay').isVisible()), tag + 'cartel se cierra tras guardar');
@@ -426,6 +470,202 @@ if (!process.env.ONLY4) {
   const href = await p3.locator('#cmdLink').getAttribute('href');
   check(href === 'comandos.html', 'index tiene el enlace Comandos de voz');
   await c3.close();
+}
+
+// ---- 6) Tanda 4: comandos, configuracion, alertas nuevas, reportes, mensajes, roles, degradacion ----
+const posts = (S, t) => (S.posts || []).filter(x => x.t === t);
+const waitFor = async (fn, ms = 8000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await new Promise(r => setTimeout(r, 150)); } return false; };
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, state });
+  check(await page.locator('#sosOverlay').isVisible(), 't4: cartel SOS visible con alertas pendientes (incluye sin usar / sin movimiento)');
+  await closeOv(page);
+  const pend = await page.locator('#pendList').innerText();
+  check(/CASCO SIN USAR/.test(pend) && /SIN MOVIMIENTO/.test(pend), 't4: not_worn e inactive son tarjetas Atender con etiquetas es-AR');
+  await page.locator('#pendList .pitem', { hasText: 'CASCO SIN USAR' }).first().locator('button.attend').click();
+  check(await waitFor(() => posts(state, 'event_acks').length > 0), 't4: Atender un not_worn inserta event_acks');
+  // equip / fall_cancel: informativos en Historial, un solo aviso de equipo
+  await page.click('#tabDone');
+  const feed = await page.locator('#feed').innerText();
+  check(/EQUIPO/.test(feed) && /CAÍDA CANCELADA/.test(feed), 't4: equip y fall_cancel aparecen en Historial');
+  const hal = await page.locator('#healthAlerts .halert', { hasText: 'batería baja' }).count();
+  check(hal === 1, 't4: un solo aviso de bateria baja del casco 4132 (evento real sin duplicar la derivada): ' + hal);
+  // comandos en En vivo
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  const stat = sec.locator('.cmdstat');
+  await sec.getByRole('button', { name: 'Sacar una foto con el casco 4132' }).click();
+  check(await waitFor(() => posts(state, 'device_commands').some(x => x.body && x.body.device_id === '4132' && x.body.action === 'photo')), 't4: Sacar foto inserta device_commands(photo)');
+  check(/pendiente/.test(await stat.innerText()), 't4: estado pendiente tras el pedido');
+  state.acks = [{ command_id: 'cmd-1', device_id: '4132', ok: true, detail: '', created_at: new Date().toISOString() }];
+  check(await waitFor(async () => /Foto: listo/.test(await stat.innerText()), 9000), 't4: el ack ok se lee por poll (Foto: listo)');
+  const th = sec.locator('.thumb img');
+  check((await th.count()) >= 1 && /Foto del casco 4132/.test((await th.first().getAttribute('alt')) || ''), 't4: miniatura con alt');
+  await sec.locator('.thumb').first().click();
+  check(await page.locator('dialog[open] img.photo-big').count() === 1, 't4: foto ampliada en dialogo');
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }).catch(() => null), page.locator('dialog[open] button', { hasText: 'Descargar' }).click()]);
+  check(!!dl && /^vigia-4132_.*\.jpg$/.test(dl.suggestedFilename()), 't4: descarga de la foto: ' + (dl && dl.suggestedFilename()));
+  await shot(page, `${TAG}-t4-foto`);
+  await page.keyboard.press('Escape');
+  check(await page.locator('dialog[open]').count() === 0, 't4: Escape cierra el dialogo');
+  await sec.getByRole('button', { name: /Encender la linterna del casco 4132/ }).click();
+  await waitFor(() => posts(state, 'device_commands').length >= 2);
+  state.acks.push({ command_id: 'cmd-2', device_id: '4132', ok: true, detail: '', created_at: new Date().toISOString() });
+  check(await waitFor(async () => /Linterna: apagar/.test(await sec.locator('[data-fk="4132|torch"]').innerText()), 9000), 't4: la linterna pasa a "Linterna: apagar" tras el ack');
+  await sec.getByRole('button', { name: /Probar el enlace con el casco 4132/ }).click();
+  await waitFor(() => posts(state, 'device_commands').length >= 3);
+  state.acks.push({ command_id: 'cmd-3', device_id: '4132', ok: false, detail: 'camara ocupada', created_at: new Date().toISOString() });
+  check(await waitFor(async () => /camara ocupada/.test(await stat.innerText()), 9000), 't4: error del ack muestra el detail');
+  // configuracion (admin)
+  await sec.getByRole('button', { name: /Configuración remota del casco 4132/ }).click();
+  await page.waitForSelector('dialog[open] #cfg_inactivity_s');
+  await waitFor(async () => !(await page.locator('dialog[open] button[type=submit]').isDisabled()));
+  await page.fill('#cfg_inactivity_s', '10');
+  await page.locator('dialog[open] button[type=submit]').click();
+  check(/inmovilidad/i.test(await page.locator('dialog[open] .err').innerText()), 't4: validacion de rango (inactivity_s 10 es invalido)');
+  await page.fill('#cfg_inactivity_s', '300'); await page.fill('#cfg_location_s', '30'); await page.fill('#cfg_location_s_alert', '40'); await page.fill('#cfg_fall_g_threshold', '3,5');
+  await page.locator('dialog[open] button[type=submit]').click();
+  check(/más lenta/.test(await page.locator('dialog[open] .err').innerText()), 't4: location_s_alert no puede superar location_s');
+  await page.fill('#cfg_location_s_alert', '10'); await page.selectOption('#cfg_torch_allowed', 'true');
+  await page.locator('dialog[open] button[type=submit]').click();
+  await waitFor(() => posts(state, 'device_config').length > 0);
+  const cfgBody = (posts(state, 'device_config')[0] || {}).body || {};
+  check(cfgBody.device_id === '4132' && JSON.stringify(cfgBody.config) === JSON.stringify({ fall_g_threshold: 3.5, inactivity_s: 300, location_s: 30, location_s_alert: 10, torch_allowed: true }), 't4: upsert device_config con las claves validadas: ' + JSON.stringify(cfgBody));
+  await page.keyboard.press('Escape');
+  await sec.getByRole('button', { name: /Reiniciar el agente del casco 4132/ }).click();
+  await page.locator('dialog[open] button', { hasText: 'Sí, reiniciar' }).click();
+  check(await waitFor(() => posts(state, 'device_commands').some(x => x.body && x.body.action === 'restart_agent')), 't4: Reiniciar agente pide confirmacion y envia restart_agent');
+  // reportes
+  await page.click('#tabRep');
+  check(await waitFor(async () => (await page.locator('#repHost tbody tr').count()) === 50), 't4: Reportes muestra 50 filas');
+  check(/Página 1/.test(await page.locator('#repHost .pager').innerText()), 't4: pagina 1');
+  const first1 = await page.locator('#repHost tbody tr').first().innerText();
+  await page.locator('#repHost .pager button', { hasText: 'Siguiente' }).click();
+  check(await waitFor(async () => /Página 2/.test(await page.locator('#repHost .pager').innerText())), 't4: paginacion keyset pagina 2');
+  const first2 = await page.locator('#repHost tbody tr').first().innerText();
+  check(first1 !== first2 && (await page.locator('#repHost tbody tr').count()) === 50, 't4: la pagina 2 trae otras 50 filas');
+  await shot(page, `${TAG}-t4-reportes`);
+  await page.selectOption('#repHost select >> nth=1', 'sos');
+  await page.selectOption('#repHost select >> nth=2', 'pend');
+  await page.locator('#repHost button[type=submit]').click();
+  await waitFor(async () => /Página 1/.test(await page.locator('#repHost .pager').innerText()));
+  const cells = await page.evaluate(() => [...document.querySelectorAll('#repHost tbody tr')].map(r => [r.children[2].textContent, r.children[5].textContent]));
+  check(cells.length > 0 && cells.every(c => c[0] === 'SOS' && c[1] === 'Pendiente'), 't4: filtros tipo=SOS y estado=pendientes (' + cells.length + ' filas)');
+  await page.selectOption('#repHost select >> nth=2', '');
+  await page.selectOption('#repHost select >> nth=1', '');
+  await page.locator('#repHost button[type=submit]').click();
+  await waitFor(async () => (await page.locator('#repHost tbody tr').count()) === 50);
+  const [csv] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }).catch(() => null), page.locator('#repHost button', { hasText: 'Exportar CSV' }).click()]);
+  let txt = '';
+  if (csv) txt = fs.readFileSync(await csv.path(), 'utf8');
+  const lines = txt.split('\r\n').filter(Boolean);
+  check(txt.charCodeAt(0) === 0xFEFF && lines.length === 121 && lines[0].includes('"fecha";"casco"'), 't4: CSV con BOM, ; y 120 filas + encabezado (' + lines.length + ')');
+  check(/^"\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}";/.test((lines[1] || '').replace('\uFEFF', '')), 't4: fecha dd/mm/aaaa HH:mm en el CSV: ' + (lines[1] || '').slice(0, 40));
+  check(/"-34,\d+"/.test(lines[1] || ''), 't4: latitud con coma decimal y signo conservado');
+  await page.evaluate(() => { window.__p = 0; window.print = () => { window.__p++; }; });
+  await page.locator('#repHost button', { hasText: 'Imprimir' }).click();
+  check((await page.evaluate(() => window.__p)) === 1 && /Reporte de incidentes/.test(await page.locator('#repHost .print-only').textContent()), 't4: Imprimir / PDF llama a print con encabezado');
+  // historial con filtros (events + acks)
+  await page.click('#tabDone');
+  await page.locator('#histSearch > summary').click();
+  check(await waitFor(async () => (await page.locator('#histQuery tbody tr').count()) > 0), 't4: Historial: busqueda con filtros y paginas');
+  // mensajes
+  await page.click('#tabMain'); await closeOv(page);
+  await page.click('#btnMsg');
+  await page.fill('#msgText', 'hola');
+  await page.click('#msgGo');
+  check(/al menos 5/.test(await page.locator('#msgErr').innerText()), 't4: mensaje de menos de 5 caracteres se rechaza');
+  await page.fill('#msgText', 'Cambio de turno a las 18');
+  await page.click('#msgGo');
+  await page.waitForSelector('dialog[open]');
+  check(/todos los cascos/.test(await page.locator('dialog[open]').innerText()), 't4: confirmacion al enviar a Todos');
+  await page.locator('dialog[open] button', { hasText: 'Cancelar' }).click();
+  check(posts(state, 'broadcasts').length === 0, 't4: cancelar la confirmacion no envia');
+  await page.click('#msgGo');
+  await page.locator('dialog[open] button', { hasText: 'Sí, enviar a todos' }).click();
+  check(await waitFor(() => posts(state, 'broadcasts').length === 1 && posts(state, 'broadcasts')[0].body.device_ids === null), 't4: envio a Todos tras confirmar');
+  await page.click('#tabDone');
+  const rs = page.locator('#bcList button', { hasText: 'Reenviar a los que no confirmaron' });
+  check(await waitFor(async () => (await rs.count()) >= 1), 't4: boton Reenviar a los que no confirmaron');
+  const rsTxt = await rs.first().innerText();
+  await rs.last().click();
+  await page.locator('dialog[open] button', { hasText: 'Sí, reenviar' }).click();
+  await waitFor(() => posts(state, 'broadcasts').length === 2);
+  const rb = (posts(state, 'broadcasts')[1] || {}).body || {};
+  check(JSON.stringify(rb.device_ids) === '["4133"]' && rb.message === 'Revisar EPP', 't4: reenvio solo a los que no confirmaron: ' + JSON.stringify(rb.device_ids) + ' ' + rsTxt);
+  // registrar casco detectado
+  await page.click('#tabEq');
+  await page.waitForSelector('.unreg');
+  check(/4160/.test(await page.locator('.unreg').innerText()), 't4: casco detectado sin registrar');
+  await page.locator('.unreg button', { hasText: 'Registrar' }).click();
+  check((await page.locator('#eqForm input').first().inputValue()) === '4160', 't4: Registrar abre el alta con el alias precargado');
+  await shot(page, `${TAG}-t4-registrar`);
+  await ctx.close();
+}
+
+// viewer: sin altas, sin evacuacion, sin zonas, sin configuracion; comandos permitidos
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, role: 'viewer', state });
+  await closeOv(page);
+  check(/supervisor/.test(await page.locator('#who').innerText()), 't4 viewer: el rol se muestra');
+  check(await page.locator('#btnEvac').isDisabled() && await page.locator('#evacRoleNote').isVisible(), 't4 viewer: Evacuacion deshabilitada con explicacion');
+  check(await page.locator('#btnMsg').isEnabled(), 't4 viewer: Mensaje a cascos permitido');
+  await page.click('#tabMap');
+  check(await page.locator('#gDrawCircle').isDisabled() && await page.locator('#mapRoleNote').isVisible(), 't4 viewer: dibujo de zonas deshabilitado con explicacion');
+  await page.click('#tabEq');
+  await page.waitForSelector('#eqBody .card');
+  check((await page.locator('#eqBody button', { hasText: /Alta de|Editar|Dar de baja/ }).count()) === 0 && await page.locator('#eqBody .rolenote').first().isVisible(), 't4 viewer: Equipos sin altas/ediciones/bajas y con explicacion');
+  await page.click('#eqTabAssign');
+  check((await page.locator('#eqBody button', { hasText: /Asignar|Cerrar asignación/ }).count()) === 0, 't4 viewer: sin asignaciones');
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  check((await sec.getByRole('button', { name: /Configuración remota|Reiniciar el agente/ }).count()) === 0, 't4 viewer: sin Configuracion ni Reiniciar agente');
+  await sec.getByRole('button', { name: /Probar el enlace/ }).click();
+  check(await waitFor(() => posts(state, 'device_commands').some(x => x.body.action === 'ping')), 't4 viewer: Probar enlace permitido');
+  await ctx.close();
+}
+
+// degradacion: el servidor todavia no tiene las tablas nuevas
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, noNew: true, state });
+  const cerr = [];
+  page.on('console', m => { if (m.type() === 'error') cerr.push(m.text() + ' @ ' + (m.location().url || '')); });
+  await closeOv(page);
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  await sec.getByRole('button', { name: /Sacar una foto/ }).click();
+  check(await waitFor(async () => /cuando se aplique la actualización/.test(await sec.locator('.cmdstat').innerText())), 't4 sin tablas: Sacar foto avisa "disponible cuando se aplique la actualización"');
+  await page.click('#tabRep');
+  check(await waitFor(async () => (await page.locator('#repHost tbody td.mono').count()) > 0), 't4 sin tablas: Reportes cae a events + event_acks');
+  check(await waitFor(async () => /todavía no está disponible/.test(await page.locator('#repHost').innerText())), 't4 sin tablas: Reportes avisa que la vista no existe');
+  await page.click('#tabLive');
+  await sec.getByRole('button', { name: /Configuración remota del casco 4132/ }).click();
+  check(await waitFor(async () => /cuando se aplique la actualización/.test(await page.locator('dialog[open]').innerText())), 't4 sin tablas: Configuracion avisa lo mismo y no rompe');
+  await page.keyboard.press('Escape');
+  const bad = cerr.filter(x => !/Failed to load resource.*404|tile\.openstreetmap|fonts\.g|ERR_|favicon|sslip\.io\/live/.test(x));
+  check(bad.length === 0, 't4 sin tablas: sin errores de consola salvo los 404 de recurso (' + cerr.length + ' 404, otros: ' + bad.join(' | ').slice(0, 150) + ')');
+  check((state.hits || []).length <= 8, 't4 sin tablas: pocos pedidos a tablas inexistentes (' + (state.hits || []).length + ')');
+  await ctx.close();
+}
+
+// logos: cargan (200) y estan en el header y el login
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: 'es-AR', serviceWorkers: 'block' });
+  await mock(ctx, {});
+  const page = await ctx.newPage();
+  const codes = {};
+  page.on('response', r => { if (/\/img\//.test(r.url())) codes[r.url().split('/').pop()] = r.status(); });
+  await page.goto(BASE + 'index.html');
+  await page.waitForTimeout(800);
+  const imgs = await page.evaluate(() => [...document.querySelectorAll('img.brand-logo,img.login-logo')].map(i => i.complete && i.naturalWidth > 0));
+  check(imgs.length === 2 && imgs.every(Boolean), 'logos de header y login cargan');
+  for (const f of ['favicon-32.png', 'favicon-64.png', 'apple-touch-icon.png', 'og-vigia.png', 'vigia-logo.png', 'vigia-logo-128.png']) {
+    const st = (await page.request.get(BASE + 'img/' + f)).status();
+    check(st === 200, 'imagen ' + f + ' responde 200');
+  }
+  await ctx.close();
 }
 await browser.close();
 server.close();

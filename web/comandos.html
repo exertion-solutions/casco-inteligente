@@ -3,15 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Comandos de voz · Casco Inteligente</title>
-<meta name="description" content="Frases en español para activar funciones del casco por voz y botones físicos.">
+<title>Comandos de voz · Vigía</title>
+<meta name="description" content="Vigía · Casco Inteligente: frases en español para activar funciones del casco por voz y botones físicos.">
 <meta name="color-scheme" content="dark light">
 <meta name="robots" content="noindex, nofollow">
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon-64.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app.css?v=202610121830">
 <style>
   .cmd-page { max-width: 1040px; margin: 0 auto; padding: var(--sp-5) var(--sp-4) var(--sp-6); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); }
   .cmd-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
@@ -55,7 +58,7 @@
 <body>
 <main class="cmd-page" id="main">
   <div class="cmd-top">
-    <h1>Comandos de voz del casco</h1>
+    <h1>Comandos de voz del casco <span class="mute">· Vigía</span></h1>
     <a class="back" href="./">← Volver al panel</a>
   </div>
   <p class="cmd-lead">Frases en español rioplatense para manejar el casco con la voz, sin sacarse los guantes. Siempre se empieza con la palabra <strong>“casco”</strong>.</p>
@@ -168,6 +171,31 @@
         </tr>
       </tbody>
     </table>
+  </section>
+
+  <section class="cmd-group" aria-labelledby="g-panel">
+    <table class="cmd-table" id="t-panel">
+      <caption id="g-panel">Desde el panel (sin hablar)</caption>
+      <thead><tr><th>Botón del panel</th><th>Qué hace</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr data-k="foto camara sacar panel">
+          <td class="cmd-say" data-l="Botón del panel"><b>Sacar foto</b></td>
+          <td data-l="Qué hace">Pide una foto al casco; aparece en la tira de miniaturas del casco y se puede ampliar y descargar.</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible desde el panel</span></td>
+        </tr>
+        <tr data-k="linterna luz encender apagar panel">
+          <td class="cmd-say" data-l="Botón del panel"><b>Linterna: encender / apagar</b></td>
+          <td data-l="Qué hace">Enciende o apaga la linterna del casco. Si la cámara está ocupada, el panel muestra el motivo.</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible desde el panel</span></td>
+        </tr>
+        <tr data-k="enlace ping prueba conexion panel">
+          <td class="cmd-say" data-l="Botón del panel"><b>Probar enlace</b></td>
+          <td data-l="Qué hace">Comprueba que el casco responde y mide el tiempo de respuesta.</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible desde el panel</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="cmd-note">Funcionan cuando el servidor tiene aplicada la actualización de comandos; si no, el panel avisa “Función disponible cuando se aplique la actualización”.</p>
   </section>
 
   <section class="cmd-group" aria-labelledby="g-btn">

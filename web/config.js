@@ -2,10 +2,8 @@
 // Nunca poner aqui la service_role key.
 window.CASCO_CONFIG = {
   SUPABASE_URL: "https://zgfvhjpdzkohouktakvt.supabase.co",
-  // Dominio del VPS con MediaMTX (sin esquema). Vacio = se oculta el video propio y queda el boton de Runde.
+  // Dominio del VPS con MediaMTX (sin esquema). Vacio = se oculta el video en vivo.
   LIVE_HOST: "216-238-110-97.sslip.io",
-  // "runde": Camara en vivo abre caps.runde.pro. "own": panel de video propio (requiere que el casco transmita a LIVE_HOST).
-  LIVE_MODE: "own",
   // Giro inicial de la imagen en grados (0/90/180/270) para el casco PUESTO (camara al frente).
   // Calibrado con el casco boca arriba en la mesa (270); puesto equivale a +180 = 90.
   // El boton Girar del visor lo recuerda por casco y navegador.

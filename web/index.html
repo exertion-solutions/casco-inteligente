@@ -3,28 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Casco Inteligente</title>
-<meta name="description" content="Panel de alertas SOS, fotos y video en vivo de cascos inteligentes.">
+<title>Vigía · Casco Inteligente</title>
+<meta name="description" content="Vigía · Casco Inteligente: panel de alertas SOS, fotos y video en vivo de cascos inteligentes.">
 <meta name="theme-color" content="#0e1a20" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#edf1ef" media="(prefers-color-scheme: light)">
 <meta name="color-scheme" content="dark light">
 <meta name="robots" content="noindex, nofollow">
-<meta property="og:title" content="Casco Inteligente">
-<meta property="og:description" content="Panel de alertas SOS, fotos y video en vivo de cascos inteligentes.">
+<meta property="og:title" content="Vigía · Casco Inteligente">
+<meta property="og:description" content="Vigía · Casco Inteligente: panel de alertas SOS, fotos y video en vivo de cascos inteligentes.">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%230e1a20'/%3E%3Cpath d='M12 40c0-12 9-22 20-22s20 10 20 22v4H12z' fill='%233cc3d8'/%3E%3Crect x='8' y='42' width='48' height='6' rx='3' fill='%233cc3d8'/%3E%3C/svg%3E">
+<meta property="og:image" content="img/og-vigia.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="img/og-vigia.png">
+<link rel="icon" type="image/png" sizes="32x32" href="img/favicon-32.png">
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon-64.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610121021">
+<link rel="stylesheet" href="app.css?v=202610121830">
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
 <header class="top">
   <div class="brand">
-    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16a9 9 0 0 1 18 0v2H3z"/><path d="M12 7v4M2 20h20"/></svg>
-    <h1>Casco Inteligente</h1>
+    <img class="brand-logo" src="img/vigia-logo-128.png" alt="Vigía" width="36" height="36">
+    <h1><span class="brand-name">Vigía</span> <span class="brand-sub">Casco Inteligente</span></h1>
   </div>
   <div class="top-tools">
     <span id="connWrap" class="conn hidden" data-state="wait"><span class="conn-dot" aria-hidden="true"></span><span id="status" role="status">Conectando…</span></span>
@@ -42,7 +47,8 @@
 </header>
 <main id="main">
   <form id="login" class="login">
-    <h2>Ingresar al panel</h2>
+    <img class="login-logo" src="img/vigia-logo.png" alt="Vigía" width="140" height="140">
+    <h2>Ingresar a Vigía</h2>
     <label>Correo <input id="email" type="email" autocomplete="username" required></label>
     <label>Contraseña <input id="password" type="password" autocomplete="current-password" required></label>
     <button type="submit">Ingresar</button>
@@ -71,6 +77,10 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
         <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden" aria-hidden="true">0</span>
       </button>
+      <button type="button" role="tab" id="tabRep" aria-selected="false" aria-controls="panelRep" tabindex="-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></svg>
+        <span>Reportes</span>
+      </button>
     </nav>
 
     <div class="content">
@@ -78,9 +88,9 @@
       <div class="toolbar">
         <button id="enableSound" class="ghost">Probar sirena de alerta</button>
         <button id="enableMic" class="ghost hidden" type="button">Habilitar micrófono para grabar</button>
-        <a id="rundeLink" class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo (Runde)</a>
         <p id="escState" class="mute esc" role="status">Escalamiento: consultando…</p>
       </div>
+      <p id="cmdLive" class="sr-only" role="status" aria-live="polite"></p>
 
       <div id="panelMain" role="tabpanel" aria-labelledby="tabMain" data-view="centro">
         <section class="kpis" aria-label="Resumen del centro de mando">
@@ -114,9 +124,10 @@
             <section id="orders" class="block" aria-labelledby="ordersH">
               <h2 id="ordersH" class="sec">Órdenes a los cascos</h2>
               <div class="row">
-                <button id="btnEvac" type="button" class="attend" aria-expanded="false" aria-controls="evacBox">Evacuación</button>
+                <button id="btnEvac" type="button" class="attend" aria-expanded="false" aria-controls="evacBox" aria-describedby="evacRoleNote">Evacuación</button>
                 <button id="btnMsg" type="button" class="ghost" aria-expanded="false" aria-controls="msgBox">Mensaje a cascos</button>
               </div>
+              <p id="evacRoleNote" class="mute rolenote hidden">La evacuación la envía un administrador. Tu rol (supervisor) puede mandar mensajes y atender alertas.</p>
               <div id="evacBox" class="obox hidden" role="group" aria-labelledby="evacH">
                 <h3 id="evacH">Evacuación general</h3>
                 <p class="mute">Los cascos hacen sonar una sirena y dicen la orden en voz alta. Para enviar: escribí EVACUACION y tocá Enviar, o tocá Enviar dos veces seguidas dentro de 3 segundos.</p>
@@ -134,7 +145,7 @@
               </div>
               <form id="msgBox" class="obox hidden" aria-labelledby="msgH" novalidate>
                 <h3 id="msgH">Mensaje a cascos</h3>
-                <label>Mensaje (hasta 200 caracteres) <input id="msgText" type="text" maxlength="200" autocomplete="off"></label>
+                <label>Mensaje (de 5 a 200 caracteres) <input id="msgText" type="text" maxlength="200" autocomplete="off"></label>
                 <span id="msgCount" class="mute">0/200</span>
                 <div class="grid2">
                   <label>Destino <select id="msgDest"><option value="">Todos los cascos</option></select></label>
@@ -147,6 +158,7 @@
                 <div id="msgErr" class="err" role="alert"></div>
               </form>
               <div id="orderOk" class="okmsg" role="status"></div>
+              <div id="orderErr" class="err" role="alert"></div>
               <p class="mute">El historial de órdenes y los eventos recientes están en la pestaña Historial.</p>
             </section>
           </div>
@@ -162,6 +174,7 @@
             <button id="gDrawPoly" type="button" class="ghost" aria-pressed="false">Dibujar polígono</button>
             <button id="gAddPoint" type="button" class="ghost" aria-pressed="false">Agregar punto de interés</button>
           </div>
+          <p id="mapRoleNote" class="mute rolenote hidden">Dibujar zonas y agregar puntos de interés lo hace un administrador. Tu rol (supervisor) puede ver el mapa y las listas.</p>
           <p id="geoHint" class="mute hidden" role="status"></p>
           <div id="polyBar" class="row hidden">
             <span id="polyCount" class="mute">0 vértices</span>
@@ -203,6 +216,10 @@
           <h2 id="doneH" class="sec">SOS y caídas atendidos</h2>
           <ul id="feedDone"></ul>
         </section>
+        <details id="histSearch" class="block fold">
+          <summary><h2 class="sec">Buscar en el historial (filtros y páginas)</h2></summary>
+          <div id="histQuery"></div>
+        </details>
         <details id="histOrders" class="block fold" open>
           <summary><h2 id="ordersHistH" class="sec">Órdenes enviadas (últimas 20)</h2></summary>
           <ul id="bcList"><li class="empty mute">Todavía no hay órdenes.</li></ul>
@@ -213,12 +230,20 @@
         </details>
         <p id="histLive" class="sr-only" role="status" aria-live="polite"></p>
       </div>
+      <div id="panelRep" role="tabpanel" aria-labelledby="tabRep" class="hidden">
+        <section class="block" aria-labelledby="repH">
+          <h2 id="repH" class="sec">Reportes de incidentes</h2>
+          <p class="mute">Alertas que requieren atención (SOS, caídas, geocercas, casco sin usar, sin movimiento) con quién las atendió y en cuánto tiempo. Fechas en hora de Argentina.</p>
+          <img class="print-only print-logo" src="img/vigia-logo-128.png" alt="Vigía" width="48" height="48">
+          <div id="repHost"></div>
+        </section>
+      </div>
     </div>
   </section>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610121021"></script>
-<script src="app.js?v=202610121021"></script>
+<script src="config.js?v=202610121830"></script>
+<script src="app.js?v=202610121830"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-/* Casco Inteligente · visor. Logica movida tal cual desde index.html; cambios de presentacion marcados con [UI]. */
+/* Vigía · Casco Inteligente · visor. Logica movida tal cual desde index.html; cambios de presentacion marcados con [UI]. */
 (() => {
   const $ = id => document.getElementById(id);
   const cfg = window.CASCO_CONFIG || {};
@@ -7,15 +7,23 @@
   const TZ = 'America/Argentina/Buenos_Aires';
   const fmt = iso => new Date(iso).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' });
 
-  function beep() {
-    if (!audioCtx) return;
-    for (let i = 0; i < 3; i++) {
-      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-      o.type = 'square'; o.frequency.value = 880; g.gain.value = 0.15;
-      o.connect(g); g.connect(audioCtx.destination);
-      o.start(audioCtx.currentTime + i * 0.35); o.stop(audioCtx.currentTime + i * 0.35 + 0.2);
-    }
-  }
+  // dd/mm/aaaa HH:mm en hora de Argentina (reportes y CSV)
+  const fmtAR = iso => {
+    const d = new Date(iso); if (isNaN(d)) return '';
+    const p = {};
+    new Intl.DateTimeFormat('es-AR', { timeZone: TZ, day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+      .formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    return p.day + '/' + p.month + '/' + p.year + ' ' + p.hour + ':' + p.minute;
+  };
+  const mb = b => (b / 1048576).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' MB';
+  const stampOf = d => {
+    const p = {};
+    new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+      .formatToParts(d).forEach(x => { p[x.type] = x.value; });
+    return p.year + '-' + p.month + '-' + p.day + '_' + p.hour + '-' + p.minute + '-' + p.second;
+  };
+  // Descarga con gesto del usuario (un solo lugar para los <a download>).
+  const saveUrl = (url, name) => { const a = document.createElement('a'); a.href = url; a.download = name; a.hidden = true; document.body.append(a); a.click(); a.remove(); };
 
   // Columnas explicitas (nunca select('*')): el visor solo recibe lo que usa.
   const EV_COLS = 'id,created_at,device_id,type,press_ms,media_path,lat,lng,battery,payload';
@@ -36,14 +44,11 @@
   const cards = new Map();    // event_id -> <li>
   const pending = new Map();  // event_id -> ev (SOS/caida sin atender)
   const acks = new Map();     // event_id -> ack
-  let me = null;
 
   // ---- Video en vivo propio (WHEP contra MediaMTX en LIVE_HOST; ver docs/PROTOCOLO-VIDEO.md) ----
+  // Sin LIVE_HOST se oculta el panel de video propio.
   const LIVE_HOST = String(cfg.LIVE_HOST || '').trim();
-  // LIVE_MODE 'runde' (por defecto): "Camara en vivo" abre la plataforma Runde.
-  // LIVE_MODE 'own': panel de video propio (el casco debe transmitir a LIVE_HOST).
-  const OWN_LIVE = !!LIVE_HOST && cfg.LIVE_MODE === 'own';
-  const RUNDE_LIVE_URL = 'https://caps.runde.pro/index/spyl';
+  const OWN_LIVE = !!LIVE_HOST;
   const DEV_RE = /^[A-Za-z0-9_-]{1,64}$/;
   const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
   const RETRY_WINDOW_MS = 40000;   // el casco tarda hasta ~30 s en arrancar
@@ -92,6 +97,8 @@
     fall: '<circle cx="14" cy="4.5" r="2"/><path d="M12 8l-4 3 2 4-3 5M12 8l4 2 3-1M10 15l4 1 1 5"/>',
     geofence: '<path d="M12 22s7-6.2 7-12a7 7 0 0 0-14 0c0 5.8 7 12 7 12z"/><path d="M12 7v4M12 13.5v.01"/>',
     ok: '<circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/>',
+    not_worn: '<path d="M3 16a9 9 0 0 1 18 0v2H3z"/><path d="M4 4l16 16"/>',
+    inactive: '<circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/>',
   };
   function icon(name, size) {
     const s = mk('span', 'ico'); s.setAttribute('aria-hidden', 'true');
@@ -268,7 +275,7 @@
     const recTime = mk('span', 'mute', '');
     const recNote = mk('p', 'mute', ''); recNote.style.margin = '0';
     rrow.append(bRec, bShot, bAgain, lMicRec, lCasRec, recTime, recState);
-    sec.append(row, rrow, recNote, vrow, wrap);
+    sec.append(row, rrow, recNote, cmdBar(id), vrow, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
@@ -390,17 +397,10 @@
       'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
     let rec = null, lastUrl = null, lastName = '', lastItem = null;
     const even = n => Math.max(2, Math.round(n / 2) * 2);
-    const mb = b => (b / 1048576).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' MB';
-    const stampOf = d => {
-      const p = {};
-      new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
-        .formatToParts(d).forEach(x => { p[x.type] = x.value; });
-      return p.year + '-' + p.month + '-' + p.day + '_' + p.hour + '-' + p.minute + '-' + p.second;
-    };
     let wmSec = 0, wmTxt = '';
     const wmText = () => {
       const s = Math.floor(Date.now() / 1000);
-      if (s !== wmSec) { wmSec = s; wmTxt = 'Casco ' + id + ' · ' + new Date().toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' }); }
+      if (s !== wmSec) { wmSec = s; wmTxt = 'Vigía · Casco ' + id + ' · ' + new Date().toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' }); }
       return wmTxt;
     };
     const frameInfo = () => {
@@ -428,7 +428,7 @@
         c2.fillStyle = '#fff'; c2.fillText(t, pad, H - fs - pad);
       }
     };
-    const save = (url, name) => { const a = mk('a'); a.href = url; a.download = name; a.hidden = true; document.body.append(a); a.click(); a.remove(); };
+    const save = saveUrl;
     const setRec = (t, bad) => { recState.textContent = t; recState.classList.toggle('bad', !!bad); };
     const audioOn = () => cMic.checked || cCasco.checked;
     const refreshNote = () => {
@@ -489,7 +489,7 @@
       if (!blob.size) { setRec('No se grabó nada.', true); return; }
       // La URL anterior solo se libera si su cartel ya se cerro (si sigue en cola, la libera el propio cartel).
       if (lastItem && lastItem.closed && lastUrl) { try { URL.revokeObjectURL(lastUrl); } catch (_) {} }
-      const url = URL.createObjectURL(blob), name = 'casco-' + id + '_' + stampOf(new Date(r.t0)) + '.' + r.ext;
+      const url = URL.createObjectURL(blob), name = 'vigia-' + id + '_' + stampOf(new Date(r.t0)) + '.' + r.ext;
       lastUrl = url; lastName = name;
       bAgain.classList.remove('hidden');
       setRec((r.why || 'Grabación detenida.') + ' Video listo: ' + name + ' (' + mb(blob.size) + '). Guardalo desde el cartel.', r.bad);
@@ -579,7 +579,7 @@
       paint(cv2.getContext('2d'), f.cw, f.ch, f);
       cv2.toBlob(b => {
         if (!b) { setRec('No se pudo generar la captura.', true); return; }
-        const url = URL.createObjectURL(b), name = 'casco-' + id + '_' + stampOf(new Date()) + '.png';
+        const url = URL.createObjectURL(b), name = 'vigia-' + id + '_' + stampOf(new Date()) + '.png';
         save(url, name); setTimeout(() => URL.revokeObjectURL(url), 10000);
         setRec('Captura guardada en tu PC: ' + name);
       }, 'image/png');
@@ -596,7 +596,6 @@
     const vctl = [bMute, bHang, lMic, mMic, lIn, mIn];
     const setCtl = on => vctl.forEach(e => e.classList.toggle('hidden', !on));
     const setV = (t, bad) => { vstate.textContent = t; vstate.classList.toggle('bad', !!bad); };
-    const mmss = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
     const soft = m => Object.assign(new Error(m), { soft: true });
     L.call = null;
 
@@ -673,7 +672,7 @@
         c.conn = true;
         if (!c.t0) {
           c.t0 = Date.now(); clearTimeout(c.tAns);
-          const tick = () => { vtime.textContent = mmss(Math.floor((Date.now() - c.t0) / 1000)); };
+          const tick = () => { vtime.textContent = clock((Date.now() - c.t0) / 1000); };
           setV('En llamada'); tick(); c.tTick = setInterval(tick, 1000);
         } else setV('En llamada');
       } else if (s === 'disconnected') { c.conn = false; setV('Reconectando…'); }
@@ -779,9 +778,15 @@
     const p = ev.payload; if (!p || typeof p !== 'object') return false;
     return (p.kind === 'restringida' && p.action === 'enter') || (p.kind === 'permitida' && p.action === 'exit') || (p.kind === 'peligro' && p.action === 'enter');
   };
-  const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall' || (ev.type === 'geofence' && geoAlert(ev));
+  // Requieren Atender: sos, fall, geofence (segun zona), not_worn e inactive (docs/PROTOCOLO-COMANDOS.md seccion 2).
+  const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall' || ev.type === 'not_worn' || ev.type === 'inactive' || (ev.type === 'geofence' && geoAlert(ev));
+  const TYPE_LBL = { sos: 'SOS', fall: 'CAÍDA', geofence: 'GEOCERCA', not_worn: 'CASCO SIN USAR', inactive: 'SIN MOVIMIENTO',
+    equip: 'EQUIPO', fall_cancel: 'CAÍDA CANCELADA', photo: 'FOTO', video: 'VIDEO' };
+  const typeLbl = t => TYPE_LBL[t] || String(t || '').toUpperCase();
   const alertLabel = ev => {
     if (ev.type === 'fall') return 'CAÍDA';
+    if (ev.type === 'not_worn') return 'CASCO SIN USAR';
+    if (ev.type === 'inactive') return 'SIN MOVIMIENTO';
     if (ev.type === 'geofence') {
       const p = ev.payload || {}, z = typeof p.zone_name === 'string' ? p.zone_name.slice(0, 60) : '';
       return (p.kind === 'permitida' ? 'SALIÓ DE ZONA PERMITIDA' : p.kind === 'peligro' ? 'ENTRÓ A ZONA DE PELIGRO' : 'ENTRÓ A ZONA RESTRINGIDA') + (z ? ': ' + z : '');
@@ -794,7 +799,7 @@
 
   function refreshBanner() {
     const b = $('sos');
-    document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Casco Inteligente';
+    document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Vigía · Casco Inteligente';
     renderPending();
     if (!pending.size) { b.style.display = 'none'; syncAlarm(); return; }
     const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
@@ -807,20 +812,12 @@
       const li = pendEls.get(last.id) || cards.get(last.id);
       if (li) { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); const inp = li.querySelector('input'); if (inp) inp.focus({ preventScroll: true }); }
     });
-    const cam = document.createElement('a');
-    cam.className = 'btn'; cam.textContent = 'Cámara en vivo'; cam.href = RUNDE_LIVE_URL;
-    cam.target = '_blank'; cam.rel = 'noopener noreferrer';
-    let camEl = cam;
-    if (OWN_LIVE) {   // video propio: "Ver en vivo" abre/inicia el panel en vez de ir a Runde
-      camEl = document.createElement('button'); camEl.type = 'button'; camEl.textContent = 'Ver en vivo';
-      camEl.addEventListener('click', () => {
-        const L = ensureLive(last.device_id); if (!L) return;
-        showTab('live');
-        L.sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        if (!L.bStart.disabled) L.start();
-      });
+    b.replaceChildren(txt, go);
+    if (OWN_LIVE) {
+      const cam = document.createElement('button'); cam.type = 'button'; cam.textContent = 'Ver en vivo';
+      cam.addEventListener('click', () => openLive(last.device_id, true));
+      b.append(cam);
     }
-    b.replaceChildren(txt, go, camEl);
     b.style.display = 'block';
     syncAlarm();
   }
@@ -871,6 +868,30 @@
     return out;
   }
   let hSig = '', posLoaded = false;
+  // Eventos `equip` reales (docs/PROTOCOLO-COMANDOS.md seccion 2): comparten clave con las alertas derivadas del navegador
+  // (bat_low -> bat-warn, ...), asi no se duplican y el texto del evento real manda mientras dura el episodio.
+  const EQUIP_KEY = { bat_low: 'bat-warn', bat_crit: 'bat-crit', no_signal: 'off', temp: 'temp', storage: 'free' };
+  const EQUIP_TTL_MS = 30 * 60 * 1000;
+  const evAlerts = new Map();   // 'id|clave' -> { id, key, sev, text, t }
+  function equipText(id, kind, level) {
+    const lv = typeof level === 'number' && isFinite(level) ? level : (typeof level === 'string' && level ? level.slice(0, 20) : null);
+    const tag = label(id) + ': ';
+    if (kind === 'bat_crit') return tag + 'batería crítica' + (typeof lv === 'number' ? ' (' + n1(lv) + ' %)' : '');
+    if (kind === 'bat_low') return tag + 'batería baja' + (typeof lv === 'number' ? ' (' + n1(lv) + ' %)' : '');
+    if (kind === 'no_signal') return tag + 'sin señal';
+    if (kind === 'temp') return tag + 'temperatura alta' + (typeof lv === 'number' ? ' (' + n1(lv) + ' °C)' : '');
+    return tag + 'almacenamiento casi lleno' + (lv != null ? ' (nivel ' + lv + ')' : '');
+  }
+  function noteEquip(ev) {
+    const p = ev.payload && typeof ev.payload === 'object' ? ev.payload : null;
+    const key = p && EQUIP_KEY[p.kind];
+    const t = new Date(ev.created_at).getTime();
+    if (!key || !DEV_RE.test(ev.device_id || '') || !isFinite(t) || Date.now() - t > EQUIP_TTL_MS) return;
+    const k = ev.device_id + '|' + key, cur = evAlerts.get(k);
+    if (cur && cur.t >= t) return;
+    evAlerts.set(k, { id: ev.device_id, key, sev: key === 'bat-crit' ? 'crit' : 'warn', text: equipText(ev.device_id, p.kind, p.level), t });
+    scheduleRender(R_DEV);
+  }
   function evalHealth() {
     const now = Date.now(), seen = new Set();
     for (const [id, s] of devState) {
@@ -880,6 +901,13 @@
         if (!cur) hAlerts.set(k, { id, key: a.key, sev: a.sev, text: a.text, dismissed: false });
         else { cur.sev = a.sev; cur.text = a.text; }
       }
+    }
+    for (const [k, e] of [...evAlerts]) {
+      if (now - e.t > EQUIP_TTL_MS) { evAlerts.delete(k); continue; }
+      seen.add(k);
+      const cur = hAlerts.get(k);
+      if (!cur) hAlerts.set(k, { id: e.id, key: e.key, sev: e.sev, text: e.text, dismissed: false });
+      else { cur.sev = e.sev; cur.text = e.text; }
     }
     for (const k of [...hAlerts.keys()]) if (!seen.has(k)) hAlerts.delete(k);   // el episodio termino: la proxima vez avisa de nuevo
     const shown = [...hAlerts.entries()].filter(([, a]) => !a.dismissed)
@@ -926,7 +954,7 @@
         const r0 = mk('div', 'dev2 off'), h0 = mk('div', 'dev');
         const d0 = mk('span', 'dot off'); d0.setAttribute('aria-hidden', 'true');
         h0.append(d0, dlEl('strong', id, ''), mk('span', 'state bad', 'Sin señal'), mk('span', 'mute', 'nunca conectó'));
-        r0.append(h0);
+        r0.append(h0, cmdBar(id));
         return r0;
       }
       const age = now - new Date(s.at).getTime();
@@ -968,10 +996,10 @@
         b.addEventListener('click', () => showOnMap(lp.lat, lp.lng, label(id)));
         dl.append(metric('Ubicación', mk('span', pi.fresh ? '' : 'bad', coordTxt(lp.lat, lp.lng) + ' · ' + pi.txt + pi.acc), b));
       } else dl.append(metric('Ubicación', mk('span', 'bad', 'Sin posición GPS válida todavía')));
-      row.append(head, dl);
+      row.append(head, dl, cmdBar(id));
       return row;
     });
-    box.replaceChildren(...rows);
+    keepFocus(() => box.replaceChildren(...rows));
   }
   function noteDevice(id, at, battery, payload) {
     const cur = devState.get(id);
@@ -1004,7 +1032,7 @@
   function noteLast(ev) {
     if (ev.type === 'heartbeat' || ev.type === 'location') return;
     if (!lastEv || new Date(ev.created_at) >= new Date(lastEv.created_at)) lastEv = ev;
-    $('kpiLast').textContent = String(lastEv.type || '').toUpperCase() + ' · ' + label(lastEv.device_id);
+    $('kpiLast').textContent = typeLbl(lastEv.type) + ' · ' + label(lastEv.device_id);
     $('kpiLastWhen').textContent = fmt(lastEv.created_at);
   }
   const oldestPending = () => {
@@ -1024,28 +1052,26 @@
     const nb = $('navPend'); nb.textContent = String(pending.size); nb.classList.toggle('hidden', !pending.size);
   }
   const pendEls = new Map();   // event_id -> <li>
+  // Abre el panel de video del casco en "En vivo" y lo inicia (un solo camino para banner, tarjetas y cartel).
+  function openLive(devId, smooth) {
+    const L = ensureLive(devId); if (!L) return;
+    showTab('live');
+    L.sec.scrollIntoView(smooth ? { block: 'nearest', behavior: 'smooth' } : { block: 'nearest' });
+    if (!L.bStart.disabled) L.start();
+    L.bStop.focus({ preventScroll: true });
+  }
   function liveAction(devId) {
-    if (OWN_LIVE && DEV_RE.test(devId || '')) {
-      const see = mk('button', 'ghost', 'Ver en vivo'); see.type = 'button';
-      see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
-      see.addEventListener('click', () => {
-        const L = ensureLive(devId); if (!L) return;
-        showTab('live');
-        L.sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        if (!L.bStart.disabled) L.start();
-        L.bStop.focus({ preventScroll: true });
-      });
-      return see;
-    }
-    if (OWN_LIVE) return null;
-    const a = mk('a', 'btn', 'Cámara en vivo'); a.href = RUNDE_LIVE_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
-    return a;
+    if (!OWN_LIVE || !DEV_RE.test(devId || '')) return null;
+    const see = mk('button', 'ghost', 'Ver en vivo'); see.type = 'button';
+    see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
+    see.addEventListener('click', () => openLive(devId, true));
+    return see;
   }
   function buildPending(ev) {   // [UI] tarjeta dominante: icono + texto + contador + regla de estacion
     const li = mk('li', 'card pitem t-' + ev.type);
     const head = mk('div', 'a-head');
     const type = mk('span', 'a-type');
-    type.append(icon(ev.type === 'fall' ? 'fall' : ev.type === 'geofence' ? 'geofence' : 'sos', 28), document.createTextNode(alertLabel(ev)));
+    type.append(icon(ICONS[ev.type] ? ev.type : 'sos', 28), document.createTextNode(alertLabel(ev)));
     head.append(type);
     if (isManDown(ev)) head.append(mk('span', 'tag sos', 'HOMBRE CAÍDO'));
     const t0 = new Date(ev.created_at).getTime();
@@ -1082,7 +1108,7 @@
     renderKpiAge();
   }
   let tickN = 0;
-  setInterval(() => { tickN++; renderKpiAge(); if (tickN % 10 === 0) { renderDevices(); evalHealth(); renderBroadcasts(); } }, 1000);
+  setInterval(() => { if (document.hidden) return; tickN++; renderKpiAge(); if (tickN % 10 === 0) { renderDevices(); evalHealth(); renderBroadcasts(); } }, 1000);   // oculta: sin trabajo (al volver se repinta)
 
   async function attend(ev, btn, noteEl) {
     btn.disabled = true;
@@ -1115,6 +1141,15 @@
   const bcAcks = new Map();    // broadcast id -> Map(device_id -> played_at)
   const BC_COLS = 'id,kind,message,device_ids,repeat,created_at,created_by_email';
   const BC_VALID_MS = 2 * 60 * 1000;   // el casco solo ve ordenes de los ultimos 2 min
+  const MSG_MIN = 5;
+  // Destinos congelados al enviar a "Todos": la lista de la orden no cambia si despues aparecen cascos nuevos.
+  let frozenTargets = new Map();
+  try { frozenTargets = new Map(JSON.parse(localStorage.getItem('casco-bc-targets') || '[]')); } catch (_) {}
+  function freezeTargets(id, ids) {
+    frozenTargets.set(id, ids);
+    while (frozenTargets.size > 20) frozenTargets.delete(frozenTargets.keys().next().value);
+    try { localStorage.setItem('casco-bc-targets', JSON.stringify([...frozenTargets])); } catch (_) {}
+  }
   function fillDest() {
     const ids = knownDevices();
     for (const sel of [$('evacDest'), $('msgDest')]) {
@@ -1148,10 +1183,10 @@
     const list = [...bcasts.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     if (!list.length) { ul.replaceChildren(mk('li', 'empty mute', 'Todavía no hay órdenes.')); return; }
     const now = Date.now();
-    ul.replaceChildren(...list.map(b => {
+    keepFocus(() => ul.replaceChildren(...list.map(b => {
       const li = mk('li', 'bcitem');
       const got = bcAcks.get(b.id) || new Map();
-      const targets = b.device_ids || [...new Set([...knownDevices(), ...got.keys()])].sort();
+      const targets = b.device_ids || frozenTargets.get(b.id) || [...new Set([...knownDevices(), ...got.keys()])].sort();
       const done = targets.filter(t => got.has(t)).length;
       const head = mk('div', 'row');
       head.append(mk('span', 'tag ' + (b.kind === 'evacuacion' ? 'sos' : ''), b.kind === 'evacuacion' ? 'EVACUACIÓN' : 'MENSAJE'),
@@ -1170,9 +1205,16 @@
             : expired ? 'no recibido' : 'esperando')));
         }
         li.append(chips);
+        const missing = targets.filter(t => !got.has(t));
+        if (missing.length && (b.kind === 'mensaje' || isAdmin())) {
+          const rb = mk('button', 'ghost', 'Reenviar a los que no confirmaron (' + missing.length + ')'); rb.type = 'button';
+          rb.dataset.fk = 'bc|' + b.id;
+          rb.addEventListener('click', () => resendBroadcast(b, missing));
+          li.append(rb);
+        }
       }
       return li;
-    }));
+    })));
   }
   async function loadBcAcks() {
     const ids = [...bcasts.keys()];
@@ -1198,6 +1240,16 @@
     errEl.textContent = ''; $('orderOk').textContent = '';
     const m = cleanMsg(message);
     if (kind === 'mensaje' && !m) { errEl.textContent = 'Escribí el mensaje antes de enviar.'; return false; }
+    if (kind === 'mensaje' && m.length < MSG_MIN) { errEl.textContent = 'El mensaje debe tener al menos ' + MSG_MIN + ' caracteres.'; return false; }
+    if (kind === 'evacuacion' && !isAdmin()) { errEl.textContent = 'Solo un administrador puede enviar una evacuación.'; return false; }
+    let frozen = null;
+    if (kind === 'mensaje' && !dest) {   // a "Todos": confirmar con la lista de destinos y congelarla
+      frozen = knownDevices();
+      const chips = mk('div', 'chips'); frozen.forEach(i => chips.append(mk('span', 'tag', label(i))));
+      const ok = await askConfirm('¿Enviar el mensaje a todos los cascos?',
+        [mk('p', '', '“' + m + '”'), mk('p', 'mute', 'Lo recibirán ' + frozen.length + ' cascos' + (frozen.length ? ':' : '.')), chips], 'Sí, enviar a todos', false);
+      if (!ok) return false;
+    }
     if (m.length > 200) { errEl.textContent = 'El mensaje supera los 200 caracteres.'; return false; }
     const r = parseInt(rep, 10);
     if (!(r >= 1 && r <= 5)) { errEl.textContent = 'Las repeticiones deben ser de 1 a 5.'; return false; }
@@ -1210,9 +1262,22 @@
     } catch (e) { res = { error: { message: (e && e.message) || 'sin conexión' } }; }
     btn.disabled = false;
     if (res.error) { errEl.textContent = bcError(res.error); return false; }
-    if (res.data) { noteBc(res.data); renderBroadcasts(); }
+    if (res.data) { if (frozen) freezeTargets(res.data.id, frozen); noteBc(res.data); renderBroadcasts(); }
     $('orderOk').textContent = (kind === 'evacuacion' ? 'Evacuación enviada' : 'Mensaje enviado') + ' a ' + (dest ? 'el casco ' + dest : 'todos los cascos') + '.';
     return true;
+  }
+  // Reenvio a los cascos que no confirmaron: nueva orden solo para esos ids (mismo texto y repeticiones).
+  async function resendBroadcast(b, ids) {
+    $('orderErr').textContent = ''; $('orderOk').textContent = '';
+    const ok = await askConfirm('¿Reenviar a los que no confirmaron?',
+      [mk('p', '', (b.kind === 'evacuacion' ? 'Evacuación' : 'Mensaje') + (b.message ? ': “' + b.message + '”' : '')), mk('p', 'mute', 'Cascos: ' + ids.map(label).join(', '))], 'Sí, reenviar', b.kind === 'evacuacion');
+    if (!ok) return;
+    let res;
+    try { res = await sb.from('broadcasts').insert({ kind: b.kind, message: b.message, device_ids: ids, repeat: b.repeat }).select(BC_COLS).single(); }
+    catch (e) { res = asRes(e); }
+    if (res.error) { $('orderErr').textContent = bcError(res.error); return; }
+    if (res.data) { noteBc(res.data); renderBroadcasts(); }
+    $('orderOk').textContent = 'Orden reenviada a ' + ids.length + (ids.length === 1 ? ' casco.' : ' cascos.');
   }
   // Evacuacion: dos pasos. 1) abrir el panel; 2) escribir EVACUACION y enviar, o tocar Enviar dos veces dentro de 3 s.
   let armTimer = null, armAt = 0;
@@ -1277,25 +1342,8 @@
     const li = cards.get(ev.id); if (!li) return;
     li.querySelector('.action')?.remove();
     const box = document.createElement('div'); box.className = 'row action';
-    // Video en vivo: lo sirve la plataforma Runde (el casco solo transmite alli). Abre su Centro de video.
-    const live = document.createElement('a');
-    live.className = 'btn'; live.textContent = 'Cámara en vivo';
-    live.href = RUNDE_LIVE_URL; live.target = '_blank'; live.rel = 'noopener noreferrer';
-    live.setAttribute('aria-label', 'Cámara en vivo del casco ' + (devOf.get(ev.id) || '') + ' en la plataforma Runde (abre otra pestaña)');
-    if (!OWN_LIVE) box.append(live);
-    const devId = devOf.get(ev.id);
-    if (OWN_LIVE && DEV_RE.test(devId || '')) {
-      const see = document.createElement('button'); see.type = 'button'; see.className = 'ghost';
-      see.textContent = 'Ver en vivo'; see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
-      see.addEventListener('click', () => {
-        const L = ensureLive(devId); if (!L) return;
-        showTab('live');
-        L.sec.scrollIntoView({ block: 'nearest' });
-        if (!L.bStart.disabled) L.start();
-        L.bStop.focus();
-      });
-      box.append(see);
-    }
+    const see = liveAction(devOf.get(ev.id));
+    if (see) box.append(see);
     const ack = acks.get(ev.id);
     if (ack) {
       li.classList.remove('pending');
@@ -1334,7 +1382,7 @@
     $('doneCount').textContent = String($('feedDone').querySelectorAll(':scope > li:not(.empty)').length);
   }
   // [UI] Centro y En vivo comparten el panel principal (data-view cambia el foco del layout).
-  const TABS = [['main', 'tabMain', 'panelMain'], ['live', 'tabLive', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['done', 'tabDone', 'panelDone']];
+  const TABS = [['main', 'tabMain', 'panelMain'], ['live', 'tabLive', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['done', 'tabDone', 'panelDone'], ['rep', 'tabRep', 'panelRep']];
   // Aviso en la insignia de Historial: eventos u ordenes nuevas mientras se mira otra pestaña.
   let histNew = 0;
   function bumpHist() {
@@ -1355,6 +1403,7 @@
     $('panelMain').setAttribute('aria-labelledby', name === 'live' ? 'tabLive' : 'tabMain');
     if (name === 'map') ensureMap();
     if (name === 'eq') renderEq();
+    if (name === 'rep') repQ.show();
     if (name === 'done') { histNew = 0; $('navHistNew').classList.add('hidden'); $('histLive').textContent = ''; }
   }
   for (const [k, t] of TABS) $(t).addEventListener('click', () => showTab(k));
@@ -1387,33 +1436,58 @@
     }
     feed.append(li);
   }
+  // Resumen de texto del payload (tarjetas del feed y filas de reportes). Solo se comparan/recortan campos conocidos.
+  const EQUIP_LBL = { bat_low: 'batería baja', bat_crit: 'batería crítica', no_signal: 'sin señal', temp: 'temperatura alta', storage: 'almacenamiento casi lleno' };
+  function payloadBits(ev) {
+    const bits = [], pl = ev.payload && typeof ev.payload === 'object' && !Array.isArray(ev.payload) ? ev.payload : null;
+    if (!pl) return bits;
+    if (typeof pl.still_s === 'number') bits.push('inmóvil ' + pl.still_s + ' s');
+    if (typeof pl.reason === 'string' && pl.reason && !isManDown(ev)) bits.push('motivo: ' + pl.reason.slice(0, 60));
+    if (ev.type === 'geofence') {
+      const z = typeof pl.zone_name === 'string' ? pl.zone_name.slice(0, 60) : '';
+      bits.push('zona: ' + (z || '—') + (typeof pl.kind === 'string' ? ' (' + pl.kind.slice(0, 20) + ')' : '') + ' · ' + (pl.action === 'exit' ? 'salida' : pl.action === 'enter' ? 'entrada' : '—'));
+    }
+    if (ev.type === 'equip') {
+      bits.push((EQUIP_LBL[pl.kind] || String(pl.kind || 'equipo').slice(0, 20)) + (pl.level != null && typeof pl.level !== 'object' ? ' · nivel ' + String(pl.level).slice(0, 20) : ''));
+    }
+    return bits;
+  }
+  // Tope de memoria en turnos largos: el feed conserva FEED_MAX tarjetas y Atendidos FEED_DONE_MAX; las pendientes nunca se sueltan.
+  const FEED_MAX = 500, FEED_DONE_MAX = 300;
+  function trimList(ul, max) {
+    if (ul.children.length <= max) return;
+    let n = ul.querySelectorAll(':scope > li:not(.empty)').length;
+    for (let i = ul.children.length - 1; i >= 0 && n > max; i--) {
+      const li = ul.children[i];
+      if (li.classList.contains('empty') || li.classList.contains('pending')) continue;
+      const id = li.dataset.id;
+      li.remove(); n--;
+      if (id) { cards.set(id, null); devOf.delete(id); evAt.delete(id); }   // null: sigue "visto" para el dedupe
+    }
+  }
   // Devuelve true si el evento era nuevo (dedupe por id: Realtime + consulta inicial + resync).
   function render(ev) {
     if (cards.has(ev.id)) return false;
     const li = document.createElement('li');
     li.className = 'card ev t-' + ev.type;
+    li.dataset.id = ev.id;
     cards.set(ev.id, li);
+    if (ev.type === 'equip') noteEquip(ev);
+    if (ev.type === 'photo') notePhoto(ev);
     devOf.set(ev.id, ev.device_id);
     evAt.set(ev.id, ev.created_at);
     noteLast(ev);
     ensureLive(ev.device_id);
     const row = document.createElement('div'); row.className = 'row';
     const tag = document.createElement('span'); tag.className = 'tag ' + ev.type + (ev.type === 'geofence' && needsAttention(ev) ? ' sos' : '');
-    tag.textContent = ev.type === 'geofence' ? 'GEOCERCA' : ev.type.toUpperCase();
+    tag.textContent = typeLbl(ev.type);
     const dev = dlEl('strong', ev.device_id, '');
     const when = document.createElement('span'); when.className = 'mute'; when.textContent = fmt(ev.created_at);
     row.append(tag);
     if (isManDown(ev)) row.append(mk('span', 'tag sos', 'HOMBRE CAÍDO'));
     row.append(dev, when);
     li.append(row);
-    const bits = [];
-    const pl = ev.payload && typeof ev.payload === 'object' ? ev.payload : null;
-    if (pl && typeof pl.still_s === 'number') bits.push('inmóvil ' + pl.still_s + ' s');
-    if (pl && typeof pl.reason === 'string' && pl.reason && !isManDown(ev)) bits.push('motivo: ' + pl.reason.slice(0, 60));
-    if (ev.type === 'geofence' && pl) {
-      const z = typeof pl.zone_name === 'string' ? pl.zone_name.slice(0, 60) : '';
-      bits.push('zona: ' + (z || '—') + (typeof pl.kind === 'string' ? ' (' + pl.kind.slice(0, 20) + ')' : '') + ' · ' + (pl.action === 'exit' ? 'salida' : pl.action === 'enter' ? 'entrada' : '—'));
-    }
+    const bits = payloadBits(ev);
     if (ev.press_ms != null) bits.push('pulsación ' + ev.press_ms + ' ms');
     if (ev.battery != null) bits.push('batería ' + ev.battery + '%');
     if (llOk(numOf(ev.lat), numOf(ev.lng))) bits.push(Number(ev.lat).toFixed(5) + ', ' + Number(ev.lng).toFixed(5));
@@ -1421,6 +1495,7 @@
     if (needsAttention(ev)) li.append(geoInfoEl('f' + ev.id, ev));
     const feed = (needsAttention(ev) && acks.has(ev.id)) ? $('feedDone') : $('feed');
     place(feed, li, new Date(ev.created_at).getTime() || 0);
+    trimList(feed, feed === $('feed') ? FEED_MAX : FEED_DONE_MAX);
     syncEmpty();
     if (needsAttention(ev)) {
       if (!acks.has(ev.id)) pending.set(ev.id, ev);
@@ -1460,7 +1535,7 @@
   function refreshLabels() {
     document.querySelectorAll('[data-dl]').forEach(e => { e.textContent = e.dataset.dlp + label(e.dataset.dl); });
     renderDevices(); evalHealth(); renderBroadcasts(); refreshBanner(); renderPending(); renderMapLists();
-    if (lastEv) $('kpiLast').textContent = String(lastEv.type || '').toUpperCase() + ' · ' + label(lastEv.device_id);
+    if (lastEv) $('kpiLast').textContent = typeLbl(lastEv.type) + ' · ' + label(lastEv.device_id);
   }
   function rebuildPersonOf() {
     const byId = new Map(EQ.people.map(p => [p.id, p]));
@@ -1499,13 +1574,11 @@
   let eqTimer = null;
   const reloadEq = () => { clearTimeout(eqTimer); eqTimer = setTimeout(loadEquipos, 400); };
   const grpName = id => { const g = EQ.groups.find(x => x.id === id); return g ? g.name : ''; };
-  const devName = id => { const d = EQ.devices.find(x => x.device_id === id); return d ? d.name : ''; };
   const STATUS_LBL = { activo: 'Activo', mantenimiento: 'Mantenimiento', baja: 'Baja' };
   const fld = (text, el) => { const l = mk('label'); l.append(text, el); return l; };
   const inp = (type, val, attrs) => { const i = mk('input'); i.type = type; if (val != null) i.value = val; Object.assign(i, attrs || {}); return i; };
   const sel = (opts, val) => { const s = mk('select'); for (const [v, t] of opts) s.append(new Option(t, v)); if (val != null) s.value = val; return s; };
   const grpOpts = () => [['', '(sin grupo)'], ...EQ.groups.map(g => [g.id, g.name])];
-  const fmtD = iso => (iso ? fmt(iso) : '—');
   const dbErr = e => {
     const c = String((e && e.code) || ''), m = String((e && e.message) || 'error');
     if (c === '23505') return 'Ya existe un registro con ese valor único (alias, IMEI, legajo o nombre).';
@@ -1540,10 +1613,10 @@
     host.append(box); no.focus();
   }
   function csvDownload(name, header, rows) {
-    const cell = v => { let s = v == null ? '' : String(v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+    const cell = v => { let s = v == null ? '' : String(v); if (/^[=+@\t\r]|^-(?!\d+([.,]\d+)?$)/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
     const txt = '﻿' + [header, ...rows].map(r => r.map(cell).join(';')).join('\r\n') + '\r\n';
     const url = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
-    const a = mk('a'); a.href = url; a.download = name; a.hidden = true; document.body.append(a); a.click(); a.remove();
+    saveUrl(url, name);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
   const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
@@ -1574,8 +1647,9 @@
     const first = f.querySelector('input:not([readonly]),select'); if (first) first.focus();
     return f;
   }
-  function deviceForm(d) {
-    const edit = !!d, full = edit ? d : {};
+  function deviceForm(d, preset) {
+    if (!isAdmin()) return;
+    const edit = !!d, full = edit ? d : (preset || {});
     const alias = inp('text', full.device_id || '', { maxLength: 64, readOnly: edit, autocomplete: 'off' });
     if (edit) alias.setAttribute('aria-describedby', 'aliasNote');
     const name = inp('text', full.name || '', { maxLength: 80 });
@@ -1630,6 +1704,7 @@
     });
   }
   function personForm(p) {
+    if (!isAdmin()) return;
     const edit = !!p, cur = p || {};
     const name = inp('text', cur.full_name || '', { maxLength: 120 });
     const legajo = inp('text', cur.legajo || '', { maxLength: 20 });
@@ -1667,6 +1742,7 @@
     });
   }
   function groupForm(g) {
+    if (!isAdmin()) return;
     const edit = !!g, cur = g || {};
     const name = inp('text', cur.name || '', { maxLength: 80 });
     const site = inp('text', cur.site || '', { maxLength: 80 });
@@ -1705,7 +1781,9 @@
   }
   function renderDevTab(body) {
     const top = mk('div', 'row');
-    top.append(btn('Alta de casco', '', () => deviceForm(null)),
+    if (!isAdmin()) body.append(roNote('las altas, ediciones y bajas de cascos'));
+    if (isAdmin()) top.append(btn('Alta de casco', '', () => deviceForm(null)));
+    top.append(
       btn('Exportar CSV', 'ghost', () => {
         const full = !EQ.limited;
         const header = ['alias', 'nombre', 'modelo', 'grupo', 'sector', 'estado', 'persona_asignada', 'ultima_conexion', 'bateria_pct'].concat(full ? ['imei', 'sim1_iccid', 'sim2_iccid', 'linea_sim', 'mac_auriculares', 'notas'] : []);
@@ -1718,6 +1796,20 @@
       }));
     body.append(top);
     const eb = errBox('devices'); if (eb) body.append(eb);
+    // Cascos que mandan heartbeats pero no estan en devices: el admin los registra con el alias precargado.
+    const unreg = eb || !EQ.loaded ? [] : [...devState.keys()].filter(i => DEV_RE.test(i) && !EQ.devices.some(d => d.device_id === i)).sort();
+    if (unreg.length) {
+      const sec = mk('section', 'card section unreg'); sec.setAttribute('aria-label', 'Cascos detectados sin registrar');
+      sec.append(mk('h3', '', 'Cascos detectados sin registrar'));
+      for (const i of unreg) {
+        const r = mk('div', 'row');
+        r.append(mk('strong', 'mono', i), mk('span', 'mute', 'manda datos pero no está dado de alta'));
+        if (isAdmin()) r.append(btn('Registrar', '', () => deviceForm(null, { device_id: i, name: 'Casco ' + i }), 'Registrar el casco ' + i));
+        sec.append(r);
+      }
+      if (!isAdmin()) sec.append(roNote('registrarlos'));
+      body.append(sec);
+    }
     if (!EQ.devices.length && !eb) body.append(mk('p', 'mute', 'Todavía no hay cascos registrados.'));
     const ul = mk('ul');
     for (const d of EQ.devices) {
@@ -1727,18 +1819,21 @@
       const s = devState.get(d.device_id), bat = s ? batOf(s) : null;
       li.append(head, kv([['Grupo', grpName(d.group_id)], ['Sector', d.sector], ['Persona asignada hoy', personOf.get(d.device_id)],
         ['Última conexión', s ? fmt(s.at) + ' (' + ago(Date.now() - new Date(s.at).getTime()) + ')' : ''], ['Batería', bat != null ? n1(bat) + ' %' : '']]));
-      const acts = actionRow(btn('Editar', 'ghost', () => deviceForm(d), 'Editar el casco ' + d.device_id),
+      const acts = !isAdmin() ? null : actionRow(btn('Editar', 'ghost', () => deviceForm(d), 'Editar el casco ' + d.device_id),
         btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja el casco ' + d.device_id + '? Deja de aparecer en las listas.', 'Sí, dar de baja', async () => {
           const { error } = await sb.from('devices').update({ deleted_at: new Date().toISOString() }).eq('device_id', d.device_id);
           if (error) $('status').textContent = dbErr(error); else loadEquipos();
         }), 'Dar de baja el casco ' + d.device_id));
-      li.append(acts); ul.append(li);
+      if (acts) li.append(acts);
+      ul.append(li);
     }
     body.append(ul);
   }
   function renderPeopleTab(body) {
     const top = mk('div', 'row');
-    top.append(btn('Alta de persona', '', () => personForm(null)),
+    if (!isAdmin()) body.append(roNote('las altas, ediciones y bajas de personas'));
+    if (isAdmin()) top.append(btn('Alta de persona', '', () => personForm(null)));
+    top.append(
       btn('Exportar CSV', 'ghost', () => {
         const adm = ROLE === 'admin';
         const header = ['nombre', 'legajo', 'puesto', 'sector', 'grupo', 'activo', 'casco_asignado'].concat(adm ? ['dni', 'telefono'] : []);
@@ -1757,7 +1852,7 @@
       const pairs = [['Legajo', p.legajo], ['Puesto', p.job_title], ['Sector', p.sector], ['Grupo', grpName(p.group_id)], ['Casco asignado', cas.get(p.id)]];
       if (ROLE === 'admin') pairs.push(['DNI', p.dni], ['Teléfono', p.contact_phone]);
       li.append(head, kv(pairs));
-      li.append(actionRow(btn('Editar', 'ghost', () => personForm(p), 'Editar a ' + p.full_name),
+      if (isAdmin()) li.append(actionRow(btn('Editar', 'ghost', () => personForm(p), 'Editar a ' + p.full_name),
         btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja a ' + p.full_name + '?', 'Sí, dar de baja', async () => {
           const { error } = await sb.from('people').update({ deleted_at: new Date().toISOString() }).eq('id', p.id);
           if (error) $('status').textContent = dbErr(error); else loadEquipos();
@@ -1767,7 +1862,8 @@
     body.append(ul);
   }
   function renderGroupsTab(body) {
-    body.append(actionRow(btn('Alta de grupo', '', () => groupForm(null))));
+    if (isAdmin()) body.append(actionRow(btn('Alta de grupo', '', () => groupForm(null))));
+    else body.append(roNote('las altas, ediciones y bajas de grupos'));
     const eb = errBox('groups'); if (eb) body.append(eb);
     if (!EQ.groups.length && !eb) body.append(mk('p', 'mute', 'Todavía no hay grupos.'));
     const ul = mk('ul');
@@ -1776,7 +1872,7 @@
       const head = mk('div', 'row'); head.append(mk('strong', '', g.name), g.active === false ? mk('span', 'tag', 'Inactivo') : mk('span', 'tag ok', 'Activo'));
       const nd = EQ.devices.filter(d => d.group_id === g.id).length, np = EQ.people.filter(p => p.group_id === g.id).length;
       li.append(head, kv([['Sitio', g.site], ['Cascos', nd], ['Personas', np], ['Notas', g.notes]]));
-      li.append(actionRow(btn('Editar', 'ghost', () => groupForm(g), 'Editar el grupo ' + g.name),
+      if (isAdmin()) li.append(actionRow(btn('Editar', 'ghost', () => groupForm(g), 'Editar el grupo ' + g.name),
         btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja el grupo ' + g.name + '?', 'Sí, dar de baja', async () => {
           const { error } = await sb.from('groups').update({ deleted_at: new Date().toISOString() }).eq('id', g.id);
           if (error) $('status').textContent = dbErr(error); else loadEquipos();
@@ -1805,7 +1901,7 @@
       if (error) { err.textContent = dbErr(error); return; }
       loadEquipos();
     });
-    body.append(f);
+    if (isAdmin()) body.append(f); else body.append(roNote('las asignaciones de personas a cascos'));
     const pname = id => { const p = EQ.people.find(x => x.id === id); return p ? p.full_name : 'persona ' + String(id).slice(0, 8); };
     body.append(mk('h3', '', 'Asignaciones vigentes'));
     const open = EQ.assigns.filter(a => a.ends_at == null);
@@ -1814,7 +1910,7 @@
     for (const a of open) {
       const li = mk('li', 'card eqitem');
       const head = mk('div', 'row'); head.append(mk('strong', '', 'Casco ' + a.device_id), mk('span', '', pname(a.person_id)), mk('span', 'mute', 'desde ' + fmt(a.starts_at)));
-      li.append(head, actionRow(btn('Cerrar asignación', 'ghost', () => confirmRow(li, '¿Cerrar la asignación de ' + pname(a.person_id) + ' al casco ' + a.device_id + '?', 'Sí, cerrar', async () => {
+      li.append(head, !isAdmin() ? mk('span') : actionRow(btn('Cerrar asignación', 'ghost', () => confirmRow(li, '¿Cerrar la asignación de ' + pname(a.person_id) + ' al casco ' + a.device_id + '?', 'Sí, cerrar', async () => {
         const { error } = await sb.from('assignments').update({ ends_at: new Date().toISOString() }).eq('id', a.id);
         if (error) $('status').textContent = dbErr(error); else loadEquipos();
       }), 'Cerrar la asignación del casco ' + a.device_id)));
@@ -1863,7 +1959,7 @@
   // ======================================================================
   // Georreferencia: ubicacion, geocercas, puntos de interes y mapa (docs/PROTOCOLO-GEO.md)
   // ======================================================================
-  const TRAIL_MS = 2 * 60 * 60 * 1000;
+  const TRAIL_MS = 2 * 60 * 60 * 1000, TRAIL_MAX = 200;
   const lastPos = new Map();   // device_id -> { lat, lng, at, battery }
   const trail = new Map();     // device_id -> [{ lat, lng, at }]
   let geofences = [], geoPoints = [], geoErr = { z: null, p: null };
@@ -1904,7 +2000,7 @@
         arr.splice(i, 0, { lat: la, lng: ln, at, t });
         const lim = Date.now() - TRAIL_MS;
         while (arr.length && arr[0].t < lim) arr.shift();
-        if (arr.length > 1500) arr.splice(0, arr.length - 1500);
+        if (arr.length > TRAIL_MAX) arr.splice(0, arr.length - TRAIL_MAX);   // tope de memoria por casco
       }
     }
     scheduleMap();
@@ -1921,7 +2017,7 @@
         for (const id of ids) {
           qs.push(hasPos(sb.from('events').select(COLS).eq('type', 'location').eq('device_id', id).gte('created_at', since)).order('created_at', { ascending: false }).limit(600));
           // ultimo evento con posicion de cualquier tipo, sin ventana (limit 8: salta los 0,0 / invalidos)
-          qs.push(hasPos(sb.from('events').select(COLS).in('type', ['location', 'sos', 'fall', 'photo', 'video', 'geofence']).eq('device_id', id)).order('created_at', { ascending: false }).limit(8));
+          qs.push(hasPos(sb.from('events').select(COLS).in('type', ['location', 'sos', 'fall', 'photo', 'video', 'geofence', 'not_worn', 'inactive']).eq('device_id', id)).order('created_at', { ascending: false }).limit(8));
         }
       } else {
         qs.push(hasPos(sb.from('events').select(COLS).eq('type', 'location').gte('created_at', since)).order('created_at', { ascending: false }).limit(3000));
@@ -2026,7 +2122,7 @@
       li.append(head, mk('div', 'mute', (z.shape === 'circle' ? 'Círculo · centro ' + coordTxt(g.center[0], g.center[1]) + ' · radio ' + n1(Number(g.radius_m)) + ' m'
         : 'Polígono de ' + g.points.length + ' puntos · primer vértice ' + coordTxt(g.points[0][0], g.points[0][1])) +
         ' · alarma: ' + (ALARM_LBL[z.alarm] || z.alarm) + ' · cascos: ' + (Array.isArray(z.device_ids) ? z.device_ids.join(', ') : 'todos') + (z.message ? ' · “' + z.message + '”' : '')));
-      li.append(actionRow(btn('Centrar', 'ghost', () => showOnMap(c[0], c[1], z.name), 'Centrar el mapa en la zona ' + z.name),
+      li.append(actionRow(...[btn('Centrar', 'ghost', () => showOnMap(c[0], c[1], z.name), 'Centrar el mapa en la zona ' + z.name)].concat(!isAdmin() ? [] : [
         btn('Editar', 'ghost', () => openZoneForm(z), 'Editar la zona ' + z.name),
         btn(z.active === false ? 'Activar' : 'Desactivar', 'ghost', async () => {
           const { error } = await sb.from('geofences').update({ active: z.active === false }).eq('id', z.id);
@@ -2035,7 +2131,7 @@
         btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja la zona ' + z.name + '?', 'Sí, dar de baja', async () => {
           const { error } = await sb.from('geofences').update({ deleted_at: new Date().toISOString() }).eq('id', z.id);
           if (error) $('status').textContent = dbErr(error); else loadGeo();
-        }), 'Dar de baja la zona ' + z.name)));
+        }), 'Dar de baja la zona ' + z.name)])));
       items.push(li);
     }
     for (const p of geoPoints) {
@@ -2043,7 +2139,7 @@
       const head = mk('div', 'row');
       head.append(mk('span', 'tag', 'PUNTO'), mk('strong', '', p.name), mk('span', 'tag', CAT_LBL[p.category] || String(p.category)), p.active === false ? mk('span', 'tag', 'Desactivado') : mk('span', 'tag ok', 'Activo'));
       li.append(head, mk('div', 'mute', coordTxt(p.lat, p.lng) + (p.category === 'peligro' ? ' · radio de alerta ' + p.alert_radius_m + ' m' : '') + (p.notes ? ' · ' + p.notes : '')));
-      li.append(actionRow(btn('Centrar', 'ghost', () => showOnMap(p.lat, p.lng, p.name), 'Centrar el mapa en ' + p.name),
+      li.append(actionRow(...[btn('Centrar', 'ghost', () => showOnMap(p.lat, p.lng, p.name), 'Centrar el mapa en ' + p.name)].concat(!isAdmin() ? [] : [
         btn('Editar', 'ghost', () => openPointForm(null, p), 'Editar el punto ' + p.name),
         btn(p.active === false ? 'Activar' : 'Desactivar', 'ghost', async () => {
           const { error } = await sb.from('geo_points').update({ active: p.active === false }).eq('id', p.id);
@@ -2052,7 +2148,7 @@
         btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja el punto ' + p.name + '?', 'Sí, dar de baja', async () => {
           const { error } = await sb.from('geo_points').update({ deleted_at: new Date().toISOString() }).eq('id', p.id);
           if (error) $('status').textContent = dbErr(error); else loadGeo();
-        }), 'Dar de baja el punto ' + p.name)));
+        }), 'Dar de baja el punto ' + p.name)])));
       items.push(li);
     }
     const errs = [];
@@ -2159,7 +2255,7 @@
       const pop = mk('div'); pop.append(mk('strong', '', z.name), mk('div', '', KIND_LBL[z.kind] || z.kind), mk('div', '', 'Alarma: ' + (ALARM_LBL[z.alarm] || z.alarm)),
         mk('div', '', z.active === false ? 'Desactivada' : 'Activa'));
       if (z.message) pop.append(mk('div', '', '“' + z.message + '”'));
-      const eb = mk('button', 'ghost', 'Editar'); eb.type = 'button'; eb.addEventListener('click', () => openZoneForm(z)); pop.append(eb);
+      if (isAdmin()) { const eb = mk('button', 'ghost', 'Editar'); eb.type = 'button'; eb.addEventListener('click', () => openZoneForm(z)); pop.append(eb); }
       const layer = z.shape === 'circle' ? LF.circle(z.geometry.center, { ...st, radius: Number(z.geometry.radius_m) }) : LF.polygon(z.geometry.points, st);
       layer.bindPopup(pop).addTo(grp.zonas);
     }
@@ -2278,6 +2374,7 @@
   }
   function destOpts() { return [['', 'Todos los cascos'], ...knownDevices().map(i => [i, label(i)])]; }
   function openZoneForm(z, draw) {
+    if (!isAdmin()) return;
     showTab('map');
     const edit = !!z, shape = edit ? z.shape : draw.shape;
     const cur = z || {};
@@ -2331,6 +2428,7 @@
     geoFormShell(edit ? 'Editar zona' : (shape === 'circle' ? 'Nueva zona circular' : 'Nueva zona poligonal'), fields, spec, onSave);
   }
   function openPointForm(ll, p) {
+    if (!isAdmin()) return;
     showTab('map');
     const edit = !!p, cur = p || {};
     const name = inp('text', cur.name || '', { maxLength: 80 });
@@ -2409,6 +2507,7 @@
   ['pointerdown', 'keydown'].forEach(t => document.addEventListener(t, () => { ensureAudio(); askNotif(); }, { passive: true }));
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
+    renderKpiAge();
     ensureAudio();
     if (pending.size) syncAlarm();
   });
@@ -2450,7 +2549,7 @@
   function notifyAlert(ev) {
     if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
     try {
-      const n = new Notification('¡' + alertLabel(ev) + (isManDown(ev) ? ' · HOMBRE CAÍDO' : '') + '!', {
+      const n = new Notification('¡' + alertLabel(ev) + (isManDown(ev) ? ' · HOMBRE CAÍDO' : '') + '! · Vigía', {
         body: label(ev.device_id) + ' · ' + fmt(ev.created_at), tag: 'casco-' + ev.id, requireInteraction: true });
       n.onclick = () => { try { window.focus(); } catch (_) {} n.close(); };
       n.onclose = () => notifs.delete(n);
@@ -2474,6 +2573,7 @@
   function setOverlay(show) {
     if (show === !sosOv.hidden) return;
     sosOv.hidden = !show;
+    if (show) closeDlg();   // el cartel SOS manda: se cierran dialogos (foto, configuracion, confirmaciones)
     $('app').inert = show;
     if (show) { ovPrev = document.activeElement; ovAtend.focus({ preventScroll: true }); }
     else {
@@ -2502,15 +2602,14 @@
   ovLive.addEventListener('click', () => {
     const last = lastPending(); closeOverlay();
     if (!last || !OWN_LIVE) return;
-    const L = ensureLive(last.device_id); if (!L) return;
-    showTab('live'); if (!L.bStart.disabled) L.start();
+    openLive(last.device_id, false);
   });
   ovMute.addEventListener('click', () => { sirenMuted = true; stopSiren(); ovMute.disabled = true; ovAtend.focus({ preventScroll: true }); });
   ovClose.addEventListener('click', closeOverlay);
   function alarmTick() {
     if (!sirenMuted) { ensureAudio(); pumpSiren(); }
     const n = pending.size;
-    document.title = (titleFlip = !titleFlip) ? '🚨 ¡ALERTA! ' + n + ' sin atender' : '(' + n + ') Casco Inteligente';
+    document.title = (titleFlip = !titleFlip) ? '🚨 ¡ALERTA! ' + n + ' sin atender · Vigía' : '(' + n + ') Vigía · Casco Inteligente';
   }
   function syncAlarm() {
     autoRecSync();
@@ -2537,7 +2636,6 @@
   // ---- Cartel de guardado de video: no se descarta por accidente (sin Escape ni clic afuera) y cede ante el cartel SOS ----
   const saveQ = [];   // grabaciones terminadas esperando que el usuario elija
   let saveCur = null, savePrev = null;
-  const mbTxt = b => (b / 1048576).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' MB';
   const saveOv = mk('div', 'save-ov'); saveOv.id = 'saveOverlay'; saveOv.hidden = true;
   saveOv.setAttribute('role', 'alertdialog'); saveOv.setAttribute('aria-modal', 'true');
   saveOv.setAttribute('aria-labelledby', 'saveOvT'); saveOv.setAttribute('aria-describedby', 'saveOvD');
@@ -2557,7 +2655,7 @@
   function renderSave() {
     const it = saveCur; if (!it) return;
     svT.textContent = it.saved ? 'Video guardado' : 'Video listo';
-    svWhat.textContent = 'Casco ' + it.devId + (it.who ? ' · ' + it.who : '') + ' · duración ' + clock(it.dur) + ' · ' + mbTxt(it.size) +
+    svWhat.textContent = 'Casco ' + it.devId + (it.who ? ' · ' + it.who : '') + ' · duración ' + clock(it.dur) + ' · ' + mb(it.size) +
       (it.auto ? ' · grabación automática por alerta' : '');
     svFile.textContent = 'Archivo: ' + it.name;
     svWhy.textContent = it.why || '';
@@ -2576,7 +2674,8 @@
   function closeSave(discard) {
     const it = saveCur; if (!it) return;
     it.closed = true;
-    if (discard && it.discard) it.discard();
+    // Tope de memoria: al descargarla (o descartarla) se suelta la grabacion; ya no queda "Descargar de nuevo".
+    if ((discard || it.saved) && it.discard) it.discard();
     if (it.release) it.release();
     saveCur = null;
     pumpSaveQueue();
@@ -2602,7 +2701,7 @@
     const it = saveCur; if (!it) return;
     try {
       if (!it.url) throw new Error('la grabación ya no está disponible');
-      const a = mk('a'); a.href = it.url; a.download = it.name; a.hidden = true; document.body.append(a); a.click(); a.remove();
+      saveUrl(it.url, it.name);
       it.saved = true; it.err = '';
     } catch (e) { it.err = 'No se pudo guardar: ' + ((e && e.message) || 'el navegador bloqueó la descarga') + '. Permití las descargas de este sitio y probá de nuevo.'; }
     renderSave();
@@ -2664,7 +2763,6 @@
     const r = await acquireMic(60000);
     primeMic.busy = false;
     if (r.ms) r.ms.getTracks().forEach(t => t.stop());
-    try { localStorage.setItem('casco-mic-primed', r.ms ? '1' : '0'); } catch (_) {}
   }
   if (micBtn) micBtn.addEventListener('click', primeMic);
   // Primer gesto dentro del panel: si el permiso todavia no se decidio, se pide una sola vez.
@@ -2687,6 +2785,542 @@
         if (L.autoKey !== devs.get(id) && L.autoRec && L.autoRec()) L.autoKey = devs.get(id);
       } else { L.autoKey = null; if (L.stopAuto) L.stopAuto('Alerta atendida: se detuvo la grabación automática.'); }
     });
+  }
+
+  // ======================================================================
+  // Tanda 4 (docs/PROTOCOLO-COMANDOS.md): comandos a pedido, configuracion remota, reportes y roles.
+  // Tablas nuevas: device_commands, device_command_acks, device_config y la vista incident_report. Mientras el servidor no
+  // las tenga, la UI dice "disponible cuando se aplique la actualizacion" y no insiste (un pedido por funcion, sin bucles).
+  // ======================================================================
+  const isAdmin = () => ROLE === 'admin';
+  const MISSING_TXT = 'Función disponible cuando se aplique la actualización del servidor.';
+  // r = respuesta de supabase-js ({ data, error, status }): la tabla o vista todavia no existe.
+  const tableMissing = r => !!r && (r.status === 404 || (!!r.error && (r.error.code === 'PGRST205' || r.error.code === '42P01' ||
+    /could not find the (table|relation)|schema cache|does not exist/i.test(String(r.error.message || '')))));
+  const asRes = e => ({ error: { message: (e && e.message) || 'sin conexión' } });
+  const rowOf = (...els) => { const r = mk('div', 'row'); r.append(...els); return r; };
+  // Si un re-render reemplaza el boton con foco, el foco vuelve al equivalente (mismo data-fk).
+  function keepFocus(fn) {
+    const a = document.activeElement, k = a && a.dataset && a.dataset.fk;
+    fn();
+    if (k && !a.isConnected) {
+      const n = [...document.querySelectorAll('[data-fk]')].find(x => x.dataset.fk === k);
+      if (n) n.focus({ preventScroll: true });
+    }
+  }
+
+  // ---- Dialogo modal nativo (foto ampliada, configuracion, confirmaciones). El cartel SOS lo cierra: la alarma manda. ----
+  let dlgEl = null;
+  function closeDlg() { if (dlgEl && dlgEl.open) dlgEl.close(); }
+  function openDlg(title, nodes) {
+    closeDlg();
+    const d = mk('dialog', 'dlg'); d.setAttribute('aria-labelledby', 'dlgT');
+    const head = mk('div', 'dlg-h'), h = mk('h2', '', title); h.id = 'dlgT';
+    const x = mk('button', 'ghost', 'Cerrar'); x.type = 'button'; x.addEventListener('click', () => d.close());
+    head.append(h, x);
+    d.append(head, ...nodes);
+    const prev = document.activeElement, pk = prev && prev.dataset && prev.dataset.fk;
+    d.addEventListener('close', () => {
+      d.remove(); if (dlgEl === d) dlgEl = null;
+      let t = prev && prev.isConnected ? prev : null;
+      if (!t && pk) t = [...document.querySelectorAll('[data-fk]')].find(n => n.dataset.fk === pk);
+      if (t && typeof t.focus === 'function') t.focus({ preventScroll: true });
+    });
+    document.body.append(d); dlgEl = d;
+    if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');
+    return d;
+  }
+  function askConfirm(title, nodes, yes, danger) {
+    return new Promise(res => {
+      let out = false;
+      const ok = mk('button', danger ? 'attend' : '', yes); ok.type = 'button';
+      const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
+      const d = openDlg(title, [...nodes, rowOf(ok, no)]);
+      ok.addEventListener('click', () => { out = true; d.close(); });
+      no.addEventListener('click', () => d.close());
+      d.addEventListener('close', () => res(out));
+      no.focus();
+    });
+  }
+
+  // ---- Fotos: URL firmada con cache corta (tope de memoria) ----
+  const PHOTO_KEEP = 12, SIGN_KEEP = 80;
+  const photos = new Map();      // device_id -> [{ id, created_at, media_path, cmd }] (la mas nueva primero)
+  const signedCache = new Map(), signedBusy = new Map();
+  const signedSync = path => { const c = signedCache.get(path); return c && c.exp > Date.now() + 60000 ? c.url : null; };
+  function signed(path) {
+    const hit = signedSync(path); if (hit) return Promise.resolve(hit);
+    if (signedBusy.has(path)) return signedBusy.get(path);
+    const p = (async () => {
+      try {
+        const { data, error } = await sb.storage.from('casco-media').createSignedUrl(path, 600);
+        if (error || !data || !data.signedUrl) return null;
+        signedCache.set(path, { url: data.signedUrl, exp: Date.now() + 600000 });
+        while (signedCache.size > SIGN_KEEP) signedCache.delete(signedCache.keys().next().value);
+        return data.signedUrl;
+      } catch (_) { return null; } finally { signedBusy.delete(path); }
+    })();
+    signedBusy.set(path, p);
+    return p;
+  }
+  function notePhoto(ev) {
+    if (!ev.media_path || !DEV_RE.test(ev.device_id || '')) return;
+    let a = photos.get(ev.device_id); if (!a) photos.set(ev.device_id, a = []);
+    if (a.some(x => x.id === ev.id)) return;
+    const cmd = ev.payload && typeof ev.payload === 'object' && typeof ev.payload.cmd === 'string' ? ev.payload.cmd : '';
+    a.push({ id: ev.id, created_at: ev.created_at, media_path: ev.media_path, cmd });
+    a.sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+    if (a.length > PHOTO_KEEP) a.length = PHOTO_KEEP;
+    const it = cmd ? CMD.items.get(cmd) : null;
+    if (it) { it.photo = true; announce('Foto recibida del casco ' + ev.device_id + '.'); }
+    cmdRefresh(ev.device_id);
+  }
+  function openPhoto(dev, p) {
+    const desc = 'Foto del casco ' + dev + ', ' + fmt(p.created_at);
+    const img = mk('img', 'photo-big'); img.alt = desc;
+    const err = mk('p', 'err'); err.setAttribute('role', 'alert');
+    const dl = mk('button', '', 'Descargar'); dl.type = 'button';
+    dl.setAttribute('aria-label', 'Descargar la foto del casco ' + dev + ' del ' + fmt(p.created_at));
+    const meta = mk('p', 'mute', label(dev) + ' · ' + fmt(p.created_at) + (p.cmd ? ' · pedida desde el panel' : ''));
+    signed(p.media_path).then(u => { if (u) img.src = u; else err.textContent = 'No se pudo cargar la foto.'; });
+    dl.addEventListener('click', async () => {
+      err.textContent = ''; dl.disabled = true;
+      try {
+        const u = await signed(p.media_path); if (!u) throw new Error('sin enlace');
+        const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status);
+        const url = URL.createObjectURL(await r.blob());
+        saveUrl(url, 'vigia-' + dev + '_' + stampOf(new Date(p.created_at)) + '.jpg');
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      } catch (e) { err.textContent = 'No se pudo descargar: ' + ((e && e.message) || 'error') + '. Probá con clic derecho sobre la foto.'; }
+      dl.disabled = false;
+    });
+    openDlg('Foto del casco ' + dev, [img, meta, rowOf(dl), err]);
+  }
+  function fillThumbs(strip, dev) {
+    const arr = photos.get(dev) || [];
+    if (!arr.length) { strip.replaceChildren(mk('span', 'mute', 'Sin fotos todavía. Tocá “Sacar foto”.')); return; }
+    strip.replaceChildren(...arr.slice(0, 6).map(p => {
+      const b = mk('button', 'thumb'); b.type = 'button';
+      const desc = 'Foto del casco ' + dev + ', ' + fmt(p.created_at) + (p.cmd ? ' (pedida desde el panel)' : '');
+      b.setAttribute('aria-label', 'Ampliar: ' + desc);
+      b.dataset.fk = dev + '|th|' + p.id;
+      const img = mk('img'); img.alt = desc; img.width = 96; img.height = 72;
+      const u = signedSync(p.media_path);
+      if (u) img.src = u; else signed(p.media_path).then(x => { if (x) img.src = x; else b.classList.add('thumb-bad'); });
+      b.append(img, mk('span', 'thumb-t mono', fmtAR(p.created_at).slice(11)));
+      b.addEventListener('click', () => openPhoto(dev, p));
+      return b;
+    }));
+  }
+
+  // ---- Comandos a pedido: device_commands + device_command_acks (Realtime + poll corto de respaldo) ----
+  const CMD_WAIT_MS = 40000, CMD_POLL_MS = 2000, CMD_KEEP = 40;
+  const CMD = { avail: 'unknown', items: new Map(), last: new Map(), torch: new Map(), ch: null, timer: null, polling: false, seq: 0 };
+  const cmdViews = new Set();
+  const ACTION_LBL = { photo: 'Foto', torch_on: 'Linterna encendida', torch_off: 'Linterna apagada', restart_agent: 'Reinicio del agente', ping: 'Enlace' };
+  function announce(t) { const el = $('cmdLive'); if (el) el.textContent = t; }
+  function cmdText(it) {
+    const a = ACTION_LBL[it.action] || it.action;
+    if (it.state === 'na') return MISSING_TXT;
+    if (it.state === 'pending') return a + ': pendiente, esperando al casco…';
+    if (it.state === 'timeout') return a + ': sin respuesta del casco (puede estar sin señal o apagado).';
+    if (it.state === 'error') return a + ': error' + (it.detail ? ' · ' + it.detail : '') + '.';
+    let t = a + ': listo';
+    if (it.action === 'ping' && it.took != null) t += ' · respuesta en ' + n1(it.took / 1000) + ' s';
+    if (it.action === 'photo') t += it.photo ? ' · foto recibida' : ' · esperando la imagen…';
+    if (it.detail) t += ' · ' + it.detail;
+    return t;
+  }
+  function cmdRefresh(id) {
+    for (const v of [...cmdViews]) { if (!v.box.isConnected) { cmdViews.delete(v); continue; } if (!id || v.id === id) v.update(); }
+  }
+  function cmdBar(id) {
+    const box = mk('div', 'cmdbar'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Comandos a pedido del casco ' + id);
+    const mkb = (txt, k, aria) => { const b = mk('button', 'ghost', txt); b.type = 'button'; b.dataset.fk = id + '|' + k; b.setAttribute('aria-label', aria); return b; };
+    const bPhoto = mkb('Sacar foto', 'photo', 'Sacar una foto con el casco ' + id);
+    const bTorch = mkb('Linterna: encender', 'torch', 'Encender la linterna del casco ' + id);
+    const bPing = mkb('Probar enlace', 'ping', 'Probar el enlace con el casco ' + id);
+    const row = rowOf(bPhoto, bTorch, bPing);
+    if (isAdmin()) {   // configuracion y reinicio: solo admin (RLS lo exige tambien en el servidor)
+      const bCfg = mkb('Configuración del casco', 'cfg', 'Configuración remota del casco ' + id);
+      const bRst = mkb('Reiniciar agente', 'rst', 'Reiniciar el agente del casco ' + id);
+      bCfg.addEventListener('click', () => openConfig(id));
+      bRst.addEventListener('click', () => askRestart(id));
+      row.append(bCfg, bRst);
+    }
+    const stat = mk('p', 'mute cmdstat');
+    const strip = mk('div', 'thumbs');
+    box.append(row, stat, strip);
+    bPhoto.addEventListener('click', () => sendCmd(id, 'photo'));
+    bTorch.addEventListener('click', () => sendCmd(id, CMD.torch.get(id) === true ? 'torch_off' : 'torch_on'));
+    bPing.addEventListener('click', () => sendCmd(id, 'ping'));
+    const v = { id, box, update() {
+      const it = CMD.last.get(id);
+      stat.textContent = it ? cmdText(it) : (CMD.avail === 'missing' ? MISSING_TXT : '');
+      stat.classList.toggle('bad', !!it && (it.state === 'error' || it.state === 'timeout'));
+      const on = CMD.torch.get(id) === true;
+      bTorch.textContent = 'Linterna: ' + (on ? 'apagar' : 'encender');
+      bTorch.setAttribute('aria-label', (on ? 'Apagar' : 'Encender') + ' la linterna del casco ' + id);
+      fillThumbs(strip, id);
+    } };
+    v.update(); cmdViews.add(v);
+    return box;
+  }
+  const cmdBusy = (dev, actions) => [...CMD.items.values()].some(x => x.dev === dev && x.state === 'pending' && actions.includes(x.action));
+  async function sendCmd(dev, action, params) {
+    if (!DEV_RE.test(dev)) return;
+    const kind = action === 'torch_on' || action === 'torch_off' ? ['torch_on', 'torch_off'] : [action];
+    if (cmdBusy(dev, kind)) return;   // ya hay uno igual esperando al casco
+    const key = 'tmp-' + (++CMD.seq);
+    const it = { id: null, dev, action, at: Date.now(), srvAt: null, state: 'pending', detail: '', took: null, photo: false };
+    CMD.items.set(key, it); CMD.last.set(dev, it); cmdRefresh(dev);
+    let res;
+    try { res = await sb.from('device_commands').insert({ device_id: dev, action, params: params || {} }).select('id,created_at').single(); }
+    catch (e) { res = asRes(e); }
+    CMD.items.delete(key);
+    if (res.error || !res.data) {
+      if (tableMissing(res)) { CMD.avail = 'missing'; it.state = 'na'; }
+      else {
+        it.state = 'error';
+        const e = res.error || {}, m = String(e.message || '');
+        if (isAuthErr(e)) { sessionExpired(); it.detail = 'sesión vencida'; }
+        else if (noPerm(e)) it.detail = 'tu rol no puede enviar esta orden';
+        else if (e.code === '54000' || /rate limit/i.test(m)) it.detail = 'demasiadas órdenes en poco tiempo (máximo 10 por minuto)';
+        else it.detail = 'no se pudo enviar (' + m.slice(0, 80) + ')';
+      }
+      cmdRefresh(dev); announce(cmdText(it));
+      return;
+    }
+    CMD.avail = 'ok';
+    it.id = res.data.id; it.srvAt = res.data.created_at;
+    CMD.items.set(it.id, it);
+    while (CMD.items.size > CMD_KEEP) {   // tope: se sueltan los resueltos mas viejos
+      const old = [...CMD.items.values()].find(x => x.state !== 'pending');
+      if (!old) break; CMD.items.delete(old.id);
+    }
+    ensureCmdChannel(); startCmdPoll(); cmdRefresh(dev);
+  }
+  function applyCmdAck(a) {
+    const it = a && CMD.items.get(a.command_id);
+    if (!it || (it.state !== 'pending' && it.state !== 'timeout')) return;
+    it.state = a.ok === true ? 'ok' : 'error';
+    it.detail = String(a.detail || '').slice(0, 200);
+    if (a.created_at && it.srvAt) { const d = new Date(a.created_at) - new Date(it.srvAt); if (isFinite(d) && d >= 0) it.took = d; }
+    if (it.state === 'ok') { if (it.action === 'torch_on') CMD.torch.set(it.dev, true); else if (it.action === 'torch_off') CMD.torch.set(it.dev, false); }
+    cmdRefresh(it.dev); announce(label(it.dev) + ' · ' + cmdText(it));
+  }
+  function ensureCmdChannel() {
+    if (CMD.ch) return;
+    CMD.ch = sb.channel('cmd-acks').on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'device_command_acks' }, p => applyCmdAck(p.new)).subscribe();
+  }
+  function startCmdPoll() { if (!CMD.timer) CMD.timer = setInterval(pollCmds, CMD_POLL_MS); }
+  async function pollCmds() {
+    const now = Date.now();
+    const pend = [...CMD.items.values()].filter(x => x.state === 'pending');
+    for (const it of pend) if (now - it.at > CMD_WAIT_MS) { it.state = 'timeout'; cmdRefresh(it.dev); announce(label(it.dev) + ' · ' + cmdText(it)); }
+    const live = pend.filter(x => x.state === 'pending');
+    if (!live.length) { clearInterval(CMD.timer); CMD.timer = null; return; }
+    if (CMD.polling) return;
+    CMD.polling = true;
+    try {
+      const r = await sb.from('device_command_acks').select('command_id,device_id,ok,detail,created_at').in('command_id', live.map(x => x.id));
+      if (!r.error && Array.isArray(r.data)) r.data.forEach(applyCmdAck);
+    } catch (_) {}
+    CMD.polling = false;
+  }
+
+  // ---- Reiniciar agente (admin) ----
+  async function askRestart(dev) {
+    if (!isAdmin()) return;
+    const ok = await askConfirm('¿Reiniciar el agente del casco ' + dev + '?',
+      [mk('p', '', 'El agente del casco se cierra y vuelve a abrir. Durante unos segundos el casco no manda datos ni recibe órdenes.')], 'Sí, reiniciar el agente', true);
+    if (ok) sendCmd(dev, 'restart_agent');
+  }
+
+  // ---- Configuracion remota (admin): device_config (docs/PROTOCOLO-COMANDOS.md seccion 3) ----
+  // Rangos de la UI (el casco valida otra vez); vacio = no se manda esa clave y el casco usa su valor local.
+  const CFG_FIELDS = [
+    { k: 'fall_g_threshold', t: 'dec', min: 1.5, max: 8, l: 'Umbral de caída en g' },
+    { k: 'inactivity_s', t: 'int', min: 0, max: 3600, l: 'Aviso por inmovilidad en segundos (0 = apagado)', ok: v => v === 0 || v >= 30, rule: '0 o de 30 a 3600' },
+    { k: 'not_worn_s', t: 'int', min: 30, max: 3600, l: 'Casco sin usar tras (segundos)' },
+    { k: 'heartbeat_s', t: 'int', min: 10, max: 600, l: 'Latido del casco cada (segundos)' },
+    { k: 'location_s', t: 'int', min: 5, max: 600, l: 'Ubicación cada (segundos)' },
+    { k: 'location_s_alert', t: 'int', min: 1, max: 120, l: 'Ubicación durante una alerta cada (segundos)' },
+    { k: 'broadcast_volume', t: 'int', min: 0, max: 100, l: 'Volumen de órdenes y avisos (%)' },
+    { k: 'stream_audio', t: 'bool', l: 'Audio del casco en el video en vivo' },
+    { k: 'voice_commands', t: 'bool', l: 'Comandos de voz' },
+    { k: 'torch_allowed', t: 'bool', l: 'Permitir la linterna a pedido' },
+  ];
+  const cfgRule = f => f.rule || ('de ' + String(f.min).replace('.', ',') + ' a ' + String(f.max).replace('.', ','));
+  // raw: { clave: texto }. Devuelve { cfg, errors }.
+  function parseCfg(raw) {
+    const cfg = {}, errors = [];
+    for (const f of CFG_FIELDS) {
+      const s = String(raw[f.k] == null ? '' : raw[f.k]).trim();
+      if (s === '') continue;
+      if (f.t === 'bool') { if (s === 'true' || s === 'false') cfg[f.k] = s === 'true'; else errors.push(f.l + ': valor inválido.'); continue; }
+      if (!(f.t === 'dec' ? /^\d+([.,]\d+)?$/ : /^\d+$/).test(s)) { errors.push(f.l + ': escribí un número ' + (f.t === 'int' ? 'entero ' : '') + cfgRule(f) + '.'); continue; }
+      const v = Number(s.replace(',', '.'));
+      if (!(v >= f.min && v <= f.max) || (f.ok && !f.ok(v))) { errors.push(f.l + ': debe estar ' + cfgRule(f) + '.'); continue; }
+      cfg[f.k] = v;
+    }
+    if (cfg.location_s_alert != null && cfg.location_s != null && cfg.location_s_alert > cfg.location_s)
+      errors.push('Ubicación durante una alerta no puede ser más lenta que la normal.');
+    return { cfg, errors };
+  }
+  async function openConfig(dev) {
+    if (!isAdmin()) return;
+    const form = mk('form', 'section cfgform'); form.noValidate = true;
+    const ins = {};
+    form.append(mk('p', 'mute', 'Dejá vacío lo que no querés cambiar: el casco usa su valor local. Aplica al iniciar el agente y cada 5 minutos.'));
+    for (const f of CFG_FIELDS) {
+      let el;
+      if (f.t === 'bool') { el = mk('select'); el.append(new Option('(sin cambios)', ''), new Option('Sí', 'true'), new Option('No', 'false')); }
+      else { el = mk('input'); el.type = 'text'; el.inputMode = f.t === 'dec' ? 'decimal' : 'numeric'; el.autocomplete = 'off'; el.placeholder = cfgRule(f); }
+      el.id = 'cfg_' + f.k; ins[f.k] = el;
+      form.append(fld(f.l + (f.t === 'bool' ? '' : ' (' + cfgRule(f) + ')'), el));
+    }
+    const msg = mk('p', 'mute', 'Leyendo la configuración actual…'); msg.setAttribute('role', 'status');
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const go = mk('button', '', 'Guardar configuración'); go.type = 'submit'; go.disabled = true;
+    form.append(msg, rowOf(go), err);
+    openDlg('Configuración del casco ' + dev, [form]);
+    const first = form.querySelector('input,select'); if (first) first.focus();
+    let r;
+    try { r = await sb.from('device_config').select('config,updated_at').eq('device_id', dev).maybeSingle(); } catch (e) { r = asRes(e); }
+    if (!form.isConnected) return;
+    if (tableMissing(r)) { msg.textContent = MISSING_TXT; return; }
+    if (r.error) { msg.textContent = ''; err.textContent = noPerm(r.error) ? 'Sin permiso para leer la configuración.' : 'No se pudo leer la configuración: ' + r.error.message; return; }
+    const cur = r.data && r.data.config && typeof r.data.config === 'object' ? r.data.config : {};
+    for (const f of CFG_FIELDS) if (cur[f.k] != null && typeof cur[f.k] !== 'object') ins[f.k].value = String(cur[f.k]).replace('.', f.t === 'dec' ? ',' : '.');
+    msg.textContent = r.data ? 'Configuración actual cargada' + (r.data.updated_at ? ' (última actualización: ' + fmt(r.data.updated_at) + ').' : '.') : 'Este casco todavía no tiene configuración remota.';
+    go.disabled = false;
+    form.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = '';
+      const raw = {}; for (const f of CFG_FIELDS) raw[f.k] = ins[f.k].value;
+      const p = parseCfg(raw);
+      if (p.errors.length) { err.textContent = p.errors.join(' '); return; }
+      go.disabled = true;
+      let res;
+      try { res = await sb.from('device_config').upsert({ device_id: dev, config: p.cfg }, { onConflict: 'device_id' }); } catch (ex) { res = asRes(ex); }
+      go.disabled = false;
+      if (tableMissing(res)) { err.textContent = MISSING_TXT; return; }
+      if (res.error) {
+        if (isAuthErr(res.error)) { sessionExpired(); return; }
+        err.textContent = noPerm(res.error) ? 'Sin permiso: solo un administrador puede cambiar la configuración.' : 'No se pudo guardar: ' + res.error.message;
+        return;
+      }
+      msg.textContent = 'Guardado. El casco la aplica al iniciar el agente y cada 5 minutos.';
+      announce('Configuración del casco ' + dev + ' guardada.');
+    });
+  }
+
+  // ---- Reportes e Historial: filtros + tabla paginada por keyset (created_at, id), 50 por pagina ----
+  const RPT_COLS = 'event_id,created_at,device_id,type,payload,lat,lng,acked_at,acked_by_email,note,tta_s';
+  const ALERT_TYPES = ['sos', 'fall', 'geofence', 'not_worn', 'inactive'];
+  const HIST_TYPES = [...ALERT_TYPES, 'equip', 'fall_cancel', 'photo', 'video'];
+  const PAGE_N = 50, CSV_PAGE = 250, CSV_MAX_PAGES = 20;
+  const QR = { view: 'unknown' };   // vista incident_report: 'unknown' | 'ok' | 'missing'
+  const dayStartISO = (ymd, plus) => new Date(new Date(ymd + 'T00:00:00-03:00').getTime() + (plus || 0) * 86400000).toISOString();   // Argentina = UTC-3 fijo
+  const ymdAgo = d => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date(Date.now() - d * 86400000));
+  function qFilters(q, f, idCol, cur) {
+    if (f.from) q = q.gte('created_at', dayStartISO(f.from));
+    if (f.to) q = q.lt('created_at', dayStartISO(f.to, 1));
+    if (f.dev) q = q.eq('device_id', f.dev);
+    if (cur) q = q.or('created_at.lt.' + cur.at + ',and(created_at.eq.' + cur.at + ',' + idCol + '.lt.' + cur.id + ')');
+    return q.order('created_at', { ascending: false }).order(idCol, { ascending: false });
+  }
+  const normView = r => ({ id: String(r.event_id), at: r.created_at, dev: r.device_id, type: r.type, payload: r.payload, lat: numOf(r.lat), lng: numOf(r.lng), att: true,
+    ackAt: r.acked_at || null, ackBy: r.acked_by_email || '', note: r.note || '',
+    tta: numOf(r.tta_s) != null ? numOf(r.tta_s) : (r.acked_at ? Math.max(0, (new Date(r.acked_at) - new Date(r.created_at)) / 1000) : null) });
+  const normEvent = (e, a) => ({ id: String(e.id), at: e.created_at, dev: e.device_id, type: e.type, payload: e.payload, lat: numOf(e.lat), lng: numOf(e.lng), att: needsAttention(e),
+    ackAt: a ? a.acked_at : null, ackBy: a ? a.acked_by_email || '' : '', note: a ? a.note || '' : '',
+    tta: a && a.acked_at ? Math.max(0, (new Date(a.acked_at) - new Date(e.created_at)) / 1000) : null });
+  // -> { rows (<= n), more, src }. Vista incident_report si existe; si no, events + event_acks (mismo resultado).
+  async function fetchPage(o, f, cur, n) {
+    if (o.view && QR.view !== 'missing') {
+      let q = sb.from('incident_report').select(RPT_COLS);
+      if (f.type) q = q.eq('type', f.type);
+      if (f.st === 'ack') q = q.not('acked_at', 'is', null); else if (f.st === 'pend') q = q.is('acked_at', null);
+      let r;
+      try { r = await qFilters(q, f, 'event_id', cur).limit(n + 1); } catch (e) { r = asRes(e); }
+      if (!r.error && Array.isArray(r.data)) {
+        QR.view = 'ok';
+        return { rows: r.data.slice(0, n).map(normView), more: r.data.length > n, src: 'vista' };
+      }
+      if (tableMissing(r)) QR.view = 'missing'; else throw r.error || new Error('sin datos');
+    }
+    const out = [];
+    let c = cur, exhausted = false;
+    for (let g = 0; g < 8 && out.length <= n && !exhausted; g++) {
+      const r = await qFilters(sb.from('events').select(EV_COLS).in('type', f.type ? [f.type] : o.types), f, 'id', c).limit(n + 1);
+      if (r.error) throw r.error;
+      const data = r.data || [];
+      const need = data.filter(needsAttention).map(e => e.id), am = new Map();
+      if (need.length) { const ar = await fetchAcks(need); if (ar.error) throw ar.error; ar.rows.forEach(a => am.set(a.event_id, a)); }
+      for (const e of data) {
+        const att = needsAttention(e);
+        if ((o.alertsOnly || f.st) && !att) continue;   // reportes: solo lo que requiere Atender; el estado solo aplica a alertas
+        const a = am.get(e.id);
+        if ((f.st === 'ack' && !a) || (f.st === 'pend' && a)) continue;
+        out.push(normEvent(e, a));
+      }
+      if (data.length <= n) exhausted = true; else c = { at: data[data.length - 1].created_at, id: data[data.length - 1].id };
+    }
+    return { rows: out.slice(0, n), more: out.length > n, src: 'eventos' };
+  }
+  const detailOf = r => {
+    const ev = { type: r.type, payload: r.payload };
+    const b = payloadBits(ev);
+    if (r.type === 'fall' && isManDown(ev)) b.unshift('hombre caído');
+    return b.join(' · ');
+  };
+  const stateOf = r => (!r.att ? 'Informativo' : r.ackAt ? 'Atendida' : 'Pendiente');
+  const csvRow = r => [fmtAR(r.at), r.dev, personOf.get(r.dev) || '', typeLbl(r.type), detailOf(r),
+    llOk(r.lat, r.lng) ? String(r.lat).replace('.', ',') : '', llOk(r.lat, r.lng) ? String(r.lng).replace('.', ',') : '',
+    stateOf(r), r.ackBy, r.ackAt ? fmtAR(r.ackAt) : '', r.note, r.tta != null ? Math.round(r.tta) : '', r.id];
+  const CSV_HEAD = ['fecha', 'casco', 'persona', 'tipo', 'detalle', 'latitud', 'longitud', 'estado', 'atendio_por', 'fecha_atencion', 'nota', 'segundos_hasta_atender', 'id_evento'];
+
+  function buildQuery(host, o) {
+    const st = { cursors: [null], page: 0, rows: [], more: false, busy: false, applied: null, loaded: false, src: '' };
+    const form = mk('form', 'qform'); form.noValidate = true;
+    const inFrom = inp('date', ymdAgo(7)), inTo = inp('date', ymdAgo(0));
+    const selDev = sel([['', 'Todos los cascos']], ''), selType = sel([['', 'Todos los tipos'], ...o.types.map(t => [t, typeLbl(t)])], '');
+    const selSt = sel([['', 'Todas'], ['ack', 'Atendidas'], ['pend', 'Pendientes']], '');
+    const g = mk('div', 'grid2 qgrid');
+    g.append(fld('Desde', inFrom), fld('Hasta', inTo), fld('Casco', selDev), fld('Tipo', selType), fld('Estado', selSt));
+    const bGo = mk('button', '', 'Buscar'); bGo.type = 'submit';
+    const bCsv = mk('button', 'ghost', 'Exportar CSV'); bCsv.type = 'button';
+    const bPrint = mk('button', 'ghost', 'Imprimir / PDF'); bPrint.type = 'button';
+    const acts = rowOf(bGo, bCsv, bPrint);
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    form.append(g, acts, err);
+    const stat = mk('p', 'mute'); stat.setAttribute('role', 'status');
+    const printH = mk('p', 'print-only');
+    const table = mk('table', 'qtable');
+    const cap = mk('caption', 'sr-only', o.title); table.append(cap);
+    const head = mk('thead'), hr = mk('tr');
+    for (const h of ['Fecha', 'Casco', 'Tipo', 'Detalle', 'Ubicación', 'Estado', 'Atendió', 'Nota', 'Hasta atender']) { const th = mk('th', '', h); th.scope = 'col'; hr.append(th); }
+    head.append(hr);
+    const body = mk('tbody');
+    table.append(head, body);
+    const wrap = mk('div', 'tablewrap'); wrap.append(table);
+    const bPrev = mk('button', 'ghost', 'Anterior'), bNext = mk('button', 'ghost', 'Siguiente');
+    bPrev.type = bNext.type = 'button';
+    const pageTxt = mk('span', 'mute');
+    const pager = mk('div', 'row pager'); pager.append(bPrev, pageTxt, bNext);
+    host.replaceChildren(form, printH, stat, wrap, pager);
+    const setStat = (t, bad) => { stat.textContent = t; stat.classList.toggle('bad', !!bad); };
+    const filters = () => ({ from: inFrom.value, to: inTo.value, dev: selDev.value, type: selType.value, st: selSt.value });
+    const describe = f => 'Desde ' + (f.from || '—') + ' hasta ' + (f.to || '—') + ' · casco: ' + (f.dev ? label(f.dev) : 'todos') + ' · tipo: ' + (f.type ? typeLbl(f.type) : 'todos') +
+      ' · estado: ' + (f.st === 'ack' ? 'atendidas' : f.st === 'pend' ? 'pendientes' : 'todas');
+    const fillDevs = () => {
+      const ids = knownDevices(), sig = ids.map(label).join('|');
+      if (selDev.dataset.sig === sig) return;
+      const cur = selDev.value;
+      selDev.dataset.sig = sig;
+      selDev.replaceChildren(new Option('Todos los cascos', ''), ...ids.map(i => new Option(label(i), i)));
+      selDev.value = ids.includes(cur) ? cur : '';
+    };
+    function paint() {
+      const rows = st.rows.map(r => {
+        const tr = mk('tr', r.att && !r.ackAt ? 'pend' : '');
+        const c = (t, cls) => { const td = mk('td', cls || '', t); tr.append(td); return td; };
+        c(fmtAR(r.at), 'mono'); c(label(r.dev)); c(typeLbl(r.type)); c(detailOf(r) || '—');
+        c(llOk(r.lat, r.lng) ? coordTxt(r.lat, r.lng) : '—', 'mono');
+        c(stateOf(r), r.att && !r.ackAt ? 'bad' : '');
+        c(r.ackBy ? r.ackBy + (r.ackAt ? ' · ' + fmtAR(r.ackAt) : '') : '—'); c(r.note || '—');
+        c(r.tta != null ? clock(r.tta) : '—', 'mono');
+        return tr;
+      });
+      body.replaceChildren(...(rows.length ? rows : [(() => {
+        const tr = mk('tr'), td = mk('td', 'empty mute', st.applied ? 'Sin resultados para estos filtros.' : 'Elegí los filtros y tocá Buscar.');
+        td.colSpan = 9; tr.append(td); return tr;
+      })()]));
+      const a = st.page * PAGE_N;
+      pageTxt.textContent = st.rows.length ? 'Página ' + (st.page + 1) + ' · filas ' + (a + 1) + ' a ' + (a + st.rows.length) : 'Página ' + (st.page + 1);
+      bPrev.disabled = st.busy || st.page === 0; bNext.disabled = st.busy || !st.more;
+      bCsv.disabled = bPrint.disabled = st.busy || !st.rows.length;
+    }
+    async function load(page) {
+      if (st.busy || !st.applied) return;
+      st.busy = true; setStat('Cargando…'); paint();
+      try {
+        const r = await fetchPage(o, st.applied, st.cursors[page], PAGE_N);
+        st.page = page; st.rows = r.rows; st.more = r.more; st.src = r.src; st.loaded = true;
+        if (r.more) { const l = r.rows[r.rows.length - 1]; st.cursors[page + 1] = { at: l.at, id: l.id }; }
+        setStat((r.rows.length ? '' : 'Sin resultados. ') + (o.view && r.src === 'eventos' ? 'La vista de reportes del servidor todavía no está disponible: se calcula desde los eventos.' : ''));
+      } catch (e) {
+        if (isAuthErr(e)) { sessionExpired(); setStat('Sesión vencida.', true); }
+        else {
+          setStat('No se pudo cargar: ' + (noPerm(e) ? 'sin permiso para ver estos datos' : String((e && e.message) || 'error')) + '.', true);
+          const rb = mk('button', 'ghost', 'Reintentar'); rb.type = 'button'; rb.addEventListener('click', () => load(page));
+          stat.append(' ', rb);
+        }
+      }
+      st.busy = false; paint();
+    }
+    form.addEventListener('submit', e => {
+      e.preventDefault(); err.textContent = '';
+      const f = filters();
+      if (f.from && f.to && f.from > f.to) { err.textContent = 'La fecha Desde es posterior a Hasta.'; return; }
+      st.applied = f; st.cursors = [null]; st.page = 0;
+      load(0);
+    });
+    bPrev.addEventListener('click', () => load(st.page - 1));
+    bNext.addEventListener('click', () => load(st.page + 1));
+    bPrint.addEventListener('click', () => {
+      printH.textContent = o.title + ' · ' + describe(st.applied || filters()) + ' · generado ' + fmtAR(new Date().toISOString()) + ' (hora de Argentina) · página ' + (st.page + 1);
+      window.print();
+    });
+    bCsv.addEventListener('click', async () => {
+      if (st.busy || !st.applied) return;
+      st.busy = true; paint();
+      const all = [];
+      let cur = null, trunc = false;
+      try {
+        for (let i = 0; i < CSV_MAX_PAGES; i++) {
+          setStat('Exportando… ' + all.length + ' filas');
+          const r = await fetchPage(o, st.applied, cur, CSV_PAGE);
+          all.push(...r.rows);
+          if (!r.more) break;
+          if (i === CSV_MAX_PAGES - 1) trunc = true;
+          const l = r.rows[r.rows.length - 1]; cur = { at: l.at, id: l.id };
+        }
+        csvDownload(o.csv + '_' + today() + '.csv', CSV_HEAD, all.map(csvRow));
+        setStat('CSV exportado: ' + all.length + ' filas' + (trunc ? ' (tope de ' + CSV_PAGE * CSV_MAX_PAGES + ': acotá las fechas para ver el resto)' : '') + '.');
+      } catch (e) { setStat('No se pudo exportar: ' + String((e && e.message) || 'error') + '.', true); }
+      st.busy = false; paint();
+    });
+    paint();
+    return {
+      show() { fillDevs(); if (!st.applied) { st.applied = filters(); load(0); } },
+      reset() { st.applied = null; st.rows = []; st.more = false; st.cursors = [null]; st.page = 0; setStat(''); paint(); },
+    };
+  }
+  const repQ = buildQuery($('repHost'), { title: 'Reporte de incidentes', csv: 'reporte_incidentes', types: ALERT_TYPES, view: true, alertsOnly: true });
+  const histQ = buildQuery($('histQuery'), { title: 'Historial de eventos', csv: 'historial_eventos', types: HIST_TYPES, view: false, alertsOnly: false });
+  $('histSearch').addEventListener('toggle', () => { if ($('histSearch').open) histQ.show(); });
+
+  // ---- Roles en la UI (el servidor tambien lo exige por RLS): admin hace todo; supervisor (viewer) mira, atiende y manda mensajes ----
+  function applyRole() {
+    const adm = isAdmin();
+    $('who').textContent = (($('who').dataset.email || '') + ' · ' + (adm ? 'admin' : 'supervisor')).replace(/^ · /, '');
+    $('btnEvac').disabled = !adm;
+    $('evacRoleNote').classList.toggle('hidden', adm);
+    if (!adm) closeEvac();
+    for (const id of ['gDrawCircle', 'gDrawPoly', 'gAddPoint']) $(id).disabled = !adm;
+    $('mapRoleNote').classList.toggle('hidden', adm);
+    if (!adm && typeof setMode === 'function') setMode(null);
+  }
+  const roNote = what => mk('p', 'mute rolenote', 'Tu rol (supervisor) es de solo lectura: ' + what + ' las hace un administrador.');
+  function resetT4() {
+    closeDlg();
+    CMD.items.clear(); CMD.last.clear(); CMD.torch.clear(); CMD.avail = 'unknown';
+    clearInterval(CMD.timer); CMD.timer = null; CMD.polling = false;
+    if (CMD.ch) { try { sb.removeChannel(CMD.ch); } catch (_) {} CMD.ch = null; }
+    photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear();
+    QR.view = 'unknown'; repQ.reset(); histQ.reset();
   }
 
   // ---- Sesion vencida: aviso fijo + volver al login (el feed queda a la vista, sin perderlo en silencio) ----
@@ -2724,7 +3358,7 @@
     const since = new Date(Date.now() - PEND_DAYS * 86400000).toISOString();
     const [recent, olds] = await Promise.all([
       sb.from('events').select(EV_COLS).neq('type', 'heartbeat').neq('type', 'location').order('created_at', { ascending: false }).limit(50),
-      sb.from('events').select(EV_COLS).in('type', ['sos', 'fall', 'geofence']).gte('created_at', since).order('created_at', { ascending: false }).limit(500),
+      sb.from('events').select(EV_COLS).in('type', ['sos', 'fall', 'geofence', 'not_worn', 'inactive']).gte('created_at', since).order('created_at', { ascending: false }).limit(500),
     ]);
     if (recent.error) return { error: recent.error };
     const byId = new Map(recent.data.map(e => [e.id, e]));
@@ -2783,7 +3417,6 @@
     $('logout').classList.remove('hidden');
     $('connWrap').classList.remove('hidden');
     $('pendBox').setAttribute('aria-busy', 'true');
-    $('rundeLink').classList.toggle('hidden', OWN_LIVE);   // RundeCap pausado: no ofrecer su camara
     $('who').textContent = session.user.email;
     $('feed').replaceChildren(); $('feedDone').replaceChildren(); $('pendList').replaceChildren();
     {
@@ -2791,7 +3424,8 @@
       if (!r) { try { const c = JSON.parse(atob(String(session.access_token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); r = c.app_metadata && c.app_metadata.role; } catch (_) {} }
       ROLE = r === 'admin' ? 'admin' : 'viewer';
     }
-    me = session.user;
+    $('who').dataset.email = session.user.email;
+    resetT4(); applyRole();
     // Estado limpio (Reintentar / nuevo ingreso): sin tarjetas fantasma de la sesion anterior.
     cards.clear(); pending.clear(); acks.clear(); pendEls.clear(); devOf.clear(); evAt.clear();
     devState.clear(); hAlerts.clear(); hSig = ''; posLoaded = false; lastPos.clear(); trail.clear(); geoInfos.clear(); lastEv = null;
@@ -2900,6 +3534,13 @@
   };
   new MutationObserver(syncConn).observe($('status'), { childList: true, characterData: true, subtree: true });
   syncConn();
+  // Limpieza al cerrar la pagina (no si va a bfcache): timers y canales.
+  window.addEventListener('pagehide', e => {
+    if (e.persisted) return;
+    for (const t of [escTimer, sirenT, CMD.timer, eqTimer, geoTimer, mapTimer, rqT, armTimer]) { clearInterval(t); clearTimeout(t); }
+    stopSiren(); closeNotifs();
+    for (const c of [channel, chOrders, chGeo, CMD.ch]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
+  });
   window.addEventListener('offline', () => { $('status').textContent = 'Sin conexión a internet'; });
   window.addEventListener('online', () => { $('status').textContent = 'Reconectando…'; });
 
