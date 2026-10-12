@@ -44,6 +44,12 @@
   button.attend { background:var(--sosbg); color:#fff; font-weight:600; }
   button[disabled] { opacity:.6; cursor:wait; }
   .hidden { display:none !important; }
+  .tabs { display:flex; gap:8px; margin:0 0 12px; border-bottom:1px solid var(--line); padding-bottom:8px; flex-wrap:wrap; }
+  .tabs [role="tab"] { background:transparent; color:var(--ink); border:1px solid transparent; }
+  .tabs [role="tab"][aria-selected="true"] { background:var(--card); border-color:var(--line); font-weight:600; }
+  .tabs [role="tab"]:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  .count { display:inline-block; min-width:1.6em; padding:0 6px; border-radius:99px; background:var(--line); color:var(--ink); font-size:12px; text-align:center; }
+  li.empty { padding:8px 0; }
   .skip { position:absolute; left:-999px; top:8px; background:var(--card); color:var(--ink); padding:8px 12px; border-radius:8px; z-index:10; }
   .skip:focus { left:8px; }
   #sos button { margin-left:12px; background:#fff; color:#8e1b1b; font-weight:600; }
@@ -91,13 +97,23 @@
       <a id="rundeLink" class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo (Runde)</a>
       <span id="status" class="mute" role="status">Conectando…</span>
     </div>
-    <section id="devices" class="card" aria-label="Estado de los cascos">
-      <h2>Cascos</h2>
-      <div id="devList" class="mute">Sin datos de cascos todavía.</div>
-    </section>
-    <div id="lives" class="hidden"></div>
-    <h2 class="mute" style="font-size:16px;margin:0 0 8px">Eventos recientes</h2>
-    <ul id="feed"></ul>
+    <div class="tabs" role="tablist" aria-label="Secciones del panel">
+      <button type="button" role="tab" id="tabMain" aria-selected="true" aria-controls="panelMain">Principal</button>
+      <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">Atendidos <span id="doneCount" class="count">0</span></button>
+    </div>
+    <div id="panelMain" role="tabpanel" aria-labelledby="tabMain">
+      <section id="devices" class="card" aria-label="Estado de los cascos">
+        <h2>Cascos</h2>
+        <div id="devList" class="mute">Sin datos de cascos todavía.</div>
+      </section>
+      <div id="lives" class="hidden"></div>
+      <h2 class="mute" style="font-size:16px;margin:0 0 8px">Eventos recientes</h2>
+      <ul id="feed"></ul>
+    </div>
+    <div id="panelDone" role="tabpanel" aria-labelledby="tabDone" class="hidden">
+      <h2 class="mute" style="font-size:16px;margin:0 0 8px">SOS y caídas atendidos</h2>
+      <ul id="feedDone"></ul>
+    </div>
   </section>
 </main>
 
@@ -416,11 +432,42 @@
     li.append(box);
   }
 
+  // ---- Pestanas: Principal (eventos y alertas pendientes) / Atendidos (SOS y caidas ya atendidos) ----
+  function syncEmpty() {
+    for (const [id, msg] of [['feed', 'Sin eventos todavía.'], ['feedDone', 'Todavía no hay alertas atendidas.']]) {
+      const ul = $(id);
+      ul.querySelectorAll(':scope > li.empty').forEach(n => n.remove());
+      if (!ul.children.length) { const li = mk('li', 'empty mute', msg); ul.append(li); }
+    }
+    $('doneCount').textContent = String($('feedDone').querySelectorAll(':scope > li:not(.empty)').length);
+  }
+  function showTab(name) {
+    const done = name === 'done';
+    $('panelMain').classList.toggle('hidden', done);
+    $('panelDone').classList.toggle('hidden', !done);
+    for (const [id, on] of [['tabMain', !done], ['tabDone', done]]) {
+      $(id).setAttribute('aria-selected', String(on));
+      $(id).tabIndex = on ? 0 : -1;
+    }
+  }
+  $('tabMain').addEventListener('click', () => showTab('main'));
+  $('tabDone').addEventListener('click', () => showTab('done'));
+  document.querySelector('.tabs').addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const toDone = e.key === 'ArrowRight';
+    showTab(toDone ? 'done' : 'main');
+    $(toDone ? 'tabDone' : 'tabMain').focus();
+  });
+
   function applyAck(ack) {
     acks.set(ack.event_id, ack);
     pending.delete(ack.event_id);
     const li = cards.get(ack.event_id);
-    if (li) renderAction({ id: ack.event_id });
+    if (li) {
+      renderAction({ id: ack.event_id });
+      $('feedDone').prepend(li);   // el SOS atendido sale de la pagina principal
+    }
+    syncEmpty();
     refreshBanner();
   }
 
@@ -441,8 +488,9 @@
     if (ev.battery != null) bits.push('batería ' + ev.battery + '%');
     if (ev.lat != null && ev.lng != null) bits.push(Number(ev.lat).toFixed(5) + ', ' + Number(ev.lng).toFixed(5));
     if (bits.length) { const m = document.createElement('div'); m.className = 'mute'; m.textContent = bits.join(' · '); li.append(m); }
-    const feed = $('feed');
+    const feed = (needsAttention(ev) && acks.has(ev.id)) ? $('feedDone') : $('feed');
     prepend ? feed.prepend(li) : feed.append(li);
+    syncEmpty();
     if (needsAttention(ev)) {
       if (!acks.has(ev.id)) pending.set(ev.id, ev);
       renderAction(ev);
@@ -462,7 +510,7 @@
     $('logout').classList.remove('hidden');
     $('rundeLink').classList.toggle('hidden', OWN_LIVE);   // RundeCap pausado: no ofrecer su camara
     $('who').textContent = session.user.email;
-    $('feed').replaceChildren();
+    $('feed').replaceChildren(); $('feedDone').replaceChildren();
 
     const { data, error } = await sb.from('events').select('*')
       .neq('type', 'heartbeat').order('created_at', { ascending: false }).limit(50);
@@ -476,7 +524,7 @@
     }
     for (const ev of data) { noteDevice(ev.device_id, ev.created_at, ev.battery); await render(ev, false); }
     loadDevices();
-    if (!data.length) { const li = document.createElement('li'); li.className = 'mute'; li.textContent = 'Sin eventos todavía.'; $('feed').append(li); }
+    syncEmpty();
 
     if (channel) sb.removeChannel(channel);
     channel = sb.channel('events-feed')
