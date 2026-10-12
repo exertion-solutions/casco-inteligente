@@ -23,3 +23,9 @@
 - Acelerometro, giroscopio, magnetometro, barometro, luz y proximidad (MTK) + fusionados AOSP.
 - RundeCap ya detecta caida (TYPE_FALL_SOS / doFallSos / gSensorListener) y la reporta a su plataforma.
 - Agente: FallDetector (caida libre + impacto) publica evento `fall`. Calibrar umbrales con pruebas reales.
+
+## Estado 2026-10-11 (noche)
+- Supabase aplicado: ejecutar-todo.sql (funciones=2, tablas=3, bucket=1, trigger=1), roles (casco 4132=device, supervisor=viewer), sign-ups desactivados.
+- Edge Function media-auth desplegada (Verify JWT OFF) + secreto MEDIA_AUTH_SECRET cargado (digest verificado). Responde 401 a todo lo invalido.
+- Pendiente: contratar VPS + dominio, correr server/install.sh con MEDIA_AUTH_URL (secreto en media-auth-secret.local.txt, ignorado por git).
+- Luego: LIVE_HOST en web/config.js; piloto en casco 4132 (instalar APK nuevo, pm disable-user RundeCap). Revertir: pm enable com.tencent.liteav.demo.
