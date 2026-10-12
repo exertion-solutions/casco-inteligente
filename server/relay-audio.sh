@@ -11,8 +11,9 @@ case "$ID" in
   ''|*[!A-Za-z0-9_-]*) echo "relay-audio: id invalido: $ID" >&2; exit 1 ;;
 esac
 
-# El casco publica con ?user=device&pass=<JWT> (o ?token=<JWT>). MTX_QUERY llega url-encoded.
-TOKEN="$(printf '%s' "${MTX_QUERY:-}" | tr '&' '\n' | grep -E '^(pass|token)=' | head -n 1 | cut -d= -f2-)"
+# El casco publica con ?user=device&pass=<JWT> (o ?token=<JWT>). MediaMTX entrega MTX_QUERY con la query
+# ENTERA url-encoded (user%3Ddevice%26pass%3D<jwt>): se decodifica %26 -> & y %3D -> = antes de separar.
+TOKEN="$(printf '%s' "${MTX_QUERY:-}" | sed -e 's/%26/\&/g' -e 's/%3[Dd]/=/g' | tr '&' '\n' | grep -E '^(pass|token)=' | head -n 1 | cut -d= -f2-)"
 if [ -z "$TOKEN" ]; then
   echo "relay-audio: el publisher de ingest/$ID no envio pass= ni token= en la query" >&2
   exit 1

@@ -113,6 +113,18 @@ public class GeoPolicyCheck {
         eq(1, ie.size(), "informativa enter");
         eq(false, ie.get(0).alert, "informativa no alarma");
         eq("Zona Comedor", GeoPolicy.phrase(inf, "enter"), "frase informativa");
+        // histeresis: oscilar unos metros alrededor del borde (r=50 m) no genera salida; pasar la banda si
+        GeoPolicy.Zone hz = GeoPolicy.circle("h", "Borde", "restringida", "voz", null, LAT, LNG, 50);
+        List<GeoPolicy.Zone> hs = new ArrayList<GeoPolicy.Zone>();
+        hs.add(hz);
+        GeoPolicy.Tracker th = new GeoPolicy.Tracker();
+        th.update(hs, LAT, LNG);
+        eq(1, th.update(hs, LAT, LNG).size(), "base dentro de restringida: alerta");
+        th.update(hs, LAT + 0.0005, LNG);
+        eq(0, th.update(hs, LAT + 0.0005, LNG).size(), "55 m: dentro de la banda, sin salida");
+        th.update(hs, LAT + 0.0007, LNG);
+        eq(1, th.update(hs, LAT + 0.0007, LNG).size(), "78 m: sale de verdad");
+
         System.out.println("GeoPolicyCheck OK");
     }
 }

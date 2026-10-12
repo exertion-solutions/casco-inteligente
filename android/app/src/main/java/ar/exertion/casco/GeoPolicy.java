@@ -66,6 +66,27 @@ final class GeoPolicy {
         return in;
     }
 
+    /** Metros al borde: > 0 dentro, < 0 fuera (circulo exacto; poligono por distancia al lado mas cercano, plano local). */
+    static double depthM(Zone z, double lat, double lng) {
+        if (z.circle) return z.radiusM - haversineM(z.lat, z.lng, lat, lng);
+        final double mLat = 111_320.0, mLng = 111_320.0 * Math.cos(Math.toRadians(lat));
+        double best = Double.MAX_VALUE;
+        int n = z.plat.length;
+        for (int i = 0, j = n - 1; i < n; j = i++) {
+            double ax = (z.plng[j] - lng) * mLng, ay = (z.plat[j] - lat) * mLat;
+            double bx = (z.plng[i] - lng) * mLng, by = (z.plat[i] - lat) * mLat;
+            double dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+            double t = len2 == 0 ? 0 : Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len2));
+            best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+        }
+        return inside(z, lat, lng) ? best : -best;
+    }
+
+    /** Banda de histeresis: el GPS bajo techo oscila decenas de metros; se cruza solo pasando el borde por mas que esto. */
+    static double marginM(double accM) {
+        return accM > 0 ? Math.max(10.0, Math.min(30.0, accM)) : 10.0;
+    }
+
     static boolean alertOnEnter(String kind) { return "restringida".equals(kind) || "peligro".equals(kind); }
 
     static boolean alertOnExit(String kind) { return "permitida".equals(kind); }
@@ -109,13 +130,21 @@ final class GeoPolicy {
          * "dentro" de una zona restringida/peligro (alarma ya), nunca para permitida/informativa.
          */
         List<Event> update(List<Zone> zones, double lat, double lng) {
+            return update(zones, lat, lng, -1.0);
+        }
+
+        /** Igual, con la precision del fix (m): amplia la banda de histeresis (10 a 30 m) contra el rebote del GPS. */
+        List<Event> update(List<Zone> zones, double lat, double lng, double accM) {
+            final double margin = marginM(accM);
             List<Event> out = new ArrayList<>();
             Set<String> live = new HashSet<>();
             for (Zone z : zones) {
                 live.add(z.id);
                 byId.put(z.id, z);
-                boolean now = inside(z, lat, lng);
                 Boolean st = state.get(z.id);
+                double depth = depthM(z, lat, lng);
+                // histeresis: seguir en el estado confirmado salvo que el cruce supere la banda
+                boolean now = st == null ? depth >= 0 : st ? depth > -margin : depth > margin;
                 if (st != null && st == now) { run.remove(z.id); continue; }
                 int n = run.containsKey(z.id) ? run.get(z.id) + 1 : 1;
                 if (n < CONFIRM_FIXES) { run.put(z.id, n); continue; }

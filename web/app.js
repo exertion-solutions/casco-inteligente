@@ -217,6 +217,28 @@
     bExit.addEventListener('click', () => { try { exitFs(); } catch (_) {} });
     wrap.addEventListener('dblclick', () => { try { fsEl() === wrap ? exitFs() : enterFs(); } catch (_) {} });
     row.append(bFull);
+    // Sonido del casco (audio del video en vivo). El <video> nace silenciado (autoplay); tras el gesto de "Iniciar"
+    // se enciende solo si el usuario no lo apagó antes (preferencia por navegador).
+    const SOUND_KEY = 'casco-sound';
+    let soundOn = true;
+    try { soundOn = localStorage.getItem(SOUND_KEY) !== '0'; } catch (_) {}
+    const bSound = mk('button', 'ghost', ''); bSound.type = 'button';
+    const hasAudio = () => !!(video.srcObject && video.srcObject.getAudioTracks().length);
+    const syncSound = () => {
+      bSound.textContent = 'Sonido del casco: ' + (soundOn ? 'sí' : 'no');
+      bSound.setAttribute('aria-pressed', String(soundOn));
+      bSound.setAttribute('aria-label', 'Escuchar el audio del casco ' + id + ': ' + (soundOn ? 'encendido' : 'apagado'));
+      bSound.classList.toggle('hidden', !hasAudio());
+      video.muted = !(soundOn && hasAudio());
+    };
+    bSound.addEventListener('click', () => {
+      soundOn = !soundOn;
+      try { localStorage.setItem(SOUND_KEY, soundOn ? '1' : '0'); } catch (_) {}
+      syncSound();
+      if (!video.muted) video.play().catch(() => { video.muted = true; });
+    });
+    row.append(bSound);
+    syncSound();
     applyRot();
     // Fila de voz: se muestra solo durante una llamada (ver bloque "Voz en vivo" mas abajo).
     const vrow = mk('div', 'voice hidden');
@@ -250,6 +272,7 @@
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
+    L.syncSound = syncSound;
     const setState = (t, bad) => { state.textContent = t; state.classList.toggle('bad', !!bad); };
     const base = 'https://' + LIVE_HOST + '/live/' + encodeURIComponent(id) + '/whep';
 
@@ -277,6 +300,7 @@
         L.ms.addTrack(e.track);
         if (video.srcObject !== L.ms) video.srcObject = L.ms;
         if (e.track.kind === 'video') { wrap.classList.remove('hidden'); if (L.recReady) L.recReady(true); }
+        if (L.syncSound) { L.syncSound(); if (!video.muted) video.play().catch(() => { video.muted = true; L.syncSound(); }); }
       };
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc, 2000);

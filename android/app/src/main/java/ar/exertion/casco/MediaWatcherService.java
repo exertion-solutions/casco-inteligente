@@ -592,9 +592,9 @@ public class MediaWatcherService extends Service {
                 LocationTracker.Fix f = loc.last();
                 synchronized (geoTracker) {
                     if (f != null && f.time != lastGeoFixTime && AgentPolicy.fixFresh(f.ageS())
-                            && AgentPolicy.accuracyOk(f.hasAcc, (float) f.acc)) {
-                        lastGeoFixTime = f.time;
-                        for (GeoPolicy.Event ev : geoTracker.update(zones, f.lat, f.lng)) onGeoEvent(ev, f);
+                            && AgentPolicy.accuracyOk(f.hasAcc, (float) f.acc) && f.acc <= 30) {
+                        lastGeoFixTime = f.time; // fixes de > 30 m no deciden cruces (rebote bajo techo)
+                        for (GeoPolicy.Event ev : geoTracker.update(zones, f.lat, f.lng, f.acc)) onGeoEvent(ev, f);
                     } else if (zones.isEmpty() && geoTracker.alarming()) {
                         geoTracker.update(zones, 0, 0); // zonas dadas de baja: la alarma cesa
                     }
