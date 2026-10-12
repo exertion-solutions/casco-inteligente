@@ -47,7 +47,14 @@ El servidor NO graba (MediaMTX sin `record`, sin `playback`) ni se crean tablas 
   marca opcional de **fecha, hora y casco** (config `REC_WATERMARK`, por defecto true); `canvas.captureStream(15)` -> `MediaRecorder`.
 - Formato: `video/mp4;codecs=avc1` si el navegador lo soporta; si no, `video/webm;codecs=vp9` -> `vp8`. Nombre del archivo:
   `casco-<id>_<AAAA-MM-DD_HH-MM-SS>.<ext>`. Al detener se descarga solo y queda el boton **Descargar de nuevo** (hasta cerrar la pagina).
-- Sonido: si hay llamada en curso, la grabacion NO incluye audio por defecto (privacidad); opcion explicita "incluir audio".
+- **Audio incluido (decision del usuario: video Y audio)**: el archivo mezcla (Web Audio `MediaStreamDestination`) las pistas de audio disponibles:
+  (a) el **audio del casco** que llega en el video en vivo (ver abajo) o por la llamada de voz, y (b) el **microfono del supervisor** durante una llamada.
+  Casillas "Incluir mi microfono" (por defecto activa solo durante llamada) y "Incluir audio del casco" (por defecto activa). Si no hay audio disponible, graba solo video y lo indica.
+- **Audio del casco en el video en vivo (Android + Servidor)**: hoy el RTMP del casco es solo video. Se agrega la pista de audio del microfono del casco
+  al flujo; WebRTC/MediaMTX no transcodifica, asi que el codec debe ser **Opus o G.711**. El agente Android debe verificar en RootEncoder 2.5.5 si RTMP
+  soporta G.711 (PCMA/PCMU) u Opus; si no, el audio del casco solo estara presente durante la llamada WebRTC (que ya es Opus) y se grabara de ahi.
+  Configuracion `stream_audio` (por defecto false hasta validar; el microfono NO se activa sin esa opcion y sin aviso en pantalla).
+- Aviso legal: grabar audio de conversaciones requiere informar al personal; la plataforma muestra "Esta grabacion incluye audio".
 - Limites: tope 60 min y ~1 GB en memoria por grabacion (aviso a los 45 min; al llegar al tope se corta y descarga); si la conexion de video se
   cae, la grabacion se cierra y descarga lo grabado. Si el navegador no soporta MediaRecorder: mensaje claro.
 - Tambien un boton **Captura** (PNG con el giro aplicado) para guardar una imagen.
