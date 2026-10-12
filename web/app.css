@@ -415,3 +415,21 @@ fieldset.layers legend { font-size: var(--fs-2); color: var(--mute); padding: 0 
 
 @media print { .nav, header.top, #sos { display: none; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+
+/* ---------- Cartel de alarma SOS (pantalla completa) ---------- */
+.sos-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--sp-4); padding: var(--sp-5); text-align: center; background: var(--sos-solid); color: var(--on-sos); }
+.sos-overlay[hidden] { display: none; }
+.sos-ov-t { font-size: clamp(2.5rem, 9vw, 6rem); line-height: 1.05; letter-spacing: .01em; }
+.sos-ov-who { font-size: var(--fs-5); font-weight: 700; }
+.sos-ov-when { font-size: var(--fs-4); }
+.sos-ov-more, .sos-ov-hint { font-size: var(--fs-3); min-height: 1.4em; }
+.sos-ov-hint { font-weight: 700; text-decoration: underline; }
+.sos-ov-btns { display: flex; flex-wrap: wrap; gap: var(--sp-3); justify-content: center; margin-top: var(--sp-3); }
+.sos-ov-btns button { min-height: 52px; min-width: 150px; padding: 0 var(--sp-5); font: 700 var(--fs-4)/1 var(--font-ui); border-radius: var(--r); cursor: pointer;
+  background: transparent; color: var(--on-sos); border: 2px solid var(--on-sos); }
+.sos-ov-btns .sos-ov-go { background: var(--on-sos); color: var(--sos-solid); }
+.sos-ov-btns button:disabled { opacity: .6; cursor: default; }
+.sos-ov-btns button:focus-visible { outline: 3px solid var(--on-sos); outline-offset: 3px; }
+@media (prefers-reduced-motion: no-preference) { .sos-overlay { animation: sosPulse 1.2s ease-in-out infinite; } }
+@keyframes sosPulse { 50% { background: color-mix(in srgb, var(--sos-solid) 70%, black); } }

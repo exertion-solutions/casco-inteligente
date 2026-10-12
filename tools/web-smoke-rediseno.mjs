@@ -110,6 +110,17 @@ async function enter(page) {
   await page.waitForSelector('#app:not(.hidden)', { timeout: 15000 });
   await page.waitForSelector('#pendList .pitem', { timeout: 15000 });
   await page.waitForTimeout(700);
+  // Alarma SOS: cartel a pantalla completa visible al haber pendientes; se cierra con "Ver el panel" y la sirena sigue hasta atender.
+  {
+    const ov = page.locator('#sosOverlay');
+    if (!(await ov.isVisible())) errors.push(`[${scheme} ${sz}] cartel SOS no visible con pendientes`);
+    else {
+      const t = await page.locator('#sosOvT').textContent();
+      if (!/!$/.test(t)) errors.push(`[${scheme} ${sz}] titulo de cartel raro: ${t}`);
+      await page.locator('.sos-ov-btns button').last().click();
+      if (await ov.isVisible()) errors.push(`[${scheme} ${sz}] cartel no se cerro`);
+    }
+  }
 }
 const shot = (page, name) => page.screenshot({ path: `${OUT}/rediseno-${name}.png`, fullPage: false });
 

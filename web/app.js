@@ -725,7 +725,7 @@
     const b = $('sos');
     document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Casco Inteligente';
     renderPending();
-    if (!pending.size) { b.style.display = 'none'; return; }
+    if (!pending.size) { b.style.display = 'none'; syncAlarm(); return; }
     const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
     const txt = document.createElement('span');
     txt.textContent = pending.size + ' alerta(s) sin atender — última: ' +
@@ -751,6 +751,7 @@
     }
     b.replaceChildren(txt, go, camEl);
     b.style.display = 'block';
+    syncAlarm();
   }
 
   // ---- Estado y salud de cascos (ultimo heartbeat; docs/PROTOCOLO-CENTRO.md seccion 3) ----
@@ -2175,9 +2176,75 @@
     l.append(c, t); $('mapLayers').append(l);
   }
 
+  // ---- Alarma de SOS: sirena continua + cartel a pantalla completa hasta que se atiende (o se silencia) ----
+  let sirenT = null, sirenMuted = false, overlayHidden = false, titleFlip = false;
+  const audioOn = () => !!audioCtx && audioCtx.state === 'running';
+  function ensureAudio() {
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); if (audioCtx.state === 'suspended') audioCtx.resume(); } catch (_) {}
+    return audioOn();
+  }
+  ['pointerdown', 'keydown'].forEach(t => document.addEventListener(t, ensureAudio, { passive: true }));
+  function sirenBurst() {
+    if (!audioOn()) return;
+    const t0 = audioCtx.currentTime;
+    for (let i = 0; i < 4; i++) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'square'; o.frequency.value = i % 2 ? 700 : 1000; g.gain.value = 0.22;
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + i * 0.4); o.stop(t0 + i * 0.4 + 0.36);
+    }
+  }
+  const sosOv = mk('div', 'sos-overlay');
+  sosOv.id = 'sosOverlay'; sosOv.hidden = true;
+  sosOv.setAttribute('role', 'alertdialog'); sosOv.setAttribute('aria-modal', 'true'); sosOv.setAttribute('aria-labelledby', 'sosOvT');
+  const ovT = mk('h2', 'sos-ov-t', '¡ALERTA!'); ovT.id = 'sosOvT';
+  const ovWho = mk('p', 'sos-ov-who'), ovWhen = mk('p', 'sos-ov-when mono'), ovMore = mk('p', 'sos-ov-more'), ovHint = mk('p', 'sos-ov-hint', 'Tocá la pantalla para activar el sonido de la alarma.');
+  const ovAtend = mk('button', 'sos-ov-go', 'Atender'), ovLive = mk('button', 'sos-ov-b', 'Ver en vivo');
+  const ovMute = mk('button', 'sos-ov-b', 'Silenciar sirena'), ovClose = mk('button', 'sos-ov-b', 'Ver el panel');
+  for (const b of [ovAtend, ovLive, ovMute, ovClose]) b.type = 'button';
+  const ovBtns = mk('div', 'sos-ov-btns'); ovBtns.append(ovAtend, ovLive, ovMute, ovClose);
+  sosOv.append(ovT, ovWho, ovWhen, ovMore, ovHint, ovBtns);
+  document.body.append(sosOv);
+  const lastPending = () => [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
+  ovAtend.addEventListener('click', () => {
+    const last = lastPending(); overlayHidden = true; sosOv.hidden = true;
+    showTab('main');
+    const li = last && (pendEls.get(last.id) || cards.get(last.id));
+    if (li) { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); const i = li.querySelector('input'); if (i) i.focus({ preventScroll: true }); }
+  });
+  ovLive.addEventListener('click', () => {
+    const last = lastPending(); overlayHidden = true; sosOv.hidden = true;
+    if (!last || !OWN_LIVE) return;
+    const L = ensureLive(last.device_id); if (!L) return;
+    showTab('live'); if (!L.bStart.disabled) L.start();
+  });
+  ovMute.addEventListener('click', () => { sirenMuted = true; ovMute.disabled = true; });
+  ovClose.addEventListener('click', () => { overlayHidden = true; sosOv.hidden = true; });
+  function alarmTick() {
+    if (!sirenMuted) sirenBurst();
+    const n = pending.size;
+    document.title = (titleFlip = !titleFlip) ? '🚨 ¡ALERTA! ' + n + ' sin atender' : '(' + n + ') Casco Inteligente';
+  }
+  function syncAlarm() {
+    if (!pending.size) {
+      clearInterval(sirenT); sirenT = null; sirenMuted = false; overlayHidden = false;
+      sosOv.hidden = true; ovMute.disabled = false; return;
+    }
+    const last = lastPending();
+    ovT.textContent = '¡' + alertLabel(last) + (isManDown(last) ? ' · HOMBRE CAÍDO' : '') + '!';
+    ovWho.textContent = label(last.device_id);
+    ovWhen.textContent = fmt(last.created_at);
+    ovMore.textContent = pending.size > 1 ? 'Hay ' + pending.size + ' alertas sin atender.' : '';
+    ovHint.hidden = audioOn();
+    const was = sosOv.hidden;
+    sosOv.hidden = overlayHidden;
+    if (was && !sosOv.hidden) ovAtend.focus({ preventScroll: true });
+    if (!sirenT) { sirenT = setInterval(alarmTick, 1700); alarmTick(); }
+  }
   function alertSos(ev) {
-    beep();
-    if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+    sirenMuted = false; ovMute.disabled = false; overlayHidden = false;
+    ensureAudio();
+    if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 600]);
   }
 
   async function start(session) {
@@ -2257,8 +2324,7 @@
   });
   $('logout').addEventListener('click', async () => { await sb.auth.signOut(); location.reload(); });
   $('enableSound').addEventListener('click', () => {
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    beep();
+    ensureAudio(); sirenBurst();
   });
 
   // ---- [UI] Tema claro/oscuro persistente, reloj Argentina, estado de conexion ----
