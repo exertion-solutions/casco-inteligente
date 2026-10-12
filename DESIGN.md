@@ -1,4 +1,4 @@
-# DESIGN — Casco Inteligente (visor web)
+# DESIGN — Vigía · Casco Inteligente (visor web)
 
 Direccion: **Plano de levantamiento**. Modo: operar. Contrato completo en `.impeccable/surfaces/web-index-html.md`.
 El mundo aporta solo tipografia, paleta, densidad y un movimiento firma; navegacion y controles son los estandar de la web.

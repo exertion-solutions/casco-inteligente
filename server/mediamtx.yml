@@ -1,4 +1,4 @@
-# MediaMTX v1.21.x - configuracion del piloto Casco Inteligente.
+# MediaMTX v1.21.x - configuracion del piloto Vigía · Casco Inteligente.
 # authHTTPAddress y webrtcAdditionalHosts NO van aqui: llegan por variables de
 # entorno desde docker-compose.yml (MTX_AUTHHTTPADDRESS, MTX_WEBRTCADDITIONALHOSTS).
 

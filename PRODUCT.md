@@ -41,7 +41,7 @@ Plataforma local, en espanol rioplatense, con servidor y datos propios (sin nube
 - Sin compilacion; GitHub Pages; Supabase Realtime; sin Node en produccion.
 
 ## Brand Commitments
-Nombre: "Casco Inteligente". Sin logo ni colores corporativos que respetar: se define una identidad nueva sobria y profesional.
+Nombre: "Vigía · Casco Inteligente" (marca "Vigía"; "Casco Inteligente" es el descriptor). Sin logo ni colores corporativos que respetar: se define una identidad nueva sobria y profesional.
 Voz: espanol rioplatense, directo, sin jerga; frases cortas en alertas.
 
 ## Evidence on Hand

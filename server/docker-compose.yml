@@ -1,4 +1,4 @@
-# Casco Inteligente - servidor de video propio (MediaMTX + Caddy)
+# Vigía · Casco Inteligente - servidor de video propio (MediaMTX + Caddy)
 # Variables: se leen del archivo .env (copiar de .env.example). No poner secretos en el repo.
 name: casco-video
 

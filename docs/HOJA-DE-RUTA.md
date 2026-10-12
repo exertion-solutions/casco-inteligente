@@ -1,4 +1,4 @@
-# Casco Inteligente: que hace RundeCap y que debemos construir nosotros
+# Vigía · Casco Inteligente: que hace RundeCap y que debemos construir nosotros
 
 Relevado del APK de RundeCap (constantes del protocolo, APIs, librerias) y del login real del casco 4132.
 Objetivo: un casco competitivo a nivel local (industria, oil & gas, mineria, construccion) **sin depender de caps.runde.pro**.

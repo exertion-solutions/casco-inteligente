@@ -26,7 +26,7 @@
 -- ---------------------------------------------------------------------------
 alter table public.events drop constraint if exists events_type_check;
 alter table public.events add constraint events_type_check
-  check (type in ('sos','photo','video','heartbeat','fall','location','geofence')) not valid;
+  check (type in ('sos','photo','video','heartbeat','fall','location','geofence','not_worn','inactive','equip','fall_cancel')) not valid;
 
 -- ===========================================================================
 -- 1. escalation_rules  (regla global; editable solo por admin)

@@ -223,7 +223,7 @@ Sirve para tener un **registro** de cada casco (numero, IMEI, SIM, auricular), d
 **13.1 Crear las tablas.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/007_equipos.sql`, **Run**. Debe decir `Success`.
 (Si usaste `ejecutar-todo.sql` actualizado, ya esta incluido.) Se puede repetir sin problema.
 
-**13.2 Tener un usuario admin.** Para cargar DNI y telefono hace falta un usuario con rol `admin` (el `viewer` carga todo lo demas). Si todavia no lo tenes, en el **SQL Editor** (cambia el email):
+**13.2 Tener un usuario admin.** Desde el paso 14 **solo el rol `admin` da de alta o edita** cascos, personas, grupos, asignaciones, zonas y puntos (el `viewer` solo mira, atiende alertas y manda video, foto, linterna, ping y mensajes). Si todavia no lo tenes, en el **SQL Editor** (cambia el email):
 
 ```sql
 update auth.users set raw_app_meta_data =
@@ -256,6 +256,42 @@ select * from public.assignments where ends_at is null;
 
 **13.6** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
 
+## 14. Comandos a pedido, configuracion remota, roles y reportes (opcional, despues del paso 13)
+
+Agrega: **Sacar foto / Linterna / Probar enlace / Reiniciar agente** desde el visor, **configuracion remota por casco**, alertas nuevas (**casco no puesto**, **inmovilidad**, **equipo**, **caida cancelada**), la vista de **reportes** y el reparto de permisos **viewer / admin** (docs/PROTOCOLO-COMANDOS.md).
+
+**14.1 Crear las tablas y permisos.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/010_comandos_config_roles.sql`, **Run**. Debe decir `Success`.
+(Si usaste `ejecutar-todo.sql` actualizado, ya esta incluido y al final muestra 4 numeros: 3, 1, 7 y 3.) Se puede repetir sin problema.
+
+> Si alguna vez volves a correr a mano `005`, `006` o `007` sueltas, **volve a correr `010` despues**: esas migraciones recrean los permisos viejos de `viewer`. (El bloqueo por trigger sigue activo, pero las pruebas del paso 7 te lo van a marcar.)
+
+**14.2 Hacerte admin.** Sin esto nadie puede dar de alta cascos ni zonas. En **SQL Editor** pega TODO `supabase/promover_admin.sql` (promueve a `jorge_e_castro@hotmail.com`; cambia el email si hace falta), **Run**. La tabla final debe mostrar `"role": "admin"`.
+Despues **cerrar sesion y volver a entrar** en el visor (el rol viaja dentro del token). Para otro admin, repetir con su email.
+
+**14.3 Reglas.**
+
+| Accion | viewer | admin |
+|---|---|---|
+| Ver todo, atender alertas, pedir video, foto, linterna, ping, mandar mensajes | si | si |
+| Evacuacion, reiniciar agente | no | si |
+| Alta/edicion/baja de cascos, personas, grupos, asignaciones, zonas y puntos | no | si |
+| Configuracion remota del casco | no | si |
+
+- Limites anti-abuso: 10 comandos por minuto por usuario; 30 confirmaciones por minuto por casco.
+- Un casco **dado de baja** sigue pudiendo mandar SOS y caida (nunca se pierden); el resto de sus eventos y confirmaciones se rechaza.
+- La configuracion remota solo acepta estas claves: `fall_g_threshold`, `inactivity_s`, `not_worn_s`, `heartbeat_s`, `location_s`, `location_s_alert`, `stream_audio`, `voice_commands`, `broadcast_volume`, `torch_allowed` (numeros las primeras siete, verdadero/falso las otras tres).
+- Los comandos y sus confirmaciones se borran solos a los 7 dias (limpieza diaria `casco_purge`, migracion 008, redefinida en 010); los eventos `equip` y `fall_cancel` a los 90 dias y `not_worn` / `inactive` al ano.
+
+**14.4 Reportes.** La vista `incident_report` trae una fila por alerta con el tiempo hasta atender (`tta_s`). Prueba rapida en **SQL Editor**:
+
+```sql
+select created_at, device_id, type, acked_at, tta_s from public.incident_report order by created_at desc limit 20;
+```
+
+(Desde el **SQL Editor** corres como administrador de la base y la ves completa; desde el visor la ven solo `viewer` y `admin`.)
+
+**14.5** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
+
 ## Si algo falla
 
 | Sintoma | Causa probable |
@@ -280,3 +316,8 @@ select * from public.assignments where ends_at is null;
 | `people_full` vacia | el usuario no es `admin` (un `viewer` ve solo nombre, puesto, sector y grupo) |
 | "dni y telefono solo los edita un admin" | cargar esos dos campos con un usuario `admin` |
 | "asignacion ... casco inexistente o dado de baja" / "persona inactiva" | el casco o la persona no existen, estan dados de baja o inactivos |
+| "rate limit" al pedir foto / linterna / ping | mas de 10 comandos en un minuto por supervisor (limite anti-abuso) |
+| "restart_agent solo lo manda un admin" / "solo un admin puede modificar" | el usuario es `viewer`: promoverlo con `promover_admin.sql` y volver a iniciar sesion |
+| El casco no confirma un comando (queda "pendiente") | el comando tiene mas de 2 minutos (el casco solo lee los recientes), el casco esta dado de baja, o falta que el agente lo lea (poll de 3 s) |
+| "violates check constraint device_config_ck" | la configuracion trae una clave no permitida o un valor del tipo equivocado (ver paso 14.3) |
+| El visor no muestra alertas `not_worn` / `inactive` | falta correr 010 (el tipo no estaba permitido) o el casco no tiene activada la deteccion (`not_worn_s`, `inactivity_s` en 0) |

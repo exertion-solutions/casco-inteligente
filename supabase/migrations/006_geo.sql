@@ -31,7 +31,7 @@ begin
   if d is null or d !~ 'location' or d !~ 'geofence' then
     alter table public.events drop constraint if exists events_type_check;
     alter table public.events add constraint events_type_check
-      check (type in ('sos','photo','video','heartbeat','fall','location','geofence')) not valid;
+      check (type in ('sos','photo','video','heartbeat','fall','location','geofence','not_worn','inactive','equip','fall_cancel')) not valid;
   end if;
 end $$;
 

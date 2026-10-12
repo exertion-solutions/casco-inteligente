@@ -1,4 +1,4 @@
-# Servidor de video del Casco Inteligente
+# Servidor de video del Vigía · Casco Inteligente
 
 Guia para instalar tu propio servidor de video (MediaMTX + HTTPS automatico con Caddy) en un VPS.
 No necesitas saber programar: solo copiar y pegar comandos.
