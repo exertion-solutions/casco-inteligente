@@ -81,6 +81,62 @@
   .voice meter { width:96px; height:12px; vertical-align:middle; }
   .vline { display:inline-flex; gap:6px; flex-wrap:wrap; }
   button[aria-pressed="true"] { outline:2px solid var(--acc); outline-offset:-2px; }
+  /* Centro de mando */
+  :root { --warnbg:#8a5300; --warn:#b26a00; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --warn:#ffb74d; } }
+  :root[data-theme="dark"] { --warn:#ffb74d; }
+  h2.sec { font-size:16px; margin:0; }
+  h3 { font-size:15px; margin:0; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px; margin-bottom:12px; }
+  .kpi { display:grid; gap:2px; align-content:start; overflow-wrap:anywhere; padding:12px; }
+  .kpi .kl { font-size:13px; color:var(--mute); }
+  .kpi .kn { font-size:28px; line-height:1.15; }
+  .kpi .kt { font-size:16px; line-height:1.3; }
+  .kpi.alert { border-color:var(--sosbg); border-width:2px; }
+  #escState { margin:0 0 12px; }
+  .halerts { display:grid; gap:8px; margin-bottom:12px; }
+  .halert { display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; border:2px solid var(--warn); border-radius:10px; background:var(--card); padding:8px 12px; overflow-wrap:anywhere; }
+  .halert.crit { border-color:var(--sosbg); }
+  .tag.warn { background:var(--warnbg); color:#fff; border-color:var(--warnbg); }
+  .halert button { margin-left:auto; padding:6px 10px; }
+  .section { display:grid; gap:12px; margin-bottom:12px; }
+  .obox { display:grid; gap:10px; border-top:1px solid var(--line); padding-top:12px; }
+  select, textarea { padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; max-width:100%; }
+  select:focus-visible, textarea:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
+  label.chk { display:inline-flex; align-items:center; gap:6px; color:var(--ink); }
+  label.chk input { width:auto; padding:0; }
+  .grid2 { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:8px 12px; }
+  .pitem { display:grid; gap:8px; overflow-wrap:anywhere; border-color:var(--sosbg); border-width:2px; }
+  .dev2 { display:grid; gap:8px; border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .dev2.off { border-color:var(--sosbg); }
+  .metrics { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:6px 12px; margin:0; }
+  .metrics > div { display:grid; gap:2px; min-width:0; overflow-wrap:anywhere; }
+  .metrics dt { font-size:12px; color:var(--mute); }
+  .metrics dd { margin:0; font-size:14px; }
+  .metrics meter { width:90px; height:14px; flex:none; }
+  .metrics dd:has(meter) { display:flex; flex-wrap:wrap; align-items:center; gap:2px 8px; }
+  .bad { color:var(--sos); font-weight:600; }
+  .rec { gap:8px 12px; }
+  .recdot { color:var(--sos); font-weight:600; }
+  .bcitem { display:grid; gap:6px; border:1px solid var(--line); border-radius:8px; padding:10px 12px; overflow-wrap:anywhere; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .okmsg { color:var(--ink); font-size:14px; min-height:1.2em; }
+  /* Equipos y Mapa */
+  .tag.geofence.sos { background:var(--sosbg); color:#fff; border-color:var(--sosbg); }
+  .subtabs { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 12px; }
+  .subtabs [role="tab"] { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .subtabs [role="tab"][aria-selected="true"] { background:var(--card); border-color:var(--acc); font-weight:600; }
+  .eqitem { display:grid; gap:8px; overflow-wrap:anywhere; }
+  fieldset.layers { border:1px solid var(--line); border-radius:8px; padding:8px 12px; display:flex; flex-wrap:wrap; gap:6px 16px; margin:0; }
+  fieldset.layers legend { font-size:13px; color:var(--mute); padding:0 6px; }
+  #mapBox { height:460px; width:100%; border:1px solid var(--line); border-radius:8px; background:var(--bg); z-index:0; }
+  @media (max-width:520px) { #mapBox { height:340px; } }
+  .geoinfo { font-size:14px; }
+  #mapBox.drawing .leaflet-interactive { pointer-events:none !important; }
+  .confirm { border:2px solid var(--sosbg); border-radius:8px; padding:8px 12px; }
+  .leaflet-popup-content { color:#14202b; overflow-wrap:anywhere; }
+  .leaflet-popup-content button { margin-top:8px; background:#fff; color:#14202b; border:1px solid #9aa7b3; }
+  .leaflet-container a { color:#0b5cad; }
 </style>
 </head>
 <body>
@@ -108,10 +164,62 @@
       <span id="status" class="mute" role="status">Conectando…</span>
     </div>
     <div class="tabs" role="tablist" aria-label="Secciones del panel">
-      <button type="button" role="tab" id="tabMain" aria-selected="true" aria-controls="panelMain">Principal</button>
+      <button type="button" role="tab" id="tabMain" aria-selected="true" aria-controls="panelMain">Centro</button>
+      <button type="button" role="tab" id="tabMap" aria-selected="false" aria-controls="panelMap" tabindex="-1">Mapa</button>
+      <button type="button" role="tab" id="tabEq" aria-selected="false" aria-controls="panelEq" tabindex="-1">Equipos</button>
       <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">Atendidos <span id="doneCount" class="count">0</span></button>
     </div>
     <div id="panelMain" role="tabpanel" aria-labelledby="tabMain">
+      <div id="healthAlerts" class="halerts hidden" role="status" aria-label="Alertas de equipo"></div>
+      <section class="kpis" aria-label="Resumen del centro de mando">
+        <div id="kpiPend" class="card kpi"><span class="kl">Alertas pendientes</span><strong id="kpiPendN" class="kn">0</strong><span id="kpiPendAge" class="mute">Sin alertas pendientes</span></div>
+        <div class="card kpi"><span class="kl">Cascos</span><strong id="kpiDevN" class="kn">0 en línea</strong><span id="kpiDevOff" class="mute">0 sin señal</span></div>
+        <div class="card kpi"><span class="kl">Último evento</span><strong id="kpiLast" class="kt">—</strong><span id="kpiLastWhen" class="mute"></span></div>
+      </section>
+      <p id="escState" class="mute" role="status">Escalamiento: consultando…</p>
+      <section id="orders" class="card section" aria-labelledby="ordersH">
+        <h2 id="ordersH" class="sec">Órdenes a los cascos</h2>
+        <div class="row">
+          <button id="btnEvac" type="button" class="attend" aria-expanded="false" aria-controls="evacBox">Evacuación</button>
+          <button id="btnMsg" type="button" class="ghost" aria-expanded="false" aria-controls="msgBox">Mensaje a cascos</button>
+        </div>
+        <div id="evacBox" class="obox hidden" role="group" aria-labelledby="evacH">
+          <h3 id="evacH">Evacuación general</h3>
+          <p class="mute" style="margin:0">Los cascos hacen sonar una sirena y dicen la orden en voz alta. Para enviar: escribí EVACUACION y tocá Enviar, o tocá Enviar dos veces seguidas dentro de 3 segundos.</p>
+          <label>Texto a decir (opcional) <input id="evacMsg" type="text" maxlength="200" autocomplete="off" placeholder="Si lo dejás vacío: Dirijase al punto de reunion"></label>
+          <div class="grid2">
+            <label>Destino <select id="evacDest"><option value="">Todos los cascos</option></select></label>
+            <label>Repeticiones (1 a 5) <input id="evacRep" type="number" min="1" max="5" value="3"></label>
+          </div>
+          <label>Para confirmar escribí EVACUACION <input id="evacType" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
+          <div class="row">
+            <button id="evacGo" type="button" class="attend">Enviar evacuación</button>
+            <button id="evacCancel" type="button" class="ghost">Cancelar</button>
+          </div>
+          <div id="evacErr" class="err" role="alert"></div>
+        </div>
+        <form id="msgBox" class="obox hidden" aria-labelledby="msgH" novalidate>
+          <h3 id="msgH">Mensaje a cascos</h3>
+          <label>Mensaje (hasta 200 caracteres) <input id="msgText" type="text" maxlength="200" autocomplete="off"></label>
+          <span id="msgCount" class="mute">0/200</span>
+          <div class="grid2">
+            <label>Destino <select id="msgDest"><option value="">Todos los cascos</option></select></label>
+            <label>Repeticiones (1 a 5) <input id="msgRep" type="number" min="1" max="5" value="1"></label>
+          </div>
+          <div class="row">
+            <button id="msgGo" type="submit">Enviar mensaje</button>
+            <button id="msgCancel" type="button" class="ghost">Cancelar</button>
+          </div>
+          <div id="msgErr" class="err" role="alert"></div>
+        </form>
+        <div id="orderOk" class="okmsg" role="status"></div>
+        <h3>Historial de órdenes (últimas 20)</h3>
+        <ul id="bcList"><li class="empty mute">Todavía no hay órdenes.</li></ul>
+      </section>
+      <section id="pendBox" class="card section" aria-labelledby="pendH">
+        <h2 id="pendH" class="sec">Pendientes por antigüedad</h2>
+        <ul id="pendList"><li class="empty mute">No hay alertas pendientes.</li></ul>
+      </section>
       <section id="devices" class="card" aria-label="Estado de los cascos">
         <h2>Cascos</h2>
         <div id="devList" class="mute">Sin datos de cascos todavía.</div>
@@ -119,6 +227,46 @@
       <div id="lives" class="hidden"></div>
       <h2 class="mute" style="font-size:16px;margin:0 0 8px">Eventos recientes</h2>
       <ul id="feed"></ul>
+    </div>
+<div id="panelMap" role="tabpanel" aria-labelledby="tabMap" class="hidden">
+      <section class="card section" aria-labelledby="mapH">
+        <h2 id="mapH" class="sec">Mapa de cascos y zonas</h2>
+        <div class="row">
+          <button id="gDrawCircle" type="button" class="ghost" aria-pressed="false">Dibujar círculo</button>
+          <button id="gDrawPoly" type="button" class="ghost" aria-pressed="false">Dibujar polígono</button>
+          <button id="gAddPoint" type="button" class="ghost" aria-pressed="false">Agregar punto de interés</button>
+        </div>
+        <p id="geoHint" class="mute hidden" role="status" style="margin:0"></p>
+        <div id="polyBar" class="row hidden">
+          <span id="polyCount" class="mute">0 vértices</span>
+          <button id="polyUndo" type="button" class="ghost">Deshacer último punto</button>
+          <button id="polyClose" type="button">Cerrar polígono</button>
+          <button id="polyCancel" type="button" class="ghost">Cancelar dibujo</button>
+        </div>
+        <fieldset id="mapLayers" class="layers"><legend>Capas</legend></fieldset>
+        <p id="mapWarn" class="state bad hidden" role="status" style="margin:0"></p>
+        <div id="mapBox" role="region" aria-label="Mapa de cascos, geocercas y puntos de interés"></div>
+        <p class="mute" style="margin:0">Mapa © colaboradores de OpenStreetMap. Clic derecho (o mantener presionado) sobre el mapa agrega un punto de interés.</p>
+      </section>
+      <div id="geoForm" class="hidden"></div>
+      <section class="card section" aria-labelledby="mapDevH">
+        <h2 id="mapDevH" class="sec">Cascos (lista en texto)</h2>
+        <ul id="mapDevList"><li class="empty mute">Sin cascos con posición todavía.</li></ul>
+      </section>
+      <section class="card section" aria-labelledby="mapZoneH">
+        <h2 id="mapZoneH" class="sec">Zonas y puntos de interés (lista en texto)</h2>
+        <ul id="mapZoneList"><li class="empty mute">Todavía no hay zonas ni puntos de interés.</li></ul>
+      </section>
+    </div>
+    <div id="panelEq" role="tabpanel" aria-labelledby="tabEq" class="hidden">
+      <div id="eqTabs" class="subtabs" role="tablist" aria-label="Secciones de equipos">
+        <button type="button" role="tab" id="eqTabDev" aria-selected="true" aria-controls="eqBody">Cascos</button>
+        <button type="button" role="tab" id="eqTabPeople" aria-selected="false" aria-controls="eqBody" tabindex="-1">Personas</button>
+        <button type="button" role="tab" id="eqTabGroups" aria-selected="false" aria-controls="eqBody" tabindex="-1">Grupos</button>
+        <button type="button" role="tab" id="eqTabAssign" aria-selected="false" aria-controls="eqBody" tabindex="-1">Asignaciones</button>
+      </div>
+      <div id="eqForm" class="hidden"></div>
+      <div id="eqBody" role="tabpanel" class="section"></div>
     </div>
     <div id="panelDone" role="tabpanel" aria-labelledby="tabDone" class="hidden">
       <h2 class="mute" style="font-size:16px;margin:0 0 8px">SOS y caídas atendidos</h2>
@@ -128,13 +276,13 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120046"></script>
+<script src="config.js?v=202610121830"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
   const cfg = window.CASCO_CONFIG || {};
   const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-  let audioCtx = null, channel = null;
+  let audioCtx = null, channel = null, chOrders = null, chGeo = null, escTimer = null;
   const TZ = 'America/Argentina/Buenos_Aires';
   const fmt = iso => new Date(iso).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' });
 
@@ -219,7 +367,7 @@
     if (lives.has(id)) return lives.get(id);
     const sec = mk('section', 'card live');
     sec.setAttribute('aria-label', 'Video en vivo del casco ' + id);
-    sec.append(mk('h2', '', 'Video en vivo · Casco ' + id));
+    sec.append(dlEl('h2', id, 'Video en vivo · '));
     const row = mk('div', 'row');
     const bStart = mk('button', '', 'Iniciar'); bStart.type = 'button';
     const bStop = mk('button', 'ghost', 'Detener'); bStop.type = 'button'; bStop.disabled = true;
@@ -324,7 +472,20 @@
     const remote = mk('audio'); remote.autoplay = true; remote.hidden = true;
     remote.setAttribute('aria-label', 'Audio del casco ' + id);
     vrow.append(vline, bMute, bHang, lMic, mMic, lIn, mIn, remote);
-    sec.append(row, vrow, wrap);
+    // Grabacion a la PC / captura (docs/PROTOCOLO-CENTRO.md seccion 5). La logica va mas abajo, despues de crear L.
+    const rrow = mk('div', 'row rec');
+    const bRec = mk('button', '', 'Grabar'); bRec.type = 'button'; bRec.disabled = true;
+    bRec.setAttribute('aria-label', 'Grabar el video del casco ' + id + ' en mi PC');
+    const bShot = mk('button', 'ghost', 'Captura'); bShot.type = 'button'; bShot.disabled = true;
+    bShot.setAttribute('aria-label', 'Guardar una captura de la imagen del casco ' + id + ' como PNG');
+    const bAgain = mk('button', 'ghost hidden', 'Descargar de nuevo'); bAgain.type = 'button';
+    const chk = (txt, on) => { const l = mk('label', 'chk'); const i = mk('input'); i.type = 'checkbox'; i.checked = on; l.append(i, txt); return [l, i]; };
+    const [lMicRec, cMic] = chk('Incluir mi micrófono', true), [lCasRec, cCasco] = chk('Incluir audio del casco', true);
+    const recState = mk('span', 'state', ''); recState.setAttribute('role', 'status'); recState.setAttribute('aria-live', 'polite');
+    const recTime = mk('span', 'mute', '');
+    const recNote = mk('p', 'mute', ''); recNote.style.margin = '0';
+    rrow.append(bRec, bShot, bAgain, lMicRec, lCasRec, recTime, recState);
+    sec.append(row, rrow, recNote, vrow, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
@@ -333,6 +494,8 @@
 
     function closePc() {
       clearInterval(L.statsTimer); L.statsTimer = null; stats.textContent = '';
+      if (L.recLost) L.recLost('Se cortó el video: se guardó lo grabado hasta ese momento.');
+      L.ms = null; if (L.recReady) L.recReady(false);
       if (L.pc) { L.pc.onconnectionstatechange = null; L.pc.ontrack = null; try { L.pc.close(); } catch (_) {} L.pc = null; }
     }
     async function deleteSession() {   // WHEP: DELETE sobre el Location devuelto
@@ -347,7 +510,13 @@
       const pc = new RTCPeerConnection({ iceServers: STUN });
       L.pc = pc;
       pc.addTransceiver('video', { direction: 'recvonly' });
-      pc.ontrack = e => { video.srcObject = (e.streams && e.streams[0]) || new MediaStream([e.track]); wrap.classList.remove('hidden'); };
+      pc.addTransceiver('audio', { direction: 'recvonly' });   // audio del casco si el servidor lo ofrece (el video se muestra silenciado)
+      pc.ontrack = e => {   // una sola MediaStream con video (+ audio si llega)
+        if (!L.ms) L.ms = new MediaStream();
+        L.ms.addTrack(e.track);
+        if (video.srcObject !== L.ms) video.srcObject = L.ms;
+        if (e.track.kind === 'video') { wrap.classList.remove('hidden'); if (L.recReady) L.recReady(true); }
+      };
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc, 2000);
       if (gen !== L.gen) throw Object.assign(new Error('cancelado'), { fatal: true });
@@ -425,6 +594,183 @@
     bStart.addEventListener('click', L.start);
     bStop.addEventListener('click', L.stop);
     L.applyRot = applyRot;
+
+    // ---- Grabacion a la PC (video + audio) y captura PNG (docs/PROTOCOLO-CENTRO.md seccion 5) ----
+    // Lienzo con el giro y el recorte vigentes + marca -> captureStream(15) -> MediaRecorder; el audio se mezcla con Web Audio.
+    const WATERMARK = cfg.REC_WATERMARK !== false;
+    const REC_MAX_S = 60 * 60, REC_WARN_S = 45 * 60, REC_MAX_BYTES = 1e9;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const canRec = !!(window.MediaRecorder && HTMLCanvasElement.prototype.captureStream);
+    const MIMES = ['video/mp4;codecs=avc1,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4',
+      'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+    let rec = null, lastUrl = null, lastName = '';
+    const even = n => Math.max(2, Math.round(n / 2) * 2);
+    const mb = b => (b / 1048576).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' MB';
+    const stampOf = d => {
+      const p = {};
+      new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
+        .formatToParts(d).forEach(x => { p[x.type] = x.value; });
+      return p.year + '-' + p.month + '-' + p.day + '_' + p.hour + '-' + p.minute + '-' + p.second;
+    };
+    let wmSec = 0, wmTxt = '';
+    const wmText = () => {
+      const s = Math.floor(Date.now() / 1000);
+      if (s !== wmSec) { wmSec = s; wmTxt = 'Casco ' + id + ' · ' + new Date().toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' }); }
+      return wmTxt;
+    };
+    const frameInfo = () => {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (!vw || !vh) return null;
+      let sx = 0, sy = 0, sw = vw, sh = vh;
+      if (useCanvas()) {   // mismo recorte que el visor
+        sx = Math.round(vw * cropRect.l); sy = Math.round(vh * cropRect.t);
+        sw = Math.max(1, Math.round(vw * (1 - cropRect.l - cropRect.r))); sh = Math.max(1, Math.round(vh * (1 - cropRect.t - cropRect.b)));
+      }
+      const r = curRot(), q = r === 90 || r === 270;
+      return { sx, sy, sw, sh, r, cw: q ? sh : sw, ch: q ? sw : sh };
+    };
+    const paint = (c2, W, H, f) => {
+      c2.fillStyle = '#000'; c2.fillRect(0, 0, W, H);
+      const k = Math.min(W / f.cw, H / f.ch);   // encaja si el giro cambia durante la grabacion
+      c2.save(); c2.translate(W / 2, H / 2); c2.rotate(f.r * Math.PI / 180); c2.scale(k, k);
+      c2.drawImage(video, f.sx, f.sy, f.sw, f.sh, -f.sw / 2, -f.sh / 2, f.sw, f.sh);
+      c2.restore();
+      if (WATERMARK) {
+        const fs = Math.max(12, Math.round(H * 0.035)), pad = Math.round(fs * 0.4), t = wmText();
+        c2.font = '600 ' + fs + 'px system-ui, "Segoe UI", sans-serif'; c2.textBaseline = 'top';
+        const w = c2.measureText(t).width;
+        c2.fillStyle = 'rgba(0,0,0,.6)'; c2.fillRect(0, H - fs - pad * 2, w + pad * 2, fs + pad * 2);
+        c2.fillStyle = '#fff'; c2.fillText(t, pad, H - fs - pad);
+      }
+    };
+    const save = (url, name) => { const a = mk('a'); a.href = url; a.download = name; a.hidden = true; document.body.append(a); a.click(); a.remove(); };
+    const setRec = (t, bad) => { recState.textContent = t; recState.classList.toggle('bad', !!bad); };
+    const audioOn = () => cMic.checked || cCasco.checked;
+    const refreshNote = () => {
+      recNote.textContent = 'La grabación se guarda solo en tu PC; la plataforma no conserva copias. Informá al personal.' +
+        (audioOn() ? ' Esta grabación incluye audio.' : '');
+    };
+    const liveNow = () => !!(L.ms && L.pc);
+    refreshNote();
+    cMic.addEventListener('change', refreshNote); cCasco.addEventListener('change', refreshNote);
+    if (!canRec) {
+      setRec('Este navegador no permite grabar video (falta MediaRecorder). Probá con Chrome, Edge o Firefox actualizados.', true);
+    }
+
+    // Mezcla las pistas de audio disponibles: audio del casco (video en vivo y llamada) y mi microfono si hay llamada.
+    function syncAudio(r) {
+      if (!r.dest) return;
+      const want = new Set();
+      const live = t => t && t.readyState !== 'ended';
+      if (cCasco.checked) {
+        [video.srcObject, remote.srcObject].forEach(ms => {
+          if (ms && ms.getAudioTracks) ms.getAudioTracks().forEach(t => { if (live(t)) want.add(t); });
+        });
+      }
+      const c = L.call;
+      if (cMic.checked && c && !c.ended && c.stream) c.stream.getAudioTracks().forEach(t => { if (live(t)) want.add(t); });
+      for (const [t, node] of r.srcs) if (!want.has(t)) { try { node.disconnect(); } catch (_) {} r.srcs.delete(t); }
+      for (const t of want) {
+        if (r.srcs.has(t)) continue;
+        try { const n = r.actx.createMediaStreamSource(new MediaStream([t])); n.connect(r.dest); r.srcs.set(t, n); } catch (_) {}
+      }
+      const mic = !!(c && !c.ended && c.stream && cMic.checked);
+      const cas = r.srcs.size - (mic ? c.stream.getAudioTracks().filter(t => r.srcs.has(t)).length : 0);
+      r.audioLbl = cas > 0 && mic ? 'audio: casco y micrófono' : cas > 0 ? 'audio: casco' : mic ? 'audio: micrófono' : 'audio: sin fuentes por ahora';
+    }
+    const recStatus = r => 'Grabando · ' + (r.dest ? r.audioLbl || 'audio' : 'solo video (sin audio)') + (r.warned ? ' · aviso: tope a los 60 min' : '');
+    const dispose = r => {
+      clearInterval(r.tDraw); clearInterval(r.tTick); clearInterval(r.tSync);
+      r.srcs.forEach(n => { try { n.disconnect(); } catch (_) {} });
+      if (r.actx) { try { r.actx.close(); } catch (_) {} }
+      try { r.out.getTracks().forEach(t => t.stop()); } catch (_) {}
+    };
+    function finish(r) {
+      if (r.done) return;
+      r.done = true; dispose(r);
+      if (rec === r) rec = null;
+      cMic.disabled = false; cCasco.disabled = false;
+      bRec.textContent = 'Grabar'; bRec.setAttribute('aria-label', 'Grabar el video del casco ' + id + ' en mi PC');
+      bRec.disabled = !(canRec && liveNow());
+      recTime.textContent = ''; recTime.className = 'mute';
+      const blob = new Blob(r.chunks, { type: r.type });
+      if (!blob.size) { setRec('No se grabó nada.', true); return; }
+      if (lastUrl) { try { URL.revokeObjectURL(lastUrl); } catch (_) {} }
+      lastUrl = URL.createObjectURL(blob);
+      lastName = 'casco-' + id + '_' + stampOf(new Date(r.t0)) + '.' + r.ext;
+      save(lastUrl, lastName);
+      bAgain.classList.remove('hidden');
+      setRec((r.why || 'Grabación guardada en tu PC.') + ' Archivo: ' + lastName + ' (' + mb(blob.size) + ').', r.bad);
+    }
+    function stopRec(why, bad) {
+      const r = rec; if (!r || r.stopping) return;
+      r.stopping = true; r.why = why; r.bad = !!bad;
+      bRec.disabled = true;
+      clearInterval(r.tDraw); clearInterval(r.tTick); clearInterval(r.tSync);
+      try { if (r.mr.state !== 'inactive') r.mr.stop(); else finish(r); } catch (_) { finish(r); }
+    }
+    function startRec() {
+      if (rec || !canRec) return;
+      const f = frameInfo();
+      if (!f) { setRec('Todavía no hay imagen del casco para grabar.', true); return; }
+      const k0 = Math.min(1, 1280 / Math.max(f.cw, f.ch));
+      const W = even(f.cw * k0), H = even(f.ch * k0);
+      const cvr = document.createElement('canvas'); cvr.width = W; cvr.height = H;
+      const c2 = cvr.getContext('2d');
+      paint(c2, W, H, f);
+      const r = { out: null, chunks: [], bytes: 0, t0: Date.now(), srcs: new Map(), warned: false, actx: null, dest: null, audioLbl: '' };
+      try { r.out = cvr.captureStream(15); } catch (_) { setRec('No se pudo preparar la grabación en este navegador.', true); return; }
+      if (audioOn() && AC) {
+        try {
+          r.actx = new AC();
+          if (r.actx.state === 'suspended' && r.actx.resume) r.actx.resume();
+          r.dest = r.actx.createMediaStreamDestination();
+          r.dest.stream.getAudioTracks().forEach(t => r.out.addTrack(t));
+        } catch (_) { if (r.actx) { try { r.actx.close(); } catch (__) {} } r.actx = null; r.dest = null; }
+      }
+      const mime = MIMES.find(m => { try { return MediaRecorder.isTypeSupported(m); } catch (_) { return false; } }) || '';
+      try { r.mr = mime ? new MediaRecorder(r.out, { mimeType: mime, videoBitsPerSecond: 2500000 }) : new MediaRecorder(r.out); }
+      catch (e) { dispose(r); setRec('El navegador no pudo iniciar la grabación (' + ((e && e.name) || 'error') + ').', true); return; }
+      r.type = String(r.mr.mimeType || mime || 'video/webm').split(';')[0];
+      r.ext = /mp4/.test(r.type) ? 'mp4' : 'webm';
+      r.mr.ondataavailable = e => { if (e.data && e.data.size) { r.chunks.push(e.data); r.bytes += e.data.size; } };
+      r.mr.onstop = () => finish(r);
+      r.mr.onerror = () => stopRec('Falló el grabador: se guardó lo grabado.', true);
+      rec = r;
+      cMic.disabled = true; cCasco.disabled = true;
+      bRec.textContent = 'Detener grabación'; bRec.setAttribute('aria-label', 'Detener la grabación del casco ' + id + ' y descargarla');
+      bAgain.classList.add('hidden');
+      syncAudio(r);
+      const tick = () => {
+        const el = Math.floor((Date.now() - r.t0) / 1000);
+        recTime.className = 'recdot'; recTime.textContent = '● REC ' + clock(el) + ' · ' + mb(r.bytes);
+        if (!r.warned && el >= REC_WARN_S) { r.warned = true; recState.textContent = recStatus(r); }
+        if (el >= REC_MAX_S || r.bytes >= REC_MAX_BYTES) stopRec('Se llegó al tope (60 min o 1 GB): se guardó lo grabado.', false);
+      };
+      tick();
+      setRec(recStatus(r));
+      r.tDraw = setInterval(() => { const g = frameInfo(); if (g) paint(c2, W, H, g); }, 66);
+      r.tTick = setInterval(tick, 500);
+      r.tSync = setInterval(() => { syncAudio(r); if (!r.stopping) { const t = recStatus(r); if (recState.textContent !== t) recState.textContent = t; } }, 1000);
+      try { r.mr.start(1000); } catch (_) { stopRec('No se pudo iniciar la grabación.', true); }
+    }
+    bRec.addEventListener('click', () => { if (rec) stopRec('Grabación guardada en tu PC.', false); else startRec(); });
+    bAgain.addEventListener('click', () => { if (lastUrl) save(lastUrl, lastName); });
+    bShot.addEventListener('click', () => {
+      const f = frameInfo();
+      if (!f) { setRec('Todavía no hay imagen del casco para capturar.', true); return; }
+      const cv2 = document.createElement('canvas'); cv2.width = f.cw; cv2.height = f.ch;
+      paint(cv2.getContext('2d'), f.cw, f.ch, f);
+      cv2.toBlob(b => {
+        if (!b) { setRec('No se pudo generar la captura.', true); return; }
+        const url = URL.createObjectURL(b), name = 'casco-' + id + '_' + stampOf(new Date()) + '.png';
+        save(url, name); setTimeout(() => URL.revokeObjectURL(url), 10000);
+        setRec('Captura guardada en tu PC: ' + name);
+      }, 'image/png');
+    });
+    L.recReady = ok => { bShot.disabled = !ok; if (!rec) bRec.disabled = !(ok && canRec); };
+    L.recLost = why => { if (rec && !rec.stopping) stopRec(why, true); };
+    L.isRecording = () => !!rec;
 
     // ---- Voz en vivo (WebRTC solo audio; senalizacion por public.rtc_signals, docs/PROTOCOLO-VOZ.md seccion 2) ----
     const vctl = [bMute, bHang, lMic, mMic, lIn, mIn];
@@ -608,7 +954,20 @@
     return L;
   }
 
-  const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall';
+  // Geocerca que requiere Atender: restringida/enter, permitida/exit o peligro/enter (docs/PROTOCOLO-GEO.md seccion 2 y 3).
+  const geoAlert = ev => {
+    const p = ev.payload; if (!p || typeof p !== 'object') return false;
+    return (p.kind === 'restringida' && p.action === 'enter') || (p.kind === 'permitida' && p.action === 'exit') || (p.kind === 'peligro' && p.action === 'enter');
+  };
+  const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall' || (ev.type === 'geofence' && geoAlert(ev));
+  const alertLabel = ev => {
+    if (ev.type === 'fall') return 'CAÍDA';
+    if (ev.type === 'geofence') {
+      const p = ev.payload || {}, z = typeof p.zone_name === 'string' ? p.zone_name.slice(0, 60) : '';
+      return (p.kind === 'permitida' ? 'SALIÓ DE ZONA PERMITIDA' : p.kind === 'peligro' ? 'ENTRÓ A ZONA DE PELIGRO' : 'ENTRÓ A ZONA RESTRINGIDA') + (z ? ': ' + z : '');
+    }
+    return 'SOS';
+  };
   // Hombre caido (docs/PROTOCOLO-VOZ.md seccion 6): el SOS automatico trae payload.reason. Solo se compara; nunca se vuelca el texto.
   const isManDown = ev => !!ev.payload && typeof ev.payload === 'object' &&
     (ev.payload.reason === 'hombre_caido' || ev.payload.reason === 'manual_en_caida');
@@ -616,11 +975,12 @@
   function refreshBanner() {
     const b = $('sos');
     document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Casco Inteligente';
+    renderPending();
     if (!pending.size) { b.style.display = 'none'; return; }
     const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
     const txt = document.createElement('span');
     txt.textContent = pending.size + ' alerta(s) sin atender — última: ' +
-      (last.type === 'fall' ? 'CAÍDA' : 'SOS') + (isManDown(last) ? ' · HOMBRE CAÍDO' : '') + ' · Casco ' + last.device_id + ' · ' + fmt(last.created_at);
+      alertLabel(last) + (isManDown(last) ? ' · HOMBRE CAÍDO' : '') + ' · ' + label(last.device_id) + ' · ' + fmt(last.created_at);
     const go = document.createElement('button'); go.type = 'button'; go.textContent = 'Ver alerta';
     go.addEventListener('click', () => {
       const li = cards.get(last.id);
@@ -644,41 +1004,406 @@
     b.style.display = 'block';
   }
 
-  // ---- Estado de cascos (ultimo heartbeat; el agente lo envia cada 5 min) ----
+  // ---- Estado y salud de cascos (ultimo heartbeat; docs/PROTOCOLO-CENTRO.md seccion 3) ----
   const OFFLINE_MS = 12 * 60 * 1000;
-  const devState = new Map();   // device_id -> { at, battery }
+  const BAT_WARN = 20, BAT_CRIT = 10, TEMP_MAX = 45, FREE_MIN_MB = 1024;
+  const devState = new Map();   // device_id -> { at, battery, p: payload fusionado de heartbeats }
+  const hAlerts = new Map();    // 'id|tipo' -> { id, key, sev, text, dismissed }  (una por episodio)
+  const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
+  const n1 = v => v.toLocaleString('es-AR', { maximumFractionDigits: 1 });
+  const pad2 = n => String(n).padStart(2, '0');
+  const clock = s => {
+    s = Math.max(0, Math.floor(s));
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return (h ? h + ':' + pad2(m) : pad2(m)) + ':' + pad2(s % 60);
+  };
   const ago = ms => {
     const m = Math.max(0, Math.round(ms / 60000));
     return m < 1 ? 'hace menos de 1 min' : m < 60 ? 'hace ' + m + ' min' : 'hace ' + Math.round(m / 60) + ' h';
   };
+  const upText = s => {
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+    return d ? d + ' d ' + h + ' h' : h ? h + ' h ' + m + ' min' : m + ' min';
+  };
+  const batOf = s => { const b = num(s.p && s.p.bat); return b != null ? b : num(s.battery); };
+  const knownDevices = () => {
+    const set = new Set([...devState.keys(), ...lives.keys(), ...EQ.devices.map(d => d.device_id)]);
+    return [...set].filter(i => DEV_RE.test(i)).sort();
+  };
+
+  function healthOf(id, s, now) {
+    const out = [], age = now - new Date(s.at).getTime();
+    const tag = label(id) + ': ';
+    if (age > OFFLINE_MS) out.push({ key: 'off', sev: 'warn', text: tag + 'sin señal, último heartbeat ' + ago(age) });
+    const bat = batOf(s);
+    if (bat != null && bat < BAT_CRIT) out.push({ key: 'bat-crit', sev: 'crit', text: tag + 'batería crítica (' + n1(bat) + ' %)' });
+    else if (bat != null && bat < BAT_WARN) out.push({ key: 'bat-warn', sev: 'warn', text: tag + 'batería baja (' + n1(bat) + ' %)' });
+    const t = num(s.p && s.p.temp_c);
+    if (t != null && t > TEMP_MAX) out.push({ key: 'temp', sev: 'warn', text: tag + 'temperatura alta (' + n1(t) + ' °C)' });
+    const fr = num(s.p && s.p.free_mb);
+    if (fr != null && fr < FREE_MIN_MB) out.push({ key: 'free', sev: 'warn', text: tag + 'almacenamiento casi lleno (' + n1(fr / 1024) + ' GB libres)' });
+    return out;
+  }
+  let hSig = '';
+  function evalHealth() {
+    const now = Date.now(), seen = new Set();
+    for (const [id, s] of devState) {
+      for (const a of healthOf(id, s, now)) {
+        const k = id + '|' + a.key; seen.add(k);
+        const cur = hAlerts.get(k);
+        if (!cur) hAlerts.set(k, { id, key: a.key, sev: a.sev, text: a.text, dismissed: false });
+        else { cur.sev = a.sev; cur.text = a.text; }
+      }
+    }
+    for (const k of [...hAlerts.keys()]) if (!seen.has(k)) hAlerts.delete(k);   // el episodio termino: la proxima vez avisa de nuevo
+    const shown = [...hAlerts.entries()].filter(([, a]) => !a.dismissed)
+      .sort((a, b) => (a[1].sev === b[1].sev ? a[0].localeCompare(b[0]) : a[1].sev === 'crit' ? -1 : 1));
+    const sig = shown.map(([k, a]) => k + a.text).join('\n');
+    if (sig === hSig) return;
+    hSig = sig;
+    const box = $('healthAlerts');
+    box.classList.toggle('hidden', !shown.length);
+    box.replaceChildren(...shown.map(([k, a]) => {
+      const d = mk('div', 'halert' + (a.sev === 'crit' ? ' crit' : ''));
+      d.append(mk('span', 'tag ' + (a.sev === 'crit' ? 'sos' : 'warn'), a.sev === 'crit' ? 'CRÍTICA' : 'AVISO DE EQUIPO'), mk('span', '', a.text));
+      const b = mk('button', 'ghost', 'Entendido'); b.type = 'button';
+      b.setAttribute('aria-label', 'Ocultar el aviso: ' + a.text);
+      b.addEventListener('click', () => { a.dismissed = true; evalHealth(); });
+      d.append(b);
+      return d;
+    }));
+  }
+
+  function metric(label, ...content) {
+    const d = mk('div'); const dt = mk('dt', '', label), dd = mk('dd');
+    dd.append(...content);
+    d.append(dt, dd);
+    return d;
+  }
   function renderDevices() {
     const box = $('devList');
+    const now = Date.now();
+    let on = 0, off = 0;
+    for (const s of devState.values()) { if (now - new Date(s.at).getTime() <= OFFLINE_MS) on++; else off++; }
+    $('kpiDevN').textContent = on + ' en línea';
+    $('kpiDevOff').textContent = off + ' sin señal';
+    $('kpiDevOff').className = off ? 'bad' : 'mute';
+    fillDest();
     if (!devState.size) { box.className = 'mute'; box.textContent = 'Sin datos de cascos todavía.'; return; }
     box.className = '';
     const rows = [...devState.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([id, s]) => {
-      const row = mk('div', 'dev');
-      const age = Date.now() - new Date(s.at).getTime();
-      const on = age <= OFFLINE_MS;
-      const dot = mk('span', 'dot ' + (on ? 'on' : 'off')); dot.setAttribute('aria-hidden', 'true');
-      row.append(dot, mk('strong', '', 'Casco ' + id),
-        mk('span', on ? '' : 'state bad', on ? 'En línea' : 'Sin señal'),
-        mk('span', 'mute', ago(age) + (s.battery != null ? ' · batería ' + s.battery + '%' : '')));
+      const age = now - new Date(s.at).getTime();
+      const live = age <= OFFLINE_MS;
+      const row = mk('div', 'dev2' + (live ? '' : ' off'));
+      const head = mk('div', 'dev');
+      const dot = mk('span', 'dot ' + (live ? 'on' : 'off')); dot.setAttribute('aria-hidden', 'true');
+      head.append(dot, dlEl('strong', id, ''), mk('span', live ? '' : 'state bad', live ? 'En línea' : 'Sin señal'), mk('span', 'mute', ago(age)));
+      const dl = mk('dl', 'metrics');
+      const p = s.p || {};
+      const dash = () => mk('span', 'mute', '—');
+      // Bateria: barra con color por umbral (rojo < 10, amarillo < 20, verde)
+      const bat = batOf(s);
+      if (bat != null) {
+        const m = mk('meter'); m.min = 0; m.max = 100; m.low = BAT_CRIT; m.high = BAT_WARN - 0.01; m.optimum = 100; m.value = Math.max(0, Math.min(100, bat));
+        m.setAttribute('aria-label', 'Batería del casco ' + id);
+        m.textContent = bat + ' %';
+        const txt = mk('span', bat < BAT_WARN ? 'bad' : '', ' ' + n1(bat) + ' %' + (p.chg === true ? ' · cargando' : '') + (bat < BAT_CRIT ? ' · crítica' : bat < BAT_WARN ? ' · baja' : ''));
+        dl.append(metric('Batería', m, txt));
+      } else dl.append(metric('Batería', dash()));
+      const lvl = num(p.lvl), sig = num(p.sig);
+      dl.append(metric('Señal', lvl != null || sig != null
+        ? mk('span', '', (lvl != null ? 'nivel ' + lvl + '/4' : '') + (lvl != null && sig != null ? ' · ' : '') + (sig != null ? sig + ' dBm' : ''))
+        : dash()));
+      const net = typeof p.net === 'string' && p.net ? p.net.slice(0, 12) : '', sim = num(p.sim);
+      dl.append(metric('Red / SIM', net || sim != null ? mk('span', '', (net || '—') + (sim != null ? ' · SIM ' + sim : '')) : dash()));
+      const temp = num(p.temp_c);
+      dl.append(metric('Temperatura', temp != null ? mk('span', temp > TEMP_MAX ? 'bad' : '', n1(temp) + ' °C' + (temp > TEMP_MAX ? ' · alta' : '')) : dash()));
+      const fr = num(p.free_mb);
+      dl.append(metric('Almacenamiento libre', fr != null ? mk('span', fr < FREE_MIN_MB ? 'bad' : '', fr >= 1024 ? n1(fr / 1024) + ' GB' : Math.round(fr) + ' MB') : dash()));
+      dl.append(metric('Versión', typeof p.app === 'string' && p.app ? mk('span', '', p.app.slice(0, 20)) : dash()));
+      const up = num(p.up_s);
+      dl.append(metric('Encendido hace', up != null ? mk('span', '', upText(up)) : dash()));
+      row.append(head, dl);
       return row;
     });
     box.replaceChildren(...rows);
   }
-  function noteDevice(id, at, battery) {
+  function noteDevice(id, at, battery, payload) {
     const cur = devState.get(id);
-    if (!cur || new Date(at) >= new Date(cur.at)) devState.set(id, { at, battery: battery ?? (cur && cur.battery) ?? null });
+    const pl = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
+    if (!cur) { devState.set(id, { at, battery: battery ?? null, p: pl ? { ...pl } : {} }); return; }
+    if (new Date(at) >= new Date(cur.at)) {
+      devState.set(id, { at, battery: battery ?? cur.battery ?? null, p: pl ? { ...cur.p, ...pl } : cur.p });
+    } else if (pl) {   // un heartbeat mas viejo solo completa los campos que faltan
+      cur.p = { ...pl, ...cur.p };
+      if (cur.battery == null && battery != null) cur.battery = battery;
+    }
   }
   async function loadDevices() {
-    const { data, error } = await sb.from('events').select('device_id,created_at,battery,type')
+    const { data, error } = await sb.from('events').select('device_id,created_at,battery,type,payload')
       .eq('type', 'heartbeat').order('created_at', { ascending: false }).limit(200);
     if (error || !data) return;
-    for (const e of data) noteDevice(e.device_id, e.created_at, e.battery);
-    renderDevices();
+    for (const e of data) noteDevice(e.device_id, e.created_at, e.battery, e.payload);
+    renderDevices(); evalHealth();
   }
-  setInterval(renderDevices, 30000);
+
+  // ---- Centro: KPI y pendientes por antiguedad ----
+  let lastEv = null;
+  function noteLast(ev) {
+    if (ev.type === 'heartbeat' || ev.type === 'location') return;
+    if (!lastEv || new Date(ev.created_at) >= new Date(lastEv.created_at)) lastEv = ev;
+    $('kpiLast').textContent = String(lastEv.type || '').toUpperCase() + ' · ' + label(lastEv.device_id);
+    $('kpiLastWhen').textContent = fmt(lastEv.created_at);
+  }
+  const oldestPending = () => {
+    let o = null;
+    for (const ev of pending.values()) if (!o || new Date(ev.created_at) < new Date(o.created_at)) o = ev;
+    return o;
+  };
+  function renderKpiAge() {
+    const o = oldestPending();
+    $('kpiPendN').textContent = String(pending.size);
+    $('kpiPend').classList.toggle('alert', pending.size > 0);
+    $('kpiPendAge').textContent = o ? 'La más antigua: hace ' + clock((Date.now() - new Date(o.created_at).getTime()) / 1000) : 'Sin alertas pendientes';
+    $('pendList').querySelectorAll('.age').forEach(el => {
+      el.textContent = 'hace ' + clock((Date.now() - Number(el.dataset.t)) / 1000);
+    });
+  }
+  const pendEls = new Map();   // event_id -> <li>
+  function liveAction(devId) {
+    if (OWN_LIVE && DEV_RE.test(devId || '')) {
+      const see = mk('button', 'ghost', 'Ver en vivo'); see.type = 'button';
+      see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
+      see.addEventListener('click', () => {
+        const L = ensureLive(devId); if (!L) return;
+        L.sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if (!L.bStart.disabled) L.start();
+        L.bStop.focus({ preventScroll: true });
+      });
+      return see;
+    }
+    if (OWN_LIVE) return null;
+    const a = mk('a', 'btn', 'Cámara en vivo'); a.href = RUNDE_LIVE_URL; a.target = '_blank'; a.rel = 'noopener noreferrer';
+    return a;
+  }
+  function buildPending(ev) {
+    const li = mk('li', 'card pitem');
+    const head = mk('div', 'row');
+    head.append(mk('span', 'tag ' + ev.type + (ev.type === 'geofence' ? ' sos' : ''), ev.type === 'geofence' ? alertLabel(ev) : String(ev.type).toUpperCase()));
+    if (isManDown(ev)) head.append(mk('span', 'tag sos', 'HOMBRE CAÍDO'));
+    const age = mk('strong', 'age'); age.dataset.t = String(new Date(ev.created_at).getTime());
+    head.append(dlEl('strong', ev.device_id, ''), mk('span', 'mute', fmt(ev.created_at)), age);
+    const act = mk('div', 'row');
+    const note = mk('input'); note.type = 'text'; note.maxLength = 500; note.placeholder = 'Nota (opcional)';
+    note.setAttribute('aria-label', 'Nota de atención del casco ' + ev.device_id); note.style.flex = '1 1 160px';
+    const btn = mk('button', 'attend', 'Atender'); btn.type = 'button';
+    btn.setAttribute('aria-label', 'Atender la alerta del casco ' + ev.device_id);
+    btn.addEventListener('click', () => attend(ev, btn, note));
+    act.append(note, btn);
+    const lv = liveAction(ev.device_id); if (lv) act.append(lv);
+    li.append(head, geoInfoEl('p' + ev.id, ev), act);
+    return li;
+  }
+  function renderPending() {
+    const ul = $('pendList');
+    const list = [...pending.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));   // la mas antigua primero
+    const keep = new Set(list.map(e => e.id));
+    for (const [id, li] of pendEls) if (!keep.has(id)) { li.remove(); pendEls.delete(id); }
+    for (const ev of list) if (!pendEls.has(ev.id)) pendEls.set(ev.id, buildPending(ev));
+    ul.querySelectorAll(':scope > li.empty').forEach(n => n.remove());
+    const want = list.map(e => pendEls.get(e.id));
+    const have = [...ul.children];
+    if (want.length !== have.length || want.some((n, i) => n !== have[i])) ul.replaceChildren(...want);
+    if (!want.length) ul.append(mk('li', 'empty mute', 'No hay alertas pendientes.'));
+    renderKpiAge();
+  }
+  let tickN = 0;
+  setInterval(() => { tickN++; renderKpiAge(); if (tickN % 10 === 0) { renderDevices(); evalHealth(); renderBroadcasts(); } }, 1000);
+
+  async function attend(ev, btn, noteEl) {
+    btn.disabled = true;
+    const row = { event_id: ev.id };
+    const t = noteEl ? noteEl.value.trim() : '';
+    if (t) row.note = t;
+    const { error } = await sb.from('event_acks').insert(row);
+    if (error && error.code !== '23505') { btn.disabled = false; $('status').textContent = 'No se pudo atender: ' + error.message; return; }
+    const { data } = await sb.from('event_acks').select('*').eq('event_id', ev.id).maybeSingle();
+    if (data) applyAck(data);
+  }
+
+  // ---- Escalamiento (solo lectura de public.escalation_rules) ----
+  async function loadEscalation() {
+    const el = $('escState');
+    try {
+      const { data, error } = await sb.from('escalation_rules').select('after_seconds,enabled').limit(10);
+      if (error || !Array.isArray(data) || !data.length) { el.textContent = 'Escalamiento no configurado'; return; }
+      const on = data.filter(r => r.enabled === true && num(r.after_seconds) != null).map(r => r.after_seconds);
+      el.textContent = on.length ? 'Escalamiento: activo en ' + Math.min(...on) + ' s' : 'Escalamiento: inactivo';
+    } catch (_) { el.textContent = 'Escalamiento no configurado'; }
+  }
+
+  // ---- Evacuacion y mensajes a cascos (public.broadcasts / broadcast_acks; docs/PROTOCOLO-CENTRO.md seccion 4) ----
+  const bcasts = new Map();    // broadcast id -> fila
+  const bcAcks = new Map();    // broadcast id -> Map(device_id -> played_at)
+  const BC_COLS = 'id,kind,message,device_ids,repeat,created_at,created_by_email';
+  const BC_VALID_MS = 2 * 60 * 1000;   // el casco solo ve ordenes de los ultimos 2 min
+  function fillDest() {
+    const ids = knownDevices();
+    for (const sel of [$('evacDest'), $('msgDest')]) {
+      const cur = sel.value;
+      const sig = ids.map(i => label(i)).join(',');
+      if (sel.dataset.sig === sig) continue;
+      sel.dataset.sig = sig;
+      sel.replaceChildren(new Option('Todos los cascos', ''), ...ids.map(i => new Option(label(i), i)));
+      sel.value = ids.includes(cur) ? cur : '';
+    }
+  }
+  const asIds = v => {
+    if (Array.isArray(v)) return v.filter(x => typeof x === 'string' && DEV_RE.test(x));
+    if (typeof v === 'string' && v[0] === '{') return v.slice(1, -1).split(',').map(x => x.replace(/^"|"$/g, '')).filter(x => DEV_RE.test(x));
+    return null;
+  };
+  function noteBc(b) {
+    if (!b || typeof b.id !== 'string') return;
+    bcasts.set(b.id, { id: b.id, kind: b.kind === 'evacuacion' ? 'evacuacion' : 'mensaje', message: String(b.message || ''),
+      device_ids: asIds(b.device_ids), repeat: num(b.repeat) || 1, created_at: b.created_at, by: String(b.created_by_email || '') });
+    const keep = [...bcasts.values()].sort((a, c) => new Date(c.created_at) - new Date(a.created_at)).slice(0, 20).map(x => x.id);
+    for (const k of [...bcasts.keys()]) if (!keep.includes(k)) { bcasts.delete(k); bcAcks.delete(k); }
+  }
+  function noteBcAck(a) {
+    if (!a || !DEV_RE.test(a.device_id || '') || typeof a.broadcast_id !== 'string') return;
+    if (!bcAcks.has(a.broadcast_id)) bcAcks.set(a.broadcast_id, new Map());
+    bcAcks.get(a.broadcast_id).set(a.device_id, a.played_at);
+  }
+  function renderBroadcasts() {
+    const ul = $('bcList');
+    const list = [...bcasts.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    if (!list.length) { ul.replaceChildren(mk('li', 'empty mute', 'Todavía no hay órdenes.')); return; }
+    const now = Date.now();
+    ul.replaceChildren(...list.map(b => {
+      const li = mk('li', 'bcitem');
+      const got = bcAcks.get(b.id) || new Map();
+      const targets = b.device_ids || [...new Set([...knownDevices(), ...got.keys()])].sort();
+      const done = targets.filter(t => got.has(t)).length;
+      const head = mk('div', 'row');
+      head.append(mk('span', 'tag ' + (b.kind === 'evacuacion' ? 'sos' : ''), b.kind === 'evacuacion' ? 'EVACUACIÓN' : 'MENSAJE'),
+        mk('span', 'mute', fmt(b.created_at)), mk('span', 'mute', b.by ? 'por ' + b.by : ''));
+      li.append(head);
+      li.append(mk('div', '', b.message ? '“' + b.message + '”' : (b.kind === 'evacuacion' ? '(texto estándar: dirigirse al punto de reunión)' : '')));
+      li.append(mk('div', 'mute', 'Destino: ' + (b.device_ids ? b.device_ids.map(i => 'casco ' + i).join(', ') : 'todos los cascos') + ' · repetir ' + b.repeat + ' ' + (b.repeat === 1 ? 'vez' : 'veces')));
+      const expired = now - new Date(b.created_at).getTime() > BC_VALID_MS;
+      li.append(mk('strong', done < targets.length && expired ? 'bad' : '', 'Recibido por ' + done + ' de ' + targets.length + ' cascos'));
+      if (targets.length) {
+        const chips = mk('div', 'chips');
+        for (const t of targets) {
+          const at = got.get(t);
+          chips.append(mk('span', 'tag' + (at ? ' ok' : ''), label(t) + ': ' + (at
+            ? 'recibido ' + new Date(at).toLocaleTimeString('es-AR', { timeZone: TZ })
+            : expired ? 'no recibido' : 'esperando')));
+        }
+        li.append(chips);
+      }
+      return li;
+    }));
+  }
+  async function loadBcAcks() {
+    const ids = [...bcasts.keys()];
+    if (!ids.length) { renderBroadcasts(); return; }
+    const { data, error } = await sb.from('broadcast_acks').select('broadcast_id,device_id,played_at').in('broadcast_id', ids);
+    if (!error && Array.isArray(data)) data.forEach(noteBcAck);
+    renderBroadcasts();
+  }
+  async function loadBroadcasts() {
+    const { data, error } = await sb.from('broadcasts').select(BC_COLS).order('created_at', { ascending: false }).limit(20);
+    if (error || !Array.isArray(data)) { $('bcList').replaceChildren(mk('li', 'empty mute', 'No se pudo leer el historial de órdenes.')); return; }
+    data.forEach(noteBc);
+    await loadBcAcks();
+  }
+  const cleanMsg = t => String(t || '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  function bcError(error) {
+    const m = String(error.message || ''), c = String(error.code || '');
+    if (c === '54000' || /rate limit/i.test(m)) return 'Demasiadas órdenes en poco tiempo (máximo 6 por minuto). Esperá unos segundos y probá de nuevo.';
+    if (c === '42501' || c === 'PGRST301' || /permission|row-level|not authorized|jwt|rol no autorizado/i.test(m)) return 'No tenés permiso para enviar órdenes a los cascos.';
+    return 'No se pudo enviar la orden: ' + m;
+  }
+  async function sendBroadcast(kind, message, dest, rep, errEl, btn) {
+    errEl.textContent = ''; $('orderOk').textContent = '';
+    const m = cleanMsg(message);
+    if (kind === 'mensaje' && !m) { errEl.textContent = 'Escribí el mensaje antes de enviar.'; return false; }
+    if (m.length > 200) { errEl.textContent = 'El mensaje supera los 200 caracteres.'; return false; }
+    const r = parseInt(rep, 10);
+    if (!(r >= 1 && r <= 5)) { errEl.textContent = 'Las repeticiones deben ser de 1 a 5.'; return false; }
+    if (dest && !DEV_RE.test(dest)) { errEl.textContent = 'Casco de destino inválido.'; return false; }
+    btn.disabled = true;
+    let res;
+    try {
+      // Solo columnas permitidas por RLS: kind, message, device_ids, repeat (autor y fecha los pone el servidor).
+      res = await sb.from('broadcasts').insert({ kind, message: m, device_ids: dest ? [dest] : null, repeat: r }).select(BC_COLS).single();
+    } catch (e) { res = { error: { message: (e && e.message) || 'sin conexión' } }; }
+    btn.disabled = false;
+    if (res.error) { errEl.textContent = bcError(res.error); return false; }
+    if (res.data) { noteBc(res.data); renderBroadcasts(); }
+    $('orderOk').textContent = (kind === 'evacuacion' ? 'Evacuación enviada' : 'Mensaje enviado') + ' a ' + (dest ? 'el casco ' + dest : 'todos los cascos') + '.';
+    return true;
+  }
+  // Evacuacion: dos pasos. 1) abrir el panel; 2) escribir EVACUACION y enviar, o tocar Enviar dos veces dentro de 3 s.
+  let armTimer = null, armAt = 0;
+  function disarm() {
+    clearInterval(armTimer); armTimer = null; armAt = 0;
+    $('evacGo').textContent = 'Enviar evacuación';
+  }
+  function closeEvac() { disarm(); $('evacBox').classList.add('hidden'); $('btnEvac').setAttribute('aria-expanded', 'false'); $('evacType').value = ''; $('evacErr').textContent = ''; }
+  $('btnEvac').addEventListener('click', () => {
+    const open = $('evacBox').classList.contains('hidden');
+    if (!open) { closeEvac(); return; }
+    $('msgBox').classList.add('hidden'); $('btnMsg').setAttribute('aria-expanded', 'false');
+    $('evacBox').classList.remove('hidden'); $('btnEvac').setAttribute('aria-expanded', 'true');
+    $('evacType').focus();
+  });
+  $('evacCancel').addEventListener('click', () => { closeEvac(); $('btnEvac').focus(); });
+  $('evacGo').addEventListener('click', async () => {
+    const typed = $('evacType').value.trim().toUpperCase() === 'EVACUACION';
+    const now = Date.now();
+    if (!typed) {
+      if (!armAt || now - armAt > 3000) {   // primer toque: arma la cuenta de 3 s
+        armAt = now; let left = 3;
+        $('evacGo').textContent = 'Tocá de nuevo para confirmar (' + left + ')';
+        $('evacErr').textContent = '';
+        armTimer = setInterval(() => {
+          left--;
+          if (left <= 0) { disarm(); return; }
+          $('evacGo').textContent = 'Tocá de nuevo para confirmar (' + left + ')';
+        }, 1000);
+        return;
+      }
+      if (now - armAt < 600) return;   // un doble clic accidental no confirma
+    }
+    const ok = await sendBroadcast('evacuacion', $('evacMsg').value, $('evacDest').value, $('evacRep').value, $('evacErr'), $('evacGo'));
+    disarm();
+    if (ok) { closeEvac(); $('evacMsg').value = ''; $('btnEvac').focus(); }
+  });
+  $('btnMsg').addEventListener('click', () => {
+    const open = $('msgBox').classList.contains('hidden');
+    closeEvac();
+    $('msgBox').classList.toggle('hidden', !open); $('btnMsg').setAttribute('aria-expanded', String(open));
+    if (open) $('msgText').focus();
+  });
+  $('msgCancel').addEventListener('click', () => { $('msgBox').classList.add('hidden'); $('btnMsg').setAttribute('aria-expanded', 'false'); $('msgErr').textContent = ''; $('btnMsg').focus(); });
+  $('msgText').addEventListener('input', () => { $('msgCount').textContent = $('msgText').value.length + '/200'; });
+  $('msgBox').addEventListener('submit', async e => {
+    e.preventDefault();
+    const ok = await sendBroadcast('mensaje', $('msgText').value, $('msgDest').value, $('msgRep').value, $('msgErr'), $('msgGo'));
+    if (ok) { $('msgText').value = ''; $('msgCount').textContent = '0/200'; $('msgBox').classList.add('hidden'); $('btnMsg').setAttribute('aria-expanded', 'false'); $('btnMsg').focus(); }
+  });
+  // Respaldo del Realtime: mientras haya ordenes recientes sin acuse de todos, relee los acuses cada 15 s.
+  setInterval(() => {
+    const now = Date.now();
+    const need = [...bcasts.values()].some(b => now - new Date(b.created_at).getTime() < 10 * 60 * 1000);
+    if (need && $('app') && !$('app').classList.contains('hidden')) loadBcAcks();
+  }, 15000);
+  window.addEventListener('beforeunload', e => {   // una grabacion en curso se perderia al cerrar
+    if ([...lives.values()].some(L => L.isRecording && L.isRecording())) { e.preventDefault(); e.returnValue = ''; }
+  });
 
   function renderAction(ev) {
     const li = cards.get(ev.id); if (!li) return;
@@ -716,15 +1441,7 @@
       note.setAttribute('aria-label', 'Nota de atención'); note.style.flex = '1 1 200px';
       const btn = document.createElement('button'); btn.className = 'attend'; btn.type = 'button';
       btn.textContent = 'Atender';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        const row = { event_id: ev.id };
-        if (note.value.trim()) row.note = note.value.trim();
-        const { error } = await sb.from('event_acks').insert(row);
-        if (error && error.code !== '23505') { btn.disabled = false; $('status').textContent = 'No se pudo atender: ' + error.message; return; }
-        const { data } = await sb.from('event_acks').select('*').eq('event_id', ev.id).maybeSingle();
-        if (data) applyAck(data);
-      });
+      btn.addEventListener('click', () => attend(ev, btn, note));
       box.append(note, btn);
     }
     li.append(box);
@@ -739,22 +1456,24 @@
     }
     $('doneCount').textContent = String($('feedDone').querySelectorAll(':scope > li:not(.empty)').length);
   }
+  const TABS = [['main', 'tabMain', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['done', 'tabDone', 'panelDone']];
   function showTab(name) {
-    const done = name === 'done';
-    $('panelMain').classList.toggle('hidden', done);
-    $('panelDone').classList.toggle('hidden', !done);
-    for (const [id, on] of [['tabMain', !done], ['tabDone', done]]) {
-      $(id).setAttribute('aria-selected', String(on));
-      $(id).tabIndex = on ? 0 : -1;
+    for (const [k, t, pn] of TABS) {
+      const on = k === name;
+      $(pn).classList.toggle('hidden', !on);
+      $(t).setAttribute('aria-selected', String(on));
+      $(t).tabIndex = on ? 0 : -1;
     }
+    if (name === 'map') ensureMap();
+    if (name === 'eq') renderEq();
   }
-  $('tabMain').addEventListener('click', () => showTab('main'));
-  $('tabDone').addEventListener('click', () => showTab('done'));
+  for (const [k, t] of TABS) $(t).addEventListener('click', () => showTab(k));
   document.querySelector('.tabs').addEventListener('keydown', e => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    const toDone = e.key === 'ArrowRight';
-    showTab(toDone ? 'done' : 'main');
-    $(toDone ? 'tabDone' : 'tabMain').focus();
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return;
+    const cur = TABS.findIndex(x => $(x[1]).getAttribute('aria-selected') === 'true');
+    const i = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (cur + (e.key === 'ArrowRight' ? 1 : TABS.length - 1)) % TABS.length;
+    e.preventDefault();
+    showTab(TABS[i][0]); $(TABS[i][1]).focus();
   });
 
   function applyAck(ack) {
@@ -774,10 +1493,12 @@
     li.className = 'card ev';
     cards.set(ev.id, li);
     devOf.set(ev.id, ev.device_id);
+    noteLast(ev);
     ensureLive(ev.device_id);
     const row = document.createElement('div'); row.className = 'row';
-    const tag = document.createElement('span'); tag.className = 'tag ' + ev.type; tag.textContent = ev.type.toUpperCase();
-    const dev = document.createElement('strong'); dev.textContent = 'Casco ' + ev.device_id;
+    const tag = document.createElement('span'); tag.className = 'tag ' + ev.type + (ev.type === 'geofence' && needsAttention(ev) ? ' sos' : '');
+    tag.textContent = ev.type === 'geofence' ? 'GEOCERCA' : ev.type.toUpperCase();
+    const dev = dlEl('strong', ev.device_id, '');
     const when = document.createElement('span'); when.className = 'mute'; when.textContent = fmt(ev.created_at);
     row.append(tag);
     if (isManDown(ev)) row.append(mk('span', 'tag sos', 'HOMBRE CAÍDO'));
@@ -787,10 +1508,15 @@
     const pl = ev.payload && typeof ev.payload === 'object' ? ev.payload : null;
     if (pl && typeof pl.still_s === 'number') bits.push('inmóvil ' + pl.still_s + ' s');
     if (pl && typeof pl.reason === 'string' && pl.reason && !isManDown(ev)) bits.push('motivo: ' + pl.reason.slice(0, 60));
+    if (ev.type === 'geofence' && pl) {
+      const z = typeof pl.zone_name === 'string' ? pl.zone_name.slice(0, 60) : '';
+      bits.push('zona: ' + (z || '—') + (typeof pl.kind === 'string' ? ' (' + pl.kind.slice(0, 20) + ')' : '') + ' · ' + (pl.action === 'exit' ? 'salida' : pl.action === 'enter' ? 'entrada' : '—'));
+    }
     if (ev.press_ms != null) bits.push('pulsación ' + ev.press_ms + ' ms');
     if (ev.battery != null) bits.push('batería ' + ev.battery + '%');
     if (ev.lat != null && ev.lng != null) bits.push(Number(ev.lat).toFixed(5) + ', ' + Number(ev.lng).toFixed(5));
     if (bits.length) { const m = document.createElement('div'); m.className = 'mute'; m.textContent = bits.join(' · '); li.append(m); }
+    if (needsAttention(ev)) li.append(geoInfoEl('f' + ev.id, ev));
     const feed = (needsAttention(ev) && acks.has(ev.id)) ? $('feedDone') : $('feed');
     prepend ? feed.prepend(li) : feed.append(li);
     syncEmpty();
@@ -800,6 +1526,878 @@
       refreshBanner();
     }
     if (ev.media_path) { const el = await mediaEl(ev.media_path, ev.type); if (el) li.insertBefore(el, li.querySelector('.action')); }
+  }
+
+  // ======================================================================
+  // Equipos: cascos, personas, grupos, asignaciones (supabase/migrations/007_equipos.sql)
+  // REGLA: nunca select('*') sobre devices/people (grants por columna). Se piden columnas por nombre
+  // o las vistas devices_full / people_full (esta ultima solo devuelve filas al rol admin).
+  // ======================================================================
+  let ROLE = 'viewer';
+  const EQ = { devices: [], people: [], groups: [], assigns: [], err: {}, limited: false, sub: 'dev', loaded: false };
+  const DEV_COLS = 'device_id,name,model,group_id,sector,status,created_at,updated_at,deleted_at';
+  const DEV_FULL = 'device_id,imei,name,model,group_id,sector,sim1_iccid,sim2_iccid,sim_line,bt_headset_mac,status,notes,created_at,updated_at,deleted_at';
+  const PPL_COLS = 'id,full_name,legajo,job_title,sector,group_id,active,created_at,updated_at,deleted_at';
+  const PPL_FULL = 'id,full_name,legajo,dni,job_title,sector,contact_phone,group_id,active,created_at,updated_at,deleted_at';
+  const GRP_COLS = 'id,name,site,notes,active,created_at,updated_at,deleted_at';
+  const ASG_COLS = 'id,device_id,person_id,starts_at,ends_at,created_at';
+  const noPerm = e => !!e && (e.code === '42501' || /permission denied|row-level security|not authorized|rol no autorizado|no autorizado/i.test(String(e.message || '')));
+  const NO_PERM_TXT = 'Sin permiso para ver este dato';
+  const dbMsg = e => (noPerm(e) ? NO_PERM_TXT : 'No se pudo leer: ' + String((e && e.message) || 'error'));
+  const numOf = v => { if (v == null || v === '') return null; const n = Number(v); return isFinite(n) ? n : null; };
+  const personOf = new Map();    // device_id -> nombre de la persona con asignacion vigente
+  const label = id => 'Casco ' + id + (personOf.get(id) ? ' · ' + personOf.get(id) : '');
+  // Elemento de texto que se vuelve a rotular solo cuando cambia la asignacion.
+  const dlEl = (tag, id, prefix, cls) => { const e = mk(tag, cls, (prefix || '') + label(id)); e.dataset.dl = id; e.dataset.dlp = prefix || ''; return e; };
+  function refreshLabels() {
+    document.querySelectorAll('[data-dl]').forEach(e => { e.textContent = e.dataset.dlp + label(e.dataset.dl); });
+    renderDevices(); evalHealth(); renderBroadcasts(); refreshBanner(); renderPending(); renderMapLists();
+    if (lastEv) $('kpiLast').textContent = String(lastEv.type || '').toUpperCase() + ' · ' + label(lastEv.device_id);
+  }
+  function rebuildPersonOf() {
+    const byId = new Map(EQ.people.map(p => [p.id, p]));
+    const m = new Map();
+    for (const a of EQ.assigns) {
+      if (a.ends_at != null) continue;
+      const p = byId.get(a.person_id);
+      if (p && typeof p.full_name === 'string' && p.full_name) m.set(a.device_id, p.full_name.slice(0, 120));
+    }
+    const same = m.size === personOf.size && [...m].every(([k, v]) => personOf.get(k) === v);
+    if (same) return false;
+    personOf.clear(); m.forEach((v, k) => personOf.set(k, v));
+    return true;
+  }
+  async function pull(key, fn) {
+    try {
+      const r = await fn();
+      if (r.error) { EQ.err[key] = r.error; return null; }
+      EQ.err[key] = null; return Array.isArray(r.data) ? r.data : [];
+    } catch (e) { EQ.err[key] = e; return null; }
+  }
+  async function loadEquipos() {
+    let d = await pull('devices', () => sb.from('devices_full').select(DEV_FULL).is('deleted_at', null).order('name'));
+    EQ.limited = false;
+    if (d === null) { d = await pull('devices', () => sb.from('devices').select(DEV_COLS).is('deleted_at', null).order('name')); EQ.limited = true; }
+    const p = await pull('people', () => ROLE === 'admin'
+      ? sb.from('people_full').select(PPL_FULL).is('deleted_at', null).order('full_name')
+      : sb.from('people').select(PPL_COLS).is('deleted_at', null).order('full_name'));
+    const g = await pull('groups', () => sb.from('groups').select(GRP_COLS).is('deleted_at', null).order('name'));
+    const a = await pull('assigns', () => sb.from('assignments').select(ASG_COLS).order('starts_at', { ascending: false }).limit(1000));
+    EQ.devices = d || []; EQ.people = p || []; EQ.groups = g || []; EQ.assigns = a || [];
+    EQ.loaded = true;
+    if (rebuildPersonOf()) refreshLabels(); else { fillDest(); renderMapLists(); }
+    if (!$('panelEq').classList.contains('hidden')) renderEq();
+  }
+  let eqTimer = null;
+  const reloadEq = () => { clearTimeout(eqTimer); eqTimer = setTimeout(loadEquipos, 400); };
+  const grpName = id => { const g = EQ.groups.find(x => x.id === id); return g ? g.name : ''; };
+  const devName = id => { const d = EQ.devices.find(x => x.device_id === id); return d ? d.name : ''; };
+  const STATUS_LBL = { activo: 'Activo', mantenimiento: 'Mantenimiento', baja: 'Baja' };
+  const fld = (text, el) => { const l = mk('label'); l.append(text, el); return l; };
+  const inp = (type, val, attrs) => { const i = mk('input'); i.type = type; if (val != null) i.value = val; Object.assign(i, attrs || {}); return i; };
+  const sel = (opts, val) => { const s = mk('select'); for (const [v, t] of opts) s.append(new Option(t, v)); if (val != null) s.value = val; return s; };
+  const grpOpts = () => [['', '(sin grupo)'], ...EQ.groups.map(g => [g.id, g.name])];
+  const fmtD = iso => (iso ? fmt(iso) : '—');
+  const dbErr = e => {
+    const c = String((e && e.code) || ''), m = String((e && e.message) || 'error');
+    if (c === '23505') return 'Ya existe un registro con ese valor único (alias, IMEI, legajo o nombre).';
+    if (c === '54000' || /rate limit/i.test(m)) return 'Demasiadas altas en poco tiempo (máximo 30 por minuto). Esperá unos segundos.';
+    if (noPerm(e)) return 'Sin permiso para esta operación.';
+    if (c === '23503') return 'La referencia (grupo, casco o persona) ya no existe. Actualizá la lista.';
+    if (c === '22023') return m.replace(/^assignments: /, '');
+    return 'No se pudo guardar: ' + m;
+  };
+  // Valida {k, el, label, req, re, max, msg, num}; devuelve {v, errors}
+  function collect(spec) {
+    const v = {}, errors = [];
+    for (const s of spec) {
+      let raw = s.el.type === 'checkbox' ? s.el.checked : String(s.el.value || '').trim();
+      if (s.el.type === 'checkbox') { v[s.k] = raw; continue; }
+      if (raw === '') { if (s.req) errors.push(s.label + ': es obligatorio.'); v[s.k] = null; continue; }
+      if (s.max && raw.length > s.max) errors.push(s.label + ': máximo ' + s.max + ' caracteres.');
+      if (/[\u0000-\u001f\u007f]/.test(raw)) errors.push(s.label + ': tiene caracteres no permitidos.');
+      if (s.re && !s.re.test(raw)) errors.push(s.label + ': ' + s.msg);
+      v[s.k] = raw;
+    }
+    return { v, errors };
+  }
+  function confirmRow(host, text, yes, onYes) {
+    const old = host.querySelector(':scope > .confirm'); if (old) old.remove();
+    const box = mk('div', 'row confirm'); box.setAttribute('role', 'alert');
+    const ok = mk('button', 'attend', yes); ok.type = 'button';
+    const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
+    ok.addEventListener('click', async () => { ok.disabled = true; await onYes(); box.remove(); });
+    no.addEventListener('click', () => box.remove());
+    box.append(mk('span', '', text), ok, no);
+    host.append(box); no.focus();
+  }
+  function csvDownload(name, header, rows) {
+    const cell = v => { let s = v == null ? '' : String(v); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; };
+    const txt = '﻿' + [header, ...rows].map(r => r.map(cell).join(';')).join('\r\n') + '\r\n';
+    const url = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
+    const a = mk('a'); a.href = url; a.download = name; a.hidden = true; document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
+
+  // ---- formularios ----
+  const eqForm = () => $('eqForm');
+  function closeEqForm() { eqForm().replaceChildren(); eqForm().classList.add('hidden'); }
+  function showEqForm(title, fields, spec, onSave, extra) {
+    const f = mk('form', 'card section'); f.noValidate = true;
+    f.append(mk('h3', '', title), ...fields);
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const row = mk('div', 'row');
+    const go = mk('button', '', 'Guardar'); go.type = 'submit';
+    const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
+    no.addEventListener('click', closeEqForm);
+    row.append(go, no); f.append(row, err);
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = '';
+      const r = collect(spec);
+      if (r.errors.length) { err.textContent = r.errors.join(' '); return; }
+      go.disabled = true;
+      const msg = await onSave(r.v);
+      go.disabled = false;
+      if (msg) { err.textContent = msg; return; }
+      closeEqForm(); loadEquipos();
+    });
+    eqForm().replaceChildren(f); eqForm().classList.remove('hidden');
+    const first = f.querySelector('input:not([readonly]),select'); if (first) first.focus();
+    return f;
+  }
+  function deviceForm(d) {
+    const edit = !!d, full = edit ? d : {};
+    const alias = inp('text', full.device_id || '', { maxLength: 64, readOnly: edit, autocomplete: 'off' });
+    if (edit) alias.setAttribute('aria-describedby', 'aliasNote');
+    const name = inp('text', full.name || '', { maxLength: 80 });
+    const model = inp('text', full.model || 'rd_aqm6816', { maxLength: 40 });
+    const grp = sel(grpOpts(), full.group_id || '');
+    const sector = inp('text', full.sector || '', { maxLength: 60 });
+    const imei = inp('text', full.imei || '', { maxLength: 15, inputMode: 'numeric', autocomplete: 'off' });
+    const s1 = inp('text', full.sim1_iccid || '', { maxLength: 22, inputMode: 'numeric' });
+    const s2 = inp('text', full.sim2_iccid || '', { maxLength: 22, inputMode: 'numeric' });
+    const line = inp('text', full.sim_line || '', { maxLength: 16 });
+    const mac = inp('text', full.bt_headset_mac || '', { maxLength: 17 });
+    const status = sel(Object.entries(STATUS_LBL), full.status || 'activo');
+    const notes = inp('text', full.notes || '', { maxLength: 500 });
+    const spec = [
+      { k: 'device_id', el: alias, label: 'Alias', req: true, re: DEV_RE, msg: 'solo letras, números, guion y guion bajo (1 a 64).' },
+      { k: 'name', el: name, label: 'Nombre', req: true, max: 80 },
+      { k: 'model', el: model, label: 'Modelo', req: true, max: 40 },
+      { k: 'group_id', el: grp, label: 'Grupo' },
+      { k: 'sector', el: sector, label: 'Sector', max: 60 },
+      { k: 'imei', el: imei, label: 'IMEI', re: /^[0-9]{14,15}$/, msg: 'debe tener 14 o 15 dígitos.' },
+      { k: 'sim1_iccid', el: s1, label: 'SIM 1 (ICCID)', re: /^[0-9]{18,22}$/, msg: 'debe tener entre 18 y 22 dígitos.' },
+      { k: 'sim2_iccid', el: s2, label: 'SIM 2 (ICCID)', re: /^[0-9]{18,22}$/, msg: 'debe tener entre 18 y 22 dígitos.' },
+      { k: 'sim_line', el: line, label: 'Línea SIM', re: /^\+?[0-9]{6,15}$/, msg: 'solo dígitos, con + opcional (6 a 15).' },
+      { k: 'bt_headset_mac', el: mac, label: 'MAC de los auriculares', re: /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/, msg: 'formato AA:BB:CC:DD:EE:FF.' },
+      { k: 'status', el: status, label: 'Estado' },
+      { k: 'notes', el: notes, label: 'Notas', max: 500 },
+    ];
+    const fields = [fld('Alias (ID del casco)', alias)];
+    if (edit) fields.push(Object.assign(mk('p', 'mute', 'El alias no se puede cambiar una vez creado.'), { id: 'aliasNote' }));
+    fields.push(fld('Nombre', name), fld('Modelo', model), fld('Grupo', grp), fld('Sector', sector), fld('Estado', status),
+      fld('IMEI (14 o 15 dígitos)', imei), fld('SIM 1 (ICCID)', s1), fld('SIM 2 (ICCID)', s2), fld('Línea SIM', line),
+      fld('MAC de los auriculares Bluetooth', mac), fld('Notas', notes));
+    if (edit && EQ.limited) fields.push(mk('p', 'mute', 'Tu rol no puede leer IMEI, SIM, MAC ni notas: los campos vacíos se dejan sin cambios.'));
+    showEqForm(edit ? 'Editar casco ' + full.device_id : 'Alta de casco', fields, spec, async v => {
+      if (!edit) {
+        const row = {}; for (const k of Object.keys(v)) if (v[k] !== null && v[k] !== '') row[k] = v[k];
+        const { error } = await sb.from('devices').insert(row);
+        return error ? dbErr(error) : '';
+      }
+      const diff = {};
+      for (const k of Object.keys(v)) {
+        if (k === 'device_id') continue;
+        const was = full[k] == null ? '' : String(full[k]); const now = v[k] == null ? '' : String(v[k]);
+        if (was !== now) {
+          if (EQ.limited && now === '' && ['imei', 'sim1_iccid', 'sim2_iccid', 'sim_line', 'bt_headset_mac', 'notes'].includes(k)) continue;
+          diff[k] = v[k] === '' ? null : v[k];
+        }
+      }
+      if (!Object.keys(diff).length) return '';
+      const { error } = await sb.from('devices').update(diff).eq('device_id', full.device_id);
+      return error ? dbErr(error) : '';
+    });
+  }
+  function personForm(p) {
+    const edit = !!p, cur = p || {};
+    const name = inp('text', cur.full_name || '', { maxLength: 120 });
+    const legajo = inp('text', cur.legajo || '', { maxLength: 20 });
+    const job = inp('text', cur.job_title || '', { maxLength: 80 });
+    const sector = inp('text', cur.sector || '', { maxLength: 60 });
+    const grp = sel(grpOpts(), cur.group_id || '');
+    const spec = [
+      { k: 'full_name', el: name, label: 'Nombre y apellido', req: true, max: 120 },
+      { k: 'legajo', el: legajo, label: 'Legajo', re: /^[A-Za-z0-9._\/-]{1,20}$/, msg: 'letras, números, punto, guion o barra (1 a 20).' },
+      { k: 'job_title', el: job, label: 'Puesto', max: 80 },
+      { k: 'sector', el: sector, label: 'Sector', max: 60 },
+      { k: 'group_id', el: grp, label: 'Grupo' },
+    ];
+    const fields = [fld('Nombre y apellido', name), fld('Legajo', legajo), fld('Puesto', job), fld('Sector', sector), fld('Grupo', grp)];
+    let dni = null, tel = null;
+    if (ROLE === 'admin') {
+      dni = inp('text', cur.dni || '', { maxLength: 15, autocomplete: 'off' });
+      tel = inp('tel', cur.contact_phone || '', { maxLength: 20 });
+      spec.push({ k: 'dni', el: dni, label: 'DNI', re: /^[A-Za-z0-9]{5,15}$/, msg: 'letras y números (5 a 15).' },
+        { k: 'contact_phone', el: tel, label: 'Teléfono de contacto', re: /^\+?[0-9 ()-]{6,20}$/, msg: 'solo dígitos, espacios, paréntesis y guion (6 a 20).' });
+      fields.push(fld('DNI (solo admin)', dni), fld('Teléfono de contacto (solo admin)', tel));
+    } else fields.push(mk('p', 'mute', 'DNI y teléfono de contacto: solo los ve y edita un administrador.'));
+    showEqForm(edit ? 'Editar persona' : 'Alta de persona', fields, spec, async v => {
+      const clean = {}; for (const k of Object.keys(v)) clean[k] = v[k] === '' ? null : v[k];
+      if (!edit) {
+        const row = {}; for (const k of Object.keys(clean)) if (clean[k] !== null) row[k] = clean[k];
+        const { error } = await sb.from('people').insert(row);
+        return error ? dbErr(error) : '';
+      }
+      const diff = {};
+      for (const k of Object.keys(clean)) { const was = cur[k] == null ? '' : String(cur[k]), now = clean[k] == null ? '' : String(clean[k]); if (was !== now) diff[k] = clean[k]; }
+      if (!Object.keys(diff).length) return '';
+      const { error } = await sb.from('people').update(diff).eq('id', cur.id);
+      return error ? dbErr(error) : '';
+    });
+  }
+  function groupForm(g) {
+    const edit = !!g, cur = g || {};
+    const name = inp('text', cur.name || '', { maxLength: 80 });
+    const site = inp('text', cur.site || '', { maxLength: 80 });
+    const notes = inp('text', cur.notes || '', { maxLength: 500 });
+    const act = inp('checkbox'); act.checked = edit ? cur.active !== false : true;
+    const spec = [
+      { k: 'name', el: name, label: 'Nombre', req: true, max: 80 },
+      { k: 'site', el: site, label: 'Sitio', max: 80 },
+      { k: 'notes', el: notes, label: 'Notas', max: 500 },
+      { k: 'active', el: act, label: 'Activo' },
+    ];
+    const chk = mk('label', 'chk'); chk.append(act, 'Activo');
+    showEqForm(edit ? 'Editar grupo' : 'Alta de grupo', [fld('Nombre', name), fld('Sitio', site), fld('Notas', notes), chk], spec, async v => {
+      const clean = { name: v.name, site: v.site === '' ? null : v.site, notes: v.notes === '' ? null : v.notes, active: v.active };
+      if (!edit) {
+        const row = { name: clean.name, active: clean.active }; if (clean.site) row.site = clean.site; if (clean.notes) row.notes = clean.notes;
+        const { error } = await sb.from('groups').insert(row);
+        return error ? dbErr(error) : '';
+      }
+      const { error } = await sb.from('groups').update(clean).eq('id', cur.id);
+      return error ? dbErr(error) : '';
+    });
+  }
+
+  // ---- listas ----
+  function errBox(key) {
+    const e = EQ.err[key]; if (!e) return null;
+    const d = mk('div', 'state bad', dbMsg(e)); d.setAttribute('role', 'status'); return d;
+  }
+  function actionRow(...btns) { const r = mk('div', 'row'); r.append(...btns); return r; }
+  const btn = (text, cls, fn, aria) => { const b = mk('button', cls || 'ghost', text); b.type = 'button'; if (aria) b.setAttribute('aria-label', aria); b.addEventListener('click', fn); return b; };
+  function kv(pairs) {
+    const dl = mk('dl', 'metrics');
+    for (const [k, v] of pairs) { const d = mk('div'); d.append(mk('dt', '', k), mk('dd', '', v == null || v === '' ? '—' : String(v))); dl.append(d); }
+    return dl;
+  }
+  function renderDevTab(body) {
+    const top = mk('div', 'row');
+    top.append(btn('Alta de casco', '', () => deviceForm(null)),
+      btn('Exportar CSV', 'ghost', () => {
+        const full = !EQ.limited;
+        const header = ['alias', 'nombre', 'modelo', 'grupo', 'sector', 'estado', 'persona_asignada', 'ultima_conexion', 'bateria_pct'].concat(full ? ['imei', 'sim1_iccid', 'sim2_iccid', 'linea_sim', 'mac_auriculares', 'notas'] : []);
+        const rows = EQ.devices.map(d => {
+          const s = devState.get(d.device_id), b = s ? batOf(s) : null;
+          return [d.device_id, d.name, d.model, grpName(d.group_id), d.sector, STATUS_LBL[d.status] || d.status, personOf.get(d.device_id) || '',
+            s ? fmt(s.at) : '', b != null ? b : ''].concat(full ? [d.imei, d.sim1_iccid, d.sim2_iccid, d.sim_line, d.bt_headset_mac, d.notes] : []);
+        });
+        csvDownload('cascos_' + today() + '.csv', header, rows);
+      }));
+    body.append(top);
+    const eb = errBox('devices'); if (eb) body.append(eb);
+    if (!EQ.devices.length && !eb) body.append(mk('p', 'mute', 'Todavía no hay cascos registrados.'));
+    const ul = mk('ul');
+    for (const d of EQ.devices) {
+      const li = mk('li', 'card eqitem');
+      const head = mk('div', 'row');
+      head.append(mk('strong', '', d.device_id), mk('span', '', d.name), mk('span', 'tag' + (d.status === 'activo' ? ' ok' : ''), STATUS_LBL[d.status] || String(d.status)));
+      const s = devState.get(d.device_id), bat = s ? batOf(s) : null;
+      li.append(head, kv([['Grupo', grpName(d.group_id)], ['Sector', d.sector], ['Persona asignada hoy', personOf.get(d.device_id)],
+        ['Última conexión', s ? fmt(s.at) + ' (' + ago(Date.now() - new Date(s.at).getTime()) + ')' : ''], ['Batería', bat != null ? n1(bat) + ' %' : '']]));
+      const acts = actionRow(btn('Editar', 'ghost', () => deviceForm(d), 'Editar el casco ' + d.device_id),
+        btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja el casco ' + d.device_id + '? Deja de aparecer en las listas.', 'Sí, dar de baja', async () => {
+          const { error } = await sb.from('devices').update({ deleted_at: new Date().toISOString() }).eq('device_id', d.device_id);
+          if (error) $('status').textContent = dbErr(error); else loadEquipos();
+        }), 'Dar de baja el casco ' + d.device_id));
+      li.append(acts); ul.append(li);
+    }
+    body.append(ul);
+  }
+  function renderPeopleTab(body) {
+    const top = mk('div', 'row');
+    top.append(btn('Alta de persona', '', () => personForm(null)),
+      btn('Exportar CSV', 'ghost', () => {
+        const adm = ROLE === 'admin';
+        const header = ['nombre', 'legajo', 'puesto', 'sector', 'grupo', 'activo', 'casco_asignado'].concat(adm ? ['dni', 'telefono'] : []);
+        const cas = new Map(); EQ.assigns.filter(a => a.ends_at == null).forEach(a => cas.set(a.person_id, a.device_id));
+        csvDownload('personas_' + today() + '.csv', header, EQ.people.map(p => [p.full_name, p.legajo, p.job_title, p.sector, grpName(p.group_id),
+          p.active === false ? 'no' : 'si', cas.get(p.id) || ''].concat(adm ? [p.dni, p.contact_phone] : [])));
+      }));
+    body.append(top);
+    const eb = errBox('people'); if (eb) body.append(eb);
+    if (!EQ.people.length && !eb) body.append(mk('p', 'mute', 'Todavía no hay personas registradas.'));
+    const cas = new Map(); EQ.assigns.filter(a => a.ends_at == null).forEach(a => cas.set(a.person_id, a.device_id));
+    const ul = mk('ul');
+    for (const p of EQ.people) {
+      const li = mk('li', 'card eqitem');
+      const head = mk('div', 'row'); head.append(mk('strong', '', p.full_name), p.active === false ? mk('span', 'tag', 'Inactiva') : mk('span', 'tag ok', 'Activa'));
+      const pairs = [['Legajo', p.legajo], ['Puesto', p.job_title], ['Sector', p.sector], ['Grupo', grpName(p.group_id)], ['Casco asignado', cas.get(p.id)]];
+      if (ROLE === 'admin') pairs.push(['DNI', p.dni], ['Teléfono', p.contact_phone]);
+      li.append(head, kv(pairs));
+      li.append(actionRow(btn('Editar', 'ghost', () => personForm(p), 'Editar a ' + p.full_name),
+        btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja a ' + p.full_name + '?', 'Sí, dar de baja', async () => {
+          const { error } = await sb.from('people').update({ deleted_at: new Date().toISOString() }).eq('id', p.id);
+          if (error) $('status').textContent = dbErr(error); else loadEquipos();
+        }), 'Dar de baja a ' + p.full_name)));
+      ul.append(li);
+    }
+    body.append(ul);
+  }
+  function renderGroupsTab(body) {
+    body.append(actionRow(btn('Alta de grupo', '', () => groupForm(null))));
+    const eb = errBox('groups'); if (eb) body.append(eb);
+    if (!EQ.groups.length && !eb) body.append(mk('p', 'mute', 'Todavía no hay grupos.'));
+    const ul = mk('ul');
+    for (const g of EQ.groups) {
+      const li = mk('li', 'card eqitem');
+      const head = mk('div', 'row'); head.append(mk('strong', '', g.name), g.active === false ? mk('span', 'tag', 'Inactivo') : mk('span', 'tag ok', 'Activo'));
+      const nd = EQ.devices.filter(d => d.group_id === g.id).length, np = EQ.people.filter(p => p.group_id === g.id).length;
+      li.append(head, kv([['Sitio', g.site], ['Cascos', nd], ['Personas', np], ['Notas', g.notes]]));
+      li.append(actionRow(btn('Editar', 'ghost', () => groupForm(g), 'Editar el grupo ' + g.name),
+        btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja el grupo ' + g.name + '?', 'Sí, dar de baja', async () => {
+          const { error } = await sb.from('groups').update({ deleted_at: new Date().toISOString() }).eq('id', g.id);
+          if (error) $('status').textContent = dbErr(error); else loadEquipos();
+        }), 'Dar de baja el grupo ' + g.name)));
+      ul.append(li);
+    }
+    body.append(ul);
+  }
+  const histFilter = { dev: '', per: '' };
+  function renderAssignTab(body) {
+    const eb = errBox('assigns'); if (eb) body.append(eb);
+    const devs = EQ.devices.filter(d => d.status !== 'baja'), peo = EQ.people.filter(p => p.active !== false);
+    const f = mk('form', 'card section'); f.noValidate = true;
+    const sd = sel([['', '(elegí un casco)'], ...devs.map(d => [d.device_id, d.device_id + ' · ' + d.name])], '');
+    const sp = sel([['', '(elegí una persona)'], ...peo.map(p => [p.id, p.full_name + (p.legajo ? ' (' + p.legajo + ')' : '')])], '');
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const go = mk('button', '', 'Asignar'); go.type = 'submit';
+    f.append(mk('h3', '', 'Asignar persona a casco'), fld('Casco', sd), fld('Persona', sp),
+      mk('p', 'mute', 'La asignación anterior del casco y la de la persona se cierran solas.'), go, err);
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = '';
+      if (!sd.value || !sp.value) { err.textContent = 'Elegí un casco y una persona.'; return; }
+      go.disabled = true;
+      const { error } = await sb.from('assignments').insert({ device_id: sd.value, person_id: sp.value });
+      go.disabled = false;
+      if (error) { err.textContent = dbErr(error); return; }
+      loadEquipos();
+    });
+    body.append(f);
+    const pname = id => { const p = EQ.people.find(x => x.id === id); return p ? p.full_name : 'persona ' + String(id).slice(0, 8); };
+    body.append(mk('h3', '', 'Asignaciones vigentes'));
+    const open = EQ.assigns.filter(a => a.ends_at == null);
+    const ul = mk('ul');
+    if (!open.length) ul.append(mk('li', 'empty mute', 'No hay asignaciones vigentes.'));
+    for (const a of open) {
+      const li = mk('li', 'card eqitem');
+      const head = mk('div', 'row'); head.append(mk('strong', '', 'Casco ' + a.device_id), mk('span', '', pname(a.person_id)), mk('span', 'mute', 'desde ' + fmt(a.starts_at)));
+      li.append(head, actionRow(btn('Cerrar asignación', 'ghost', () => confirmRow(li, '¿Cerrar la asignación de ' + pname(a.person_id) + ' al casco ' + a.device_id + '?', 'Sí, cerrar', async () => {
+        const { error } = await sb.from('assignments').update({ ends_at: new Date().toISOString() }).eq('id', a.id);
+        if (error) $('status').textContent = dbErr(error); else loadEquipos();
+      }), 'Cerrar la asignación del casco ' + a.device_id)));
+      ul.append(li);
+    }
+    body.append(ul);
+    body.append(mk('h3', '', 'Historial'));
+    const hd = sel([['', 'Todos los cascos'], ...EQ.devices.map(d => [d.device_id, d.device_id + ' · ' + d.name])], histFilter.dev);
+    const hp = sel([['', 'Todas las personas'], ...EQ.people.map(p => [p.id, p.full_name])], histFilter.per);
+    const hist = mk('ul');
+    const draw = () => {
+      histFilter.dev = hd.value; histFilter.per = hp.value;
+      const rows = EQ.assigns.filter(a => (!hd.value || a.device_id === hd.value) && (!hp.value || a.person_id === hp.value));
+      hist.replaceChildren(...(rows.length ? rows.map(a => {
+        const li = mk('li', 'bcitem');
+        li.append(mk('div', '', 'Casco ' + a.device_id + ' · ' + pname(a.person_id)),
+          mk('div', 'mute', fmt(a.starts_at) + ' → ' + (a.ends_at ? fmt(a.ends_at) : 'vigente')));
+        return li;
+      }) : [mk('li', 'empty mute', 'Sin asignaciones para ese filtro.')]));
+    };
+    hd.addEventListener('change', draw); hp.addEventListener('change', draw);
+    const frow = mk('div', 'grid2'); frow.append(fld('Por casco', hd), fld('Por persona', hp));
+    body.append(frow, hist); draw();
+  }
+  function renderEq() {
+    const body = $('eqBody'); body.replaceChildren();
+    for (const [k, id] of [['dev', 'eqTabDev'], ['people', 'eqTabPeople'], ['groups', 'eqTabGroups'], ['assign', 'eqTabAssign']]) {
+      $(id).setAttribute('aria-selected', String(EQ.sub === k)); $(id).tabIndex = EQ.sub === k ? 0 : -1;
+    }
+    if (!EQ.loaded) { body.append(mk('p', 'mute', 'Cargando…')); return; }
+    if (EQ.sub === 'dev') renderDevTab(body);
+    else if (EQ.sub === 'people') renderPeopleTab(body);
+    else if (EQ.sub === 'groups') renderGroupsTab(body);
+    else renderAssignTab(body);
+  }
+  for (const [id, k] of [['eqTabDev', 'dev'], ['eqTabPeople', 'people'], ['eqTabGroups', 'groups'], ['eqTabAssign', 'assign']]) {
+    $(id).addEventListener('click', () => { EQ.sub = k; closeEqForm(); renderEq(); });
+  }
+  $('eqTabs').addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const keys = ['dev', 'people', 'groups', 'assign'], ids = ['eqTabDev', 'eqTabPeople', 'eqTabGroups', 'eqTabAssign'];
+    const i = (keys.indexOf(EQ.sub) + (e.key === 'ArrowRight' ? 1 : 3)) % 4;
+    EQ.sub = keys[i]; closeEqForm(); renderEq(); $(ids[i]).focus();
+  });
+
+  // ======================================================================
+  // Georreferencia: ubicacion, geocercas, puntos de interes y mapa (docs/PROTOCOLO-GEO.md)
+  // ======================================================================
+  const TRAIL_MS = 2 * 60 * 60 * 1000;
+  const lastPos = new Map();   // device_id -> { lat, lng, at, battery }
+  const trail = new Map();     // device_id -> [{ lat, lng, at }]
+  let geofences = [], geoPoints = [], geoErr = { z: null, p: null };
+  const KIND_LBL = { permitida: 'Permitida (alerta al salir)', restringida: 'Restringida (alerta al entrar)', informativa: 'Informativa (sin alarma)' };
+  const KIND_COL = { permitida: '#2e7d32', restringida: '#c62828', informativa: '#1565c0' };
+  const CAT_LBL = { punto_reunion: 'Punto de reunión', extintor: 'Extintor', botiquin: 'Botiquín', acceso: 'Acceso', peligro: 'Peligro', otro: 'Otro' };
+  const CAT_COL = { punto_reunion: '#2e7d32', extintor: '#e65100', botiquin: '#00838f', acceso: '#5d4037', peligro: '#c62828', otro: '#546e7a' };
+  const CAT_GLYPH = { punto_reunion: 'R', extintor: 'E', botiquin: '+', acceso: 'A', peligro: '!', otro: '•' };
+  const ALARM_LBL = { voz: 'Voz', sirena: 'Sirena', voz_y_sirena: 'Voz y sirena' };
+  const llOk = (a, b) => typeof a === 'number' && typeof b === 'number' && isFinite(a) && isFinite(b) && Math.abs(a) <= 90 && Math.abs(b) <= 180;
+  const hav = (a, b, c, d) => {
+    const R = 6371000, r = x => x * Math.PI / 180, dl = r(c - a), dn = r(d - b);
+    const h = Math.sin(dl / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(dn / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+  const fmtDist = m => (m < 1000 ? Math.round(m) + ' m' : n1(m / 1000) + ' km');
+  const coordTxt = (la, ln) => la.toFixed(5) + ', ' + ln.toFixed(5);
+  function noteLoc(ev) {
+    const la = numOf(ev.lat), ln = numOf(ev.lng);
+    if (!ev.device_id || !llOk(la, ln)) return;
+    const at = ev.created_at, t = new Date(at).getTime();
+    if (!isFinite(t)) return;
+    const cur = lastPos.get(ev.device_id);
+    if (!cur || t >= new Date(cur.at).getTime()) lastPos.set(ev.device_id, { lat: la, lng: ln, at, battery: numOf(ev.battery) });
+    let arr = trail.get(ev.device_id); if (!arr) trail.set(ev.device_id, arr = []);
+    arr.push({ lat: la, lng: ln, at, t });
+    if (arr.length > 1) arr.sort((a, b) => a.t - b.t);
+    const lim = Date.now() - TRAIL_MS;
+    while (arr.length && arr[0].t < lim) arr.shift();
+    if (arr.length > 1500) arr.splice(0, arr.length - 1500);
+    scheduleMap();
+  }
+  async function loadLocations() {
+    try {
+      const since = new Date(Date.now() - TRAIL_MS).toISOString();
+      const { data, error } = await sb.from('events').select('device_id,created_at,lat,lng,battery')
+        .eq('type', 'location').gte('created_at', since).order('created_at', { ascending: true }).limit(3000);
+      if (!error && Array.isArray(data)) data.forEach(noteLoc);
+    } catch (_) {}
+    renderMapLists();
+  }
+  const zoneOk = z => z && typeof z.id === 'string' && z.geometry && typeof z.geometry === 'object' &&
+    ((z.shape === 'circle' && Array.isArray(z.geometry.center) && llOk(z.geometry.center[0], z.geometry.center[1]) && numOf(z.geometry.radius_m) > 0) ||
+     (z.shape === 'polygon' && Array.isArray(z.geometry.points) && z.geometry.points.length >= 3 && z.geometry.points.every(p => Array.isArray(p) && llOk(p[0], p[1]))));
+  async function loadGeo() {
+    try {
+      const z = await sb.from('geofences').select('id,name,kind,shape,geometry,message,alarm,device_ids,active,deleted_at').is('deleted_at', null).order('created_at', { ascending: false });
+      geoErr.z = z.error || null;
+      if (!z.error && Array.isArray(z.data)) geofences = z.data.filter(zoneOk);
+    } catch (e) { geoErr.z = e; }
+    try {
+      const p = await sb.from('geo_points').select('id,name,category,lat,lng,notes,alert_radius_m,message,alarm,active,deleted_at').is('deleted_at', null).order('created_at', { ascending: false });
+      geoErr.p = p.error || null;
+      if (!p.error && Array.isArray(p.data)) geoPoints = p.data.filter(x => x && typeof x.id === 'string' && llOk(numOf(x.lat), numOf(x.lng)))
+        .map(x => ({ ...x, lat: Number(x.lat), lng: Number(x.lng) }));
+    } catch (e) { geoErr.p = e; }
+    renderMapLists(); scheduleMap(); refreshGeoInfos();
+  }
+  let geoTimer = null;
+  const reloadGeo = () => { clearTimeout(geoTimer); geoTimer = setTimeout(loadGeo, 400); };
+
+  // Posicion + punto de reunion mas cercano en cada SOS / caida / geocerca
+  const geoInfos = new Map();   // clave -> { el, ev }
+  function evPos(ev) {
+    const la = numOf(ev.lat), ln = numOf(ev.lng);
+    if (llOk(la, ln)) return { lat: la, lng: ln, approx: false };
+    const p = lastPos.get(ev.device_id);
+    return p ? { lat: p.lat, lng: p.lng, approx: true, at: p.at } : null;
+  }
+  function nearestMeet(lat, lng) {
+    let best = null;
+    for (const p of geoPoints) {
+      if (p.category !== 'punto_reunion' || p.active === false) continue;
+      const d = hav(lat, lng, p.lat, p.lng);
+      if (!best || d < best.d) best = { p, d };
+    }
+    return best;
+  }
+  function fillGeoInfo(el, ev) {
+    const pos = evPos(ev);
+    const kids = [];
+    if (!pos) { el.replaceChildren(mk('span', 'mute', 'Sin posición conocida del casco.')); return; }
+    kids.push(mk('span', '', (pos.approx ? 'Última posición conocida: ' : 'Posición: ') + coordTxt(pos.lat, pos.lng)));
+    const b = mk('button', 'ghost', 'Ver en mapa'); b.type = 'button';
+    b.setAttribute('aria-label', 'Ver en el mapa la posición del casco ' + ev.device_id);
+    b.addEventListener('click', () => showOnMap(pos.lat, pos.lng, label(ev.device_id)));
+    kids.push(b);
+    const m = nearestMeet(pos.lat, pos.lng);
+    kids.push(mk('span', '', m ? 'Punto de reunión más cercano: ' + m.p.name + ' a ' + fmtDist(m.d) : 'Sin puntos de reunión cargados.'));
+    el.replaceChildren(...kids);
+  }
+  function geoInfoEl(key, ev) {
+    const el = mk('div', 'row geoinfo mute');
+    geoInfos.set(key, { el, ev });
+    fillGeoInfo(el, ev);
+    return el;
+  }
+  function refreshGeoInfos() {
+    for (const [k, g] of geoInfos) { if (!g.el.isConnected) { geoInfos.delete(k); continue; } fillGeoInfo(g.el, g.ev); }
+  }
+
+  // ---- lista en texto (alternativa accesible al mapa) ----
+  function renderMapLists() {
+    const dl = $('mapDevList'), zl = $('mapZoneList'); if (!dl || !zl) return;
+    const ids = [...new Set([...devState.keys(), ...lastPos.keys()])].filter(i => DEV_RE.test(i)).sort();
+    dl.replaceChildren(...(ids.length ? ids.map(id => {
+      const li = mk('li', 'bcitem');
+      const s = devState.get(id), p = lastPos.get(id), on = s && Date.now() - new Date(s.at).getTime() <= OFFLINE_MS;
+      const head = mk('div', 'row'); head.append(dlEl('strong', id, '', ''), mk('span', on ? '' : 'state bad', on ? 'En línea' : 'Sin señal'));
+      const bat = s ? batOf(s) : (p ? p.battery : null);
+      li.append(head, mk('div', 'mute', p ? 'Última posición: ' + coordTxt(p.lat, p.lng) + ' · ' + fmt(p.at) + (bat != null ? ' · batería ' + n1(bat) + ' %' : '') : 'Sin posición en las últimas 2 h'));
+      if (p) li.append(actionRow(btn('Centrar en el mapa', 'ghost', () => showOnMap(p.lat, p.lng, label(id)), 'Centrar el mapa en el casco ' + id)));
+      return li;
+    }) : [mk('li', 'empty mute', 'Sin cascos con posición todavía.')]));
+    const items = [];
+    for (const z of geofences) {
+      const li = mk('li', 'bcitem');
+      const head = mk('div', 'row');
+      head.append(mk('span', 'tag', 'ZONA'), mk('strong', '', z.name), mk('span', 'tag', KIND_LBL[z.kind] || String(z.kind)), z.active === false ? mk('span', 'tag', 'Desactivada') : mk('span', 'tag ok', 'Activa'));
+      const g = z.geometry, c = z.shape === 'circle' ? g.center : g.points[0];
+      li.append(head, mk('div', 'mute', (z.shape === 'circle' ? 'Círculo · centro ' + coordTxt(g.center[0], g.center[1]) + ' · radio ' + n1(Number(g.radius_m)) + ' m'
+        : 'Polígono de ' + g.points.length + ' puntos · primer vértice ' + coordTxt(g.points[0][0], g.points[0][1])) +
+        ' · alarma: ' + (ALARM_LBL[z.alarm] || z.alarm) + ' · cascos: ' + (Array.isArray(z.device_ids) ? z.device_ids.join(', ') : 'todos') + (z.message ? ' · “' + z.message + '”' : '')));
+      li.append(actionRow(btn('Centrar', 'ghost', () => showOnMap(c[0], c[1], z.name), 'Centrar el mapa en la zona ' + z.name),
+        btn('Editar', 'ghost', () => openZoneForm(z), 'Editar la zona ' + z.name),
+        btn(z.active === false ? 'Activar' : 'Desactivar', 'ghost', async () => {
+          const { error } = await sb.from('geofences').update({ active: z.active === false }).eq('id', z.id);
+          if (error) $('status').textContent = dbErr(error); else loadGeo();
+        }, (z.active === false ? 'Activar' : 'Desactivar') + ' la zona ' + z.name),
+        btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja la zona ' + z.name + '?', 'Sí, dar de baja', async () => {
+          const { error } = await sb.from('geofences').update({ deleted_at: new Date().toISOString() }).eq('id', z.id);
+          if (error) $('status').textContent = dbErr(error); else loadGeo();
+        }), 'Dar de baja la zona ' + z.name)));
+      items.push(li);
+    }
+    for (const p of geoPoints) {
+      const li = mk('li', 'bcitem');
+      const head = mk('div', 'row');
+      head.append(mk('span', 'tag', 'PUNTO'), mk('strong', '', p.name), mk('span', 'tag', CAT_LBL[p.category] || String(p.category)), p.active === false ? mk('span', 'tag', 'Desactivado') : mk('span', 'tag ok', 'Activo'));
+      li.append(head, mk('div', 'mute', coordTxt(p.lat, p.lng) + (p.category === 'peligro' ? ' · radio de alerta ' + p.alert_radius_m + ' m' : '') + (p.notes ? ' · ' + p.notes : '')));
+      li.append(actionRow(btn('Centrar', 'ghost', () => showOnMap(p.lat, p.lng, p.name), 'Centrar el mapa en ' + p.name),
+        btn('Editar', 'ghost', () => openPointForm(null, p), 'Editar el punto ' + p.name),
+        btn(p.active === false ? 'Activar' : 'Desactivar', 'ghost', async () => {
+          const { error } = await sb.from('geo_points').update({ active: p.active === false }).eq('id', p.id);
+          if (error) $('status').textContent = dbErr(error); else loadGeo();
+        }, (p.active === false ? 'Activar' : 'Desactivar') + ' el punto ' + p.name),
+        btn('Dar de baja', 'ghost', () => confirmRow(li, '¿Dar de baja el punto ' + p.name + '?', 'Sí, dar de baja', async () => {
+          const { error } = await sb.from('geo_points').update({ deleted_at: new Date().toISOString() }).eq('id', p.id);
+          if (error) $('status').textContent = dbErr(error); else loadGeo();
+        }), 'Dar de baja el punto ' + p.name)));
+      items.push(li);
+    }
+    const errs = [];
+    if (geoErr.z) errs.push(mk('li', 'state bad', 'Geocercas: ' + dbMsg(geoErr.z)));
+    if (geoErr.p) errs.push(mk('li', 'state bad', 'Puntos de interés: ' + dbMsg(geoErr.p)));
+    zl.replaceChildren(...errs, ...(items.length ? items : [mk('li', 'empty mute', 'Todavía no hay zonas ni puntos de interés.')]));
+  }
+
+  // ---- mapa (Leaflet 1.9.4, version fijada desde cdnjs; se carga la primera vez que se abre la pestana) ----
+  const LF_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/';
+  const LF_JS_SRI = 'sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=', LF_CSS_SRI = 'sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=';
+  let map = null, mapState = 'idle', LF = null, tileLayer = null, tileOk = 0, tileBad = 0, mapTimer = null;
+  const grp = {};
+  const MAPLAYERS = [['cascos', 'Cascos'], ['recorrido', 'Recorrido (2 h)'], ['zonas', 'Geocercas'], ['puntos', 'Puntos de interés']];
+  const layerOn = { cascos: true, recorrido: true, zonas: true, puntos: true };
+  function setMapWarn(t) { const w = $('mapWarn'); w.textContent = t || ''; w.classList.toggle('hidden', !t); }
+  function loadLeaflet() {
+    return new Promise((ok, ko) => {
+      if (window.L && window.L.map) return ok();
+      const css = mk('link'); css.rel = 'stylesheet'; css.href = LF_BASE + 'leaflet.css'; css.integrity = LF_CSS_SRI; css.crossOrigin = 'anonymous';
+      document.head.append(css);
+      const js = mk('script'); js.src = LF_BASE + 'leaflet.js'; js.integrity = LF_JS_SRI; js.crossOrigin = 'anonymous';
+      js.onload = () => (window.L && window.L.map ? ok() : ko(new Error('leaflet'))); js.onerror = () => ko(new Error('leaflet'));
+      document.head.append(js);
+    });
+  }
+  async function ensureMap() {
+    if (mapState === 'ready') { map.invalidateSize(); return true; }
+    if (mapState === 'failed') return false;
+    if (mapState === 'loading') return new Promise(r => { const t = setInterval(() => { if (mapState !== 'loading') { clearInterval(t); r(mapState === 'ready'); } }, 100); });
+    mapState = 'loading';
+    try { await loadLeaflet(); } catch (_) {
+      mapState = 'failed';
+      setMapWarn('No se pudo cargar el mapa (sin acceso a la biblioteca de mapas). Usá las listas de abajo: tienen las mismas posiciones y zonas.');
+      return false;
+    }
+    LF = window.L;
+    map = LF.map('mapBox', { zoomControl: true, attributionControl: true }).setView([-34.6, -58.4], 12);
+    tileLayer = LF.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors' }).addTo(map);
+    tileLayer.on('tileload', () => { tileOk++; });
+    tileLayer.on('tileerror', () => { tileBad++; if (tileBad >= 3 && tileOk === 0) setMapWarn('No se pudieron cargar las teselas del mapa (sin conexión con OpenStreetMap). Las listas de abajo siguen funcionando.'); });
+    for (const [k] of MAPLAYERS) grp[k] = LF.layerGroup().addTo(map);
+    grp.draft = LF.layerGroup().addTo(map);
+    grp.focus = LF.layerGroup().addTo(map);
+    map.on('click', e => onMapClick(e.latlng));
+    map.on('mousemove', e => onMapMove(e.latlng));
+    map.on('contextmenu', e => openPointForm(e.latlng));   // clic derecho o mantener presionado
+    mapState = 'ready';
+    let fit = false;
+    drawMap();
+    if (lastPos.size) { const b = LF.latLngBounds([...lastPos.values()].map(p => [p.lat, p.lng])); map.fitBounds(b.pad(0.3), { maxZoom: 16 }); fit = true; }
+    if (!fit && geofences.length) { const z = geofences[0]; const c = z.shape === 'circle' ? z.geometry.center : z.geometry.points[0]; map.setView([c[0], c[1]], 14); }
+    map.invalidateSize();
+    return true;
+  }
+  function scheduleMap() { if (mapState !== 'ready') return; clearTimeout(mapTimer); mapTimer = setTimeout(drawMap, 150); }
+  const pendDev = () => new Set([...pending.values()].map(e => e.device_id));
+  function drawMap() {
+    if (mapState !== 'ready') return;
+    for (const [k] of MAPLAYERS) grp[k].clearLayers();
+    const alertDev = pendDev(), now = Date.now();
+    const TR_COL = ['#1565c0', '#6a1b9a', '#00838f', '#ef6c00', '#2e7d32', '#ad1457'];
+    let ti = 0;
+    for (const [id, p] of lastPos) {
+      const s = devState.get(id), on = s && now - new Date(s.at).getTime() <= OFFLINE_MS, al = alertDev.has(id);
+      const col = al ? '#c62828' : on ? '#2e7d32' : '#616161';
+      const bat = s ? batOf(s) : p.battery;
+      const stTxt = al ? 'ALERTA sin atender' : on ? 'En línea' : 'Sin señal';
+      const pop = mk('div'); pop.append(mk('strong', '', label(id)), mk('div', '', stTxt), mk('div', '', 'Última posición: ' + fmt(p.at)), mk('div', '', bat != null ? 'Batería: ' + n1(bat) + ' %' : 'Batería: —'));
+      const tip = mk('span', '', id);
+      LF.circleMarker([p.lat, p.lng], { radius: al ? 12 : 9, color: '#fff', weight: 3, fillColor: col, fillOpacity: 1 })
+        .bindPopup(pop).bindTooltip(tip, { permanent: true, direction: 'top', offset: [0, -8] }).addTo(grp.cascos);
+      const tr = trail.get(id);
+      if (tr && tr.length > 1) LF.polyline(tr.map(x => [x.lat, x.lng]), { color: TR_COL[ti++ % TR_COL.length], weight: 3, opacity: 0.8 })
+        .bindTooltip(mk('span', '', 'Recorrido 2 h · casco ' + id)).addTo(grp.recorrido);
+    }
+    // marcadores de SOS / caida / geocerca sin atender con posicion
+    for (const ev of pending.values()) {
+      const pos = evPos(ev); if (!pos) continue;
+      const pop = mk('div'); pop.append(mk('strong', '', alertLabel(ev)), mk('div', '', label(ev.device_id)), mk('div', '', fmt(ev.created_at)));
+      LF.circleMarker([pos.lat, pos.lng], { radius: 14, color: '#c62828', weight: 3, fillColor: '#c62828', fillOpacity: 0.25 }).bindPopup(pop).addTo(grp.cascos);
+    }
+    for (const z of geofences) {
+      const col = KIND_COL[z.kind] || '#546e7a', st = { color: col, weight: 2, fillColor: col, fillOpacity: z.active === false ? 0.04 : 0.15, dashArray: z.active === false ? '6 6' : null };
+      const pop = mk('div'); pop.append(mk('strong', '', z.name), mk('div', '', KIND_LBL[z.kind] || z.kind), mk('div', '', 'Alarma: ' + (ALARM_LBL[z.alarm] || z.alarm)),
+        mk('div', '', z.active === false ? 'Desactivada' : 'Activa'));
+      if (z.message) pop.append(mk('div', '', '“' + z.message + '”'));
+      const eb = mk('button', 'ghost', 'Editar'); eb.type = 'button'; eb.addEventListener('click', () => openZoneForm(z)); pop.append(eb);
+      const layer = z.shape === 'circle' ? LF.circle(z.geometry.center, { ...st, radius: Number(z.geometry.radius_m) }) : LF.polygon(z.geometry.points, st);
+      layer.bindPopup(pop).addTo(grp.zonas);
+    }
+    for (const p of geoPoints) {
+      const col = CAT_COL[p.category] || '#546e7a';
+      const icon = LF.divIcon({ className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+        html: '<span style="display:block;width:26px;height:26px;border-radius:50%;border:2px solid #fff;box-sizing:border-box;background:' + col +
+          ';color:#fff;font:700 15px/22px system-ui;text-align:center">' + (CAT_GLYPH[p.category] || '•') + '</span>' });
+      const m = LF.marker([p.lat, p.lng], { icon, opacity: p.active === false ? 0.5 : 1, title: p.name, keyboard: true });
+      const pop = mk('div'); pop.append(mk('strong', '', p.name), mk('div', '', CAT_LBL[p.category] || p.category));
+      if (p.category === 'peligro') pop.append(mk('div', '', 'Radio de alerta: ' + p.alert_radius_m + ' m'));
+      if (p.notes) pop.append(mk('div', '', p.notes));
+      m.bindPopup(pop).addTo(grp.puntos);
+      if (p.category === 'peligro') LF.circle([p.lat, p.lng], { radius: Number(p.alert_radius_m) || 30, color: col, weight: 1, fillColor: col, fillOpacity: 0.12 }).addTo(grp.puntos);
+    }
+    for (const [k] of MAPLAYERS) { if (layerOn[k]) map.addLayer(grp[k]); else map.removeLayer(grp[k]); }
+  }
+  async function showOnMap(lat, lng, text) {
+    showTab('map');
+    const ok = await ensureMap();
+    if (!ok) return;
+    map.setView([lat, lng], 17);
+    grp.focus.clearLayers();
+    const pop = mk('div', '', text || '');
+    LF.circleMarker([lat, lng], { radius: 16, color: '#1565c0', weight: 3, fillOpacity: 0 }).bindPopup(pop).addTo(grp.focus).openPopup();
+  }
+  // ---- herramientas de dibujo ----
+  const G = { mode: null, pts: [], center: null };
+  const modeBtns = { circle: 'gDrawCircle', polygon: 'gDrawPoly', point: 'gAddPoint' };
+  function setMode(m) {
+    G.mode = m; G.pts = []; G.center = null;
+    if (grp.draft) grp.draft.clearLayers();
+    for (const [k, id] of Object.entries(modeBtns)) $(id).setAttribute('aria-pressed', String(m === k));
+    if (map) {
+      map.getContainer().style.cursor = m ? 'crosshair' : '';
+      map.getContainer().classList.toggle('drawing', !!m);   // al dibujar, zonas y marcadores no capturan el clic
+      if (m) map.closePopup();
+      if (m) map.doubleClickZoom.disable(); else map.doubleClickZoom.enable();   // clics rapidos al dibujar no hacen zoom
+    }
+    const hint = $('geoHint');
+    hint.textContent = m === 'circle' ? 'Hacé clic en el mapa para marcar el centro y otro clic para fijar el radio. También podés escribir las coordenadas en el formulario.'
+      : m === 'polygon' ? 'Hacé clic en el mapa para agregar vértices (mínimo 3) y tocá "Cerrar polígono".'
+      : m === 'point' ? 'Hacé clic en el mapa donde va el punto de interés.' : '';
+    hint.classList.toggle('hidden', !m);
+    $('polyBar').classList.toggle('hidden', m !== 'polygon');
+  }
+  function drawDraft() {
+    if (!grp.draft) return;
+    grp.draft.clearLayers();
+    const st = { color: '#ef6c00', weight: 3, dashArray: '6 6', fillOpacity: 0.1 };
+    if (G.mode === 'polygon' && G.pts.length) {
+      G.pts.forEach(p => LF.circleMarker(p, { radius: 5, color: '#ef6c00', fillOpacity: 1 }).addTo(grp.draft));
+      if (G.pts.length > 1) LF.polyline(G.pts, st).addTo(grp.draft);
+    }
+    if (G.mode === 'circle' && G.center) LF.circleMarker(G.center, { radius: 5, color: '#ef6c00', fillOpacity: 1 }).addTo(grp.draft);
+  }
+  async function startMode(m) {
+    const ok = await ensureMap();
+    if (!ok) {   // sin mapa: se pueden cargar circulos y puntos escribiendo las coordenadas
+      if (m === 'circle') openZoneForm(null, { shape: 'circle' });
+      else if (m === 'point') openPointForm(null);
+      else $('geoHint').classList.remove('hidden'), $('geoHint').textContent = 'Para dibujar un polígono hace falta el mapa.';
+      return;
+    }
+    closeGeoForm(); setMode(G.mode === m ? null : m);
+  }
+  function onMapClick(ll) {
+    if (!G.mode) return;
+    if (G.mode === 'circle') {
+      if (!G.center) { G.center = [ll.lat, ll.lng]; drawDraft(); return; }
+      const r = Math.min(50000, Math.max(10, Math.round(hav(G.center[0], G.center[1], ll.lat, ll.lng))));
+      const c = G.center; setMode(null); openZoneForm(null, { shape: 'circle', center: c, radius: r });
+    } else if (G.mode === 'polygon') { G.pts.push([ll.lat, ll.lng]); drawDraft(); $('polyCount').textContent = G.pts.length + ' vértices'; }
+    else if (G.mode === 'point') { setMode(null); openPointForm(ll); }
+  }
+  function onMapMove(ll) {
+    if (G.mode !== 'circle' || !G.center || !grp.draft) return;
+    drawDraft();
+    LF.circle(G.center, { radius: Math.max(10, hav(G.center[0], G.center[1], ll.lat, ll.lng)), color: '#ef6c00', weight: 2, dashArray: '6 6', fillOpacity: 0.1 }).addTo(grp.draft);
+  }
+  // ---- formularios de zona y punto ----
+  function closeGeoForm() { $('geoForm').replaceChildren(); $('geoForm').classList.add('hidden'); }
+  function geoFormShell(title, fields, spec, onSave) {
+    const f = mk('form', 'card section'); f.noValidate = true;
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const go = mk('button', '', 'Guardar'); go.type = 'submit';
+    const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
+    no.addEventListener('click', () => { closeGeoForm(); setMode(null); });
+    f.append(mk('h3', '', title), ...fields, actionRow(go, no), err);
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = '';
+      const r = collect(spec);
+      if (r.errors.length) { err.textContent = r.errors.join(' '); return; }
+      const extra = onSave.validate ? onSave.validate(r.v) : '';
+      if (extra) { err.textContent = extra; return; }
+      go.disabled = true; const msg = await onSave(r.v); go.disabled = false;
+      if (msg) { err.textContent = msg; return; }
+      closeGeoForm(); setMode(null); loadGeo();
+    });
+    $('geoForm').replaceChildren(f); $('geoForm').classList.remove('hidden');
+    const first = f.querySelector('input,select'); if (first) first.focus();
+    $('geoForm').scrollIntoView({ block: 'nearest' });
+  }
+  function destOpts() { return [['', 'Todos los cascos'], ...knownDevices().map(i => [i, label(i)])]; }
+  function openZoneForm(z, draw) {
+    showTab('map');
+    const edit = !!z, shape = edit ? z.shape : draw.shape;
+    const cur = z || {};
+    const name = inp('text', cur.name || '', { maxLength: 80 });
+    const kind = sel(Object.entries(KIND_LBL), cur.kind || 'restringida');
+    const alarm = sel(Object.entries(ALARM_LBL), cur.alarm || 'voz_y_sirena');
+    const msg = inp('text', cur.message || '', { maxLength: 140 });
+    const cur1 = Array.isArray(cur.device_ids) && cur.device_ids.length === 1 ? cur.device_ids[0] : '';
+    const dest = sel(destOpts(), cur1);
+    const spec = [
+      { k: 'name', el: name, label: 'Nombre', req: true, max: 80 },
+      { k: 'kind', el: kind, label: 'Tipo' }, { k: 'alarm', el: alarm, label: 'Alarma' },
+      { k: 'message', el: msg, label: 'Mensaje', max: 140 }, { k: 'dest', el: dest, label: 'Casco' },
+    ];
+    const fields = [fld('Nombre de la zona', name), fld('Tipo', kind), fld('Alarma en el casco', alarm), fld('Mensaje que dice el casco (opcional)', msg), fld('Casco destino', dest)];
+    let la = null, ln = null, rad = null, ptsTxt = null;
+    if (shape === 'circle') {
+      const c = edit ? cur.geometry.center : (draw && draw.center) || ['', ''];
+      la = inp('text', c[0] === '' ? '' : String(c[0]), { inputMode: 'decimal' }); ln = inp('text', c[1] === '' ? '' : String(c[1]), { inputMode: 'decimal' });
+      rad = inp('text', edit ? String(cur.geometry.radius_m) : (draw && draw.radius ? String(draw.radius) : '100'), { inputMode: 'numeric' });
+      fields.push(fld('Latitud del centro', la), fld('Longitud del centro', ln), fld('Radio en metros (10 a 50000)', rad));
+    } else if (edit) fields.push(mk('p', 'mute', 'El polígono tiene ' + cur.geometry.points.length + ' vértices. Para cambiar la forma, dibujá una zona nueva y dala de baja.'));
+    const actC = inp('checkbox'); actC.checked = edit ? cur.active !== false : true;
+    const chk = mk('label', 'chk'); chk.append(actC, 'Zona activa'); fields.push(chk);
+    if (shape === 'polygon' && !edit) {
+      const n = (draw && draw.points ? draw.points.length : 0);
+      fields.unshift(mk('p', 'mute', 'Polígono de ' + n + ' vértices.'));
+    }
+    const onSave = async v => {
+      const row = { name: v.name, kind: v.kind, alarm: v.alarm, message: v.message === '' ? null : v.message, device_ids: v.dest ? [v.dest] : null };
+      let geometry;
+      if (shape === 'circle') geometry = { center: [Number(String(la.value).replace(',', '.')), Number(String(ln.value).replace(',', '.'))], radius_m: Number(String(rad.value).replace(',', '.')) };
+      else if (!edit) geometry = { points: draw.points };
+      if (edit) {
+        const upd = { name: row.name, kind: row.kind, alarm: row.alarm, message: row.message, device_ids: row.device_ids, active: actC.checked };
+        if (shape === 'circle') upd.geometry = geometry;
+        const { error } = await sb.from('geofences').update(upd).eq('id', cur.id);
+        return error ? dbErr(error) : '';
+      }
+      const { error } = await sb.from('geofences').insert({ ...row, shape, geometry, active: actC.checked });
+      return error ? dbErr(error) : '';
+    };
+    onSave.validate = () => {
+      if (shape === 'circle') {
+        const a = Number(String(la.value).replace(',', '.')), b = Number(String(ln.value).replace(',', '.')), r = Number(String(rad.value).replace(',', '.'));
+        if (!llOk(a, b) || la.value === '' || ln.value === '') return 'Latitud o longitud inválida (lat -90 a 90, lng -180 a 180).';
+        if (!(r >= 10 && r <= 50000)) return 'El radio debe estar entre 10 y 50000 metros.';
+      } else if (!edit && (!draw.points || draw.points.length < 3)) return 'El polígono necesita al menos 3 vértices.';
+      return '';
+    };
+    geoFormShell(edit ? 'Editar zona' : (shape === 'circle' ? 'Nueva zona circular' : 'Nueva zona poligonal'), fields, spec, onSave);
+  }
+  function openPointForm(ll, p) {
+    showTab('map');
+    const edit = !!p, cur = p || {};
+    const name = inp('text', cur.name || '', { maxLength: 80 });
+    const cat = sel(Object.entries(CAT_LBL), cur.category || 'punto_reunion');
+    const la = inp('text', edit ? String(cur.lat) : (ll ? ll.lat.toFixed(6) : '')), ln = inp('text', edit ? String(cur.lng) : (ll ? ll.lng.toFixed(6) : ''));
+    const notes = inp('text', cur.notes || '', { maxLength: 500 });
+    const rad = inp('text', cur.alert_radius_m != null ? String(cur.alert_radius_m) : '30', { inputMode: 'numeric' });
+    const radL = fld('Radio de alerta en metros (5 a 500, solo peligro)', rad);
+    const msg = inp('text', cur.message || '', { maxLength: 140 });
+    const alarm = sel(Object.entries(ALARM_LBL), cur.alarm || 'voz_y_sirena');
+    const sync = () => radL.classList.toggle('hidden', cat.value !== 'peligro');
+    cat.addEventListener('change', sync); sync();
+    const spec = [{ k: 'name', el: name, label: 'Nombre', req: true, max: 80 }, { k: 'category', el: cat, label: 'Categoría' },
+      { k: 'notes', el: notes, label: 'Notas', max: 500 }, { k: 'message', el: msg, label: 'Mensaje', max: 140 }, { k: 'alarm', el: alarm, label: 'Alarma' }];
+    const onSave = async v => {
+      const row = { name: v.name, category: v.category, lat: Number(String(la.value).replace(',', '.')), lng: Number(String(ln.value).replace(',', '.')),
+        notes: v.notes === '' ? null : v.notes, message: v.message === '' ? null : v.message, alarm: v.alarm };
+      if (v.category === 'peligro') row.alert_radius_m = Math.round(Number(String(rad.value).replace(',', '.')));
+      else row.alert_radius_m = null;
+      if (edit) { const { error } = await sb.from('geo_points').update(row).eq('id', cur.id); return error ? dbErr(error) : ''; }
+      row.active = true; if (row.alert_radius_m == null) delete row.alert_radius_m;
+      const { error } = await sb.from('geo_points').insert(row);
+      return error ? dbErr(error) : '';
+    };
+    onSave.validate = v => {
+      const a = Number(String(la.value).replace(',', '.')), b = Number(String(ln.value).replace(',', '.'));
+      if (la.value === '' || ln.value === '' || !llOk(a, b)) return 'Latitud o longitud inválida.';
+      if (v.category === 'peligro') { const r = Number(String(rad.value).replace(',', '.')); if (!(r >= 5 && r <= 500)) return 'El radio de alerta debe estar entre 5 y 500 metros.'; }
+      return '';
+    };
+    geoFormShell(edit ? 'Editar punto de interés' : 'Nuevo punto de interés', [fld('Nombre', name), fld('Categoría', cat), fld('Latitud', la), fld('Longitud', ln), radL,
+      fld('Notas', notes), fld('Mensaje que dice el casco (opcional)', msg), fld('Alarma', alarm)], spec, onSave);
+  }
+  $('gDrawCircle').addEventListener('click', () => startMode('circle'));
+  $('gDrawPoly').addEventListener('click', () => startMode('polygon'));
+  $('gAddPoint').addEventListener('click', () => startMode('point'));
+  $('polyUndo').addEventListener('click', () => { G.pts.pop(); drawDraft(); $('polyCount').textContent = G.pts.length + ' vértices'; });
+  $('polyClose').addEventListener('click', () => {
+    if (G.pts.length < 3) { $('geoHint').textContent = 'Hacen falta al menos 3 vértices para cerrar el polígono.'; return; }
+    const pts = G.pts.slice(); setMode(null); openZoneForm(null, { shape: 'polygon', points: pts });
+  });
+  $('polyCancel').addEventListener('click', () => setMode(null));
+  for (const [k, t] of MAPLAYERS) {
+    const l = mk('label', 'chk'); const c = inp('checkbox'); c.checked = true;
+    c.addEventListener('change', () => { layerOn[k] = c.checked; if (mapState === 'ready') { if (c.checked) map.addLayer(grp[k]); else map.removeLayer(grp[k]); } });
+    l.append(c, t); $('mapLayers').append(l);
   }
 
   function alertSos(ev) {
@@ -814,9 +2412,14 @@
     $('rundeLink').classList.toggle('hidden', OWN_LIVE);   // RundeCap pausado: no ofrecer su camara
     $('who').textContent = session.user.email;
     $('feed').replaceChildren(); $('feedDone').replaceChildren();
+    {
+      let r = session.user && session.user.app_metadata && session.user.app_metadata.role;
+      if (!r) { try { const c = JSON.parse(atob(String(session.access_token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); r = c.app_metadata && c.app_metadata.role; } catch (_) {} }
+      ROLE = r === 'admin' ? 'admin' : 'viewer';
+    }
 
     const { data, error } = await sb.from('events').select('*')
-      .neq('type', 'heartbeat').order('created_at', { ascending: false }).limit(50);
+      .neq('type', 'heartbeat').neq('type', 'location').order('created_at', { ascending: false }).limit(50);
     if (error) { $('status').textContent = 'Sin permiso o error: ' + error.message; return; }
     me = session.user;
     cards.clear(); pending.clear(); acks.clear();
@@ -827,20 +2430,37 @@
     }
     for (const ev of data) { noteDevice(ev.device_id, ev.created_at, ev.battery); await render(ev, false); }
     loadDevices();
+    loadEscalation(); loadBroadcasts();
+    loadEquipos(); loadGeo(); loadLocations();
+    if (!escTimer) escTimer = setInterval(loadEscalation, 5 * 60 * 1000);
     syncEmpty();
+    renderPending();
 
     if (channel) sb.removeChannel(channel);
     channel = sb.channel('events-feed')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, p => {
         const ev = p.new;
-        noteDevice(ev.device_id, ev.created_at, ev.battery);
-        renderDevices();
+        noteDevice(ev.device_id, ev.created_at, ev.battery, ev.type === 'heartbeat' ? ev.payload : null);
+        renderDevices(); evalHealth();
         if (ev.type === 'heartbeat') { noteRot(ev.device_id, ev.created_at, ev.payload); return; }
+        if (ev.type === 'location') { noteLoc(ev); renderMapLists(); return; }
         if (needsAttention(ev)) alertSos(ev);
         render(ev, true);
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_acks' }, p => applyAck(p.new))
       .subscribe(s => { $('status').textContent = s === 'SUBSCRIBED' ? 'En vivo' : s; });
+    // Canales aparte: si una tabla nueva todavia no esta publicada en Realtime, no se cae el feed principal.
+    for (const c of [chOrders, chGeo]) if (c) sb.removeChannel(c);
+    chOrders = sb.channel('orders-feed')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcasts' }, p => { noteBc(p.new); renderBroadcasts(); })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'broadcast_acks' }, p => { noteBcAck(p.new); renderBroadcasts(); })
+      .subscribe();
+    chGeo = sb.channel('geo-equipos')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'geofences' }, reloadGeo)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'geo_points' }, reloadGeo)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices' }, reloadEq)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assignments' }, reloadEq)
+      .subscribe();
   }
 
   $('login').addEventListener('submit', async e => {
