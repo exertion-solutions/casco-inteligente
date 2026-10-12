@@ -69,6 +69,11 @@
   .vwrap video { position:absolute; top:50%; left:50%; width:100cqw; height:100cqh; object-fit:contain; background:#000;
     transform:translate(-50%,-50%) rotate(var(--r,0deg)); }
   .vwrap[data-rot="90"] video, .vwrap[data-rot="270"] video { width:100cqh; height:100cqw; }
+  .vwrap .fsexit { display:none; position:absolute; top:12px; right:12px; z-index:2; background:rgba(0,0,0,.65); color:#fff; border:1px solid rgba(255,255,255,.5); }
+  .vwrap:fullscreen, .vwrap:-webkit-full-screen { width:100vw; height:100vh; max-height:none; max-width:none; aspect-ratio:auto; border-radius:0; }
+  .vwrap:fullscreen .fsexit, .vwrap:-webkit-full-screen .fsexit { display:block; }
+  .vwrap[data-rot="90"]:fullscreen, .vwrap[data-rot="270"]:fullscreen,
+  .vwrap[data-rot="90"]:-webkit-full-screen, .vwrap[data-rot="270"]:-webkit-full-screen { width:100vw; height:100vh; aspect-ratio:auto; }
   .live .state { font-weight:600; }
   .state.bad { color:var(--sos); font-weight:600; }
 </style>
@@ -118,7 +123,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120021"></script>
+<script src="config.js?v=202610120028"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -208,6 +213,22 @@
     bRot.setAttribute('aria-label', 'Girar la imagen del casco ' + id + ' 90 grados');
     bRot.addEventListener('click', () => { rot = (rot + 90) % 360; applyRot(); try { localStorage.setItem(ROT_KEY, String(rot)); } catch (_) {} });
     row.append(bRot);
+    // Pantalla completa: se pone el contenedor (no el <video>) para conservar el giro de la imagen.
+    const bFull = mk('button', 'ghost', 'Pantalla completa'); bFull.type = 'button';
+    bFull.setAttribute('aria-label', 'Ver el video del casco ' + id + ' en pantalla completa');
+    const bExit = mk('button', 'fsexit', 'Salir de pantalla completa'); bExit.type = 'button';
+    wrap.append(bExit);
+    const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+    const enterFs = () => {
+      const f = wrap.requestFullscreen || wrap.webkitRequestFullscreen;
+      if (f) return f.call(wrap);
+      if (video.webkitEnterFullscreen) video.webkitEnterFullscreen();   // iOS Safari
+    };
+    const exitFs = () => (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    bFull.addEventListener('click', () => { try { fsEl() === wrap ? exitFs() : enterFs(); } catch (_) {} });
+    bExit.addEventListener('click', () => { try { exitFs(); } catch (_) {} });
+    wrap.addEventListener('dblclick', () => { try { fsEl() === wrap ? exitFs() : enterFs(); } catch (_) {} });
+    row.append(bFull);
     applyRot();
     sec.append(row, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
