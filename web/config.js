@@ -7,7 +7,7 @@ window.CASCO_CONFIG = {
   // "runde": Camara en vivo abre caps.runde.pro. "own": panel de video propio (requiere que el casco transmita a LIVE_HOST).
   LIVE_MODE: "own",
   // Giro inicial de la imagen en grados (0/90/180/270). El boton Girar del visor lo recuerda por casco.
-  LIVE_ROTATION: 180,
+  LIVE_ROTATION: 270,
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpnZnZoanBkemtvaG91a3Rha3Z0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NTMyMTYsImV4cCI6MjEwNzMyOTIxNn0.tAg9V2xzmcAwGoBG4LdUBnEdHgPXbrIclUVW-iKCF2s"
 };
 

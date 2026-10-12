@@ -88,7 +88,7 @@
     <div id="sos" role="alert"></div>
     <div class="row" style="margin-bottom:12px">
       <button id="enableSound" class="ghost">Activar sonido de alerta</button>
-      <a class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo (Runde)</a>
+      <a id="rundeLink" class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo (Runde)</a>
       <span id="status" class="mute" role="status">Conectando…</span>
     </div>
     <section id="devices" class="card" aria-label="Estado de los cascos">
@@ -102,7 +102,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120014"></script>
+<script src="config.js?v=202610120017"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -316,7 +316,17 @@
     cam.className = 'btn'; cam.textContent = 'Cámara en vivo'; cam.href = RUNDE_LIVE_URL;
     cam.target = '_blank'; cam.rel = 'noopener noreferrer';
     cam.style.cssText = 'margin-left:8px;background:#fff;color:#8e1b1b;border-color:#fff;font-weight:600';
-    b.replaceChildren(txt, go, cam);
+    let camEl = cam;
+    if (OWN_LIVE) {   // video propio: "Ver en vivo" abre/inicia el panel en vez de ir a Runde
+      camEl = document.createElement('button'); camEl.type = 'button'; camEl.textContent = 'Ver en vivo';
+      camEl.style.cssText = cam.style.cssText;
+      camEl.addEventListener('click', () => {
+        const L = ensureLive(last.device_id); if (!L) return;
+        L.sec.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        if (!L.bStart.disabled) L.start();
+      });
+    }
+    b.replaceChildren(txt, go, camEl);
     b.style.display = 'block';
   }
 
@@ -365,7 +375,7 @@
     live.className = 'btn'; live.textContent = 'Cámara en vivo';
     live.href = RUNDE_LIVE_URL; live.target = '_blank'; live.rel = 'noopener noreferrer';
     live.setAttribute('aria-label', 'Cámara en vivo del casco ' + (devOf.get(ev.id) || '') + ' en la plataforma Runde (abre otra pestaña)');
-    box.append(live);
+    if (!OWN_LIVE) box.append(live);
     const devId = devOf.get(ev.id);
     if (OWN_LIVE && DEV_RE.test(devId || '')) {
       const see = document.createElement('button'); see.type = 'button'; see.className = 'ghost';
@@ -450,6 +460,7 @@
     $('login').classList.add('hidden');
     $('app').classList.remove('hidden');
     $('logout').classList.remove('hidden');
+    $('rundeLink').classList.toggle('hidden', OWN_LIVE);   // RundeCap pausado: no ofrecer su camara
     $('who').textContent = session.user.email;
     $('feed').replaceChildren();
 
