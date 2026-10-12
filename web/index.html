@@ -58,7 +58,11 @@
   #lives { display:grid; gap:12px; margin-bottom:12px; }
   .live { display:grid; gap:8px; }
   .live h2 { font-size:16px; margin:0; overflow-wrap:anywhere; }
-  .live video { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
+  .vwrap { position:relative; width:100%; aspect-ratio:4/3; max-height:70vh; background:#000; border-radius:8px; overflow:hidden; container-type:size; margin-inline:auto; }
+  .vwrap[data-rot="90"], .vwrap[data-rot="270"] { aspect-ratio:3/4; width:auto; height:70vh; max-width:100%; }
+  .vwrap video { position:absolute; top:50%; left:50%; width:100cqw; height:100cqh; object-fit:contain; background:#000;
+    transform:translate(-50%,-50%) rotate(var(--r,0deg)); }
+  .vwrap[data-rot="90"] video, .vwrap[data-rot="270"] video { width:100cqh; height:100cqw; }
   .live .state { font-weight:600; }
   .state.bad { color:var(--sos); font-weight:600; }
 </style>
@@ -98,7 +102,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120004"></script>
+<script src="config.js?v=202610120014"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -176,8 +180,20 @@
     const stats = mk('span', 'mute');
     row.append(bStart, bStop, state, stats);
     const video = mk('video'); video.autoplay = true; video.muted = true; video.playsInline = true;
-    video.setAttribute('aria-label', 'Video en vivo del casco ' + id); video.classList.add('hidden');
-    sec.append(row, video);
+    video.setAttribute('aria-label', 'Video en vivo del casco ' + id);
+    // Contenedor que rota la imagen (la camara del casco esta montada a 90/180 grados).
+    const wrap = mk('div', 'vwrap hidden'); wrap.append(video);
+    const ROT_KEY = 'casco-rot-' + id;
+    let rot = 0;
+    try { const s = localStorage.getItem(ROT_KEY); rot = s !== null ? Number(s) : Number(cfg.LIVE_ROTATION || 0); } catch (_) { rot = Number(cfg.LIVE_ROTATION || 0); }
+    if (![0, 90, 180, 270].includes(rot)) rot = 0;
+    const applyRot = () => { wrap.dataset.rot = String(rot); wrap.style.setProperty('--r', rot + 'deg'); bRot.textContent = 'Girar (' + rot + '°)'; };
+    const bRot = mk('button', 'ghost', 'Girar'); bRot.type = 'button';
+    bRot.setAttribute('aria-label', 'Girar la imagen del casco ' + id + ' 90 grados');
+    bRot.addEventListener('click', () => { rot = (rot + 90) % 360; applyRot(); try { localStorage.setItem(ROT_KEY, String(rot)); } catch (_) {} });
+    row.append(bRot);
+    applyRot();
+    sec.append(row, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
@@ -200,7 +216,7 @@
       const pc = new RTCPeerConnection({ iceServers: STUN });
       L.pc = pc;
       pc.addTransceiver('video', { direction: 'recvonly' });
-      pc.ontrack = e => { video.srcObject = (e.streams && e.streams[0]) || new MediaStream([e.track]); video.classList.remove('hidden'); };
+      pc.ontrack = e => { video.srcObject = (e.streams && e.streams[0]) || new MediaStream([e.track]); wrap.classList.remove('hidden'); };
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc, 2000);
       if (gen !== L.gen) throw Object.assign(new Error('cancelado'), { fatal: true });
@@ -269,7 +285,7 @@
     L.stop = async () => {
       L.gen++;
       bStart.disabled = false; bStop.disabled = true;
-      closePc(); video.srcObject = null; video.classList.add('hidden');
+      closePc(); video.srcObject = null; wrap.classList.add('hidden');
       setState('Deteniendo…');
       await deleteSession();
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'stop' });
