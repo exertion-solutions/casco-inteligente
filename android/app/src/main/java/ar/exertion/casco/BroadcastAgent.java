@@ -128,6 +128,33 @@ final class BroadcastAgent {
         });
     }
 
+    /**
+     * Alarma de geocerca (GeoPolicy): sirena 3 s y/o voz. Cede ante una orden del supervisor en curso (la
+     * evacuacion manda). Sin BroadcastAgent (broadcast_enabled=false) solo voz/beep. Cualquier hilo.
+     */
+    static void zoneAlert(String phrase, boolean siren, boolean voice) {
+        final BroadcastAgent a = instance;
+        if (a == null || a.ah == null) {
+            if (voice) SpanishVoice.announce(phrase);
+            return;
+        }
+        a.ah.post(() -> {
+            if (a.busy) return; // evacuacion/mensaje en curso
+            if (siren) {
+                a.sirenMuted = false;
+                a.setVolumes();
+                a.startSiren();
+                a.ah.postDelayed(() -> {
+                    a.stopSiren();
+                    if (!a.busy) a.restoreVolumes();
+                    if (voice) SpanishVoice.announce(phrase);
+                }, BroadcastPolicy.SIREN_MS);
+            } else if (voice) {
+                SpanishVoice.announce(phrase);
+            }
+        });
+    }
+
     // ---- hilo bpoll ----
 
     private void pollOnce() {

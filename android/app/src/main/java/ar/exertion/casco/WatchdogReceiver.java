@@ -17,25 +17,38 @@ public class WatchdogReceiver extends BroadcastReceiver {
     static final long PERIOD_MS = 5 * 60_000L;
     private static final String TAG = "CascoAgente";
 
-    static void schedule(Context c) {
+    static final String ACTION_HEARTBEAT = "ar.exertion.casco.HEARTBEAT";
+
+    /** Alarma de vigilancia (relanza el servicio). */
+    static void schedule(Context c) { arm(c, 0, "ar.exertion.casco.WATCHDOG"); }
+
+    /**
+     * Alarma del heartbeat (cada 5 min, tambien con el equipo dormido: un Handler.postDelayed se frena al
+     * suspender). Doze limita las alarmas allow-while-idle (~1 cada 9 min en reposo profundo).
+     */
+    static void scheduleHeartbeat(Context c) { arm(c, 1, ACTION_HEARTBEAT); }
+
+    private static void arm(Context c, int requestCode, String action) {
         try {
             AlarmManager am = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-            PendingIntent pi = PendingIntent.getBroadcast(c, 0,
-                    new Intent(c, WatchdogReceiver.class).setAction("ar.exertion.casco.WATCHDOG"),
+            PendingIntent pi = PendingIntent.getBroadcast(c, requestCode,
+                    new Intent(c, WatchdogReceiver.class).setAction(action),
                     PendingIntent.FLAG_UPDATE_CURRENT);
             am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
                     SystemClock.elapsedRealtime() + PERIOD_MS, pi);
         } catch (RuntimeException e) {
-            Log.w(TAG, "watchdog: no se pudo armar: " + e);
+            Log.w(TAG, "alarma " + action + ": no se pudo armar: " + e);
         }
     }
 
     @Override
     public void onReceive(Context ctx, Intent intent) {
-        schedule(ctx); // primero re-armar: si el arranque falla, el siguiente ciclo reintenta
+        // primero re-armar: si el arranque falla, el siguiente ciclo reintenta
+        boolean hb = ACTION_HEARTBEAT.equals(intent.getAction());
+        if (hb) scheduleHeartbeat(ctx); else schedule(ctx);
         try {
             ctx.startForegroundService(new Intent(ctx, MediaWatcherService.class)
-                    .setAction(MediaWatcherService.ACTION_WATCHDOG));
+                    .setAction(hb ? MediaWatcherService.ACTION_HEARTBEAT : MediaWatcherService.ACTION_WATCHDOG));
         } catch (RuntimeException e) {
             Log.e(TAG, "watchdog: no se pudo relanzar el servicio: " + e);
         }

@@ -51,8 +51,11 @@ Ventana = 1 s. "Quieto" = desvio estandar de |a| < 0.6 m/s2 y |w| medio < 0.15 r
 | CONFIRMANDO | `confirm_seconds` sin cancelar | ALERTA: SOS `reason: hombre_caido` + video local 120 s + "Emergencia enviada" |
 | ALERTA | 60 s | NORMAL (cooldown; impactos y botones ignorados) |
 
-SOS: `type='sos'`, `payload {"reason","still_s","impact","confirm_s","trigger"}`. El evento `fall` se envia al
-impacto como antes. F10/F12 no se consumen (RundeCap sigue sacando foto / grabando).
+SOS: `type='sos'`, `payload {"reason","still_s","impact","confirm_s","trigger"}`. Desde 0.6.0 el evento `fall` NO se
+envia al impacto: sale (justo antes del SOS) solo si la cuenta regresiva termina sin cancelar o con F11 durante ella.
+Si el operario cancela no hay evento: el heartbeat lleva `payload.countdown` = `confirmando` (mientras cuenta) o
+`cancelado` (6 min tras cancelar). Heartbeat tambien trae `sos_ok` (accesibilidad conectada) y `gps` (fix <= 120 s).
+La frase de cuenta regresiva nombra los botones de camara/microfono (F10/F12); F11 es el SOS. F10/F12 no se consumen (RundeCap sigue sacando foto / grabando).
 
 ## Tests sin framework (JDK solamente)
 ```

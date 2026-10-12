@@ -181,6 +181,10 @@ public class ManDownPolicyCheck {
         eq(true, OrientationMath.shouldPublish(false, 40_000, 5_000, 0), "publica a los 30 s");
         eq(false, OrientationMath.shouldPublish(true, 40_000, 5_000, 6), "tope 6/min");
 
+        // bug 15: F11 dispara SOS; la frase nunca dice "cualquier boton" y nombra camara/microfono
+        String ph = ManDownPolicy.CANCEL_PHRASE;
+        eq(false, ph.contains("cualquier"), "sin 'cualquier boton'");
+        eq(true, ph.contains("cámara") && ph.contains("micrófono"), "indica F10/F12");
         System.out.println("ManDownPolicyCheck OK (" + n + " aserciones)");
     }
 }

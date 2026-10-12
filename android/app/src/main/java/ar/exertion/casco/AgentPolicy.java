@@ -88,4 +88,40 @@ final class AgentPolicy {
         return s.replaceAll("pass=[^&\\s]+", "pass=***")
                 .replaceAll("eyJ[A-Za-z0-9_-]{8,}(\\.[A-Za-z0-9_-]+)*", "***");
     }
+
+    // ---- tanda 0.6.0 ----
+
+    /** events.press_ms admite 0..600000; un SOS jamas se descarta por eso: se recorta. */
+    static int clampPressMs(int ms) {
+        return Math.max(0, Math.min(600_000, ms));
+    }
+
+    /** Tipo MIME admitido por el bucket casco-media (supabase/schema.sql); null = no se puede subir. */
+    static String mimeFor(String fileName) {
+        String n = fileName == null ? "" : fileName.toLowerCase(java.util.Locale.ROOT);
+        if (n.endsWith(".jpg") || n.endsWith(".jpeg")) return "image/jpeg";
+        if (n.endsWith(".png")) return "image/png";
+        if (n.endsWith(".mp4")) return "video/mp4";
+        return null;
+    }
+
+    /** Rechazo permanente de Storage (contenido/tipo/tamano): reintentar igual no sirve. */
+    static boolean uploadRejected(int httpCode) {
+        return httpCode == 400 || httpCode == 413 || httpCode == 415 || httpCode == 422;
+    }
+
+    /** Tras cancelar la cuenta regresiva, los heartbeats lo informan este tiempo (>= un heartbeat de 5 min). */
+    static final long COUNTDOWN_CANCEL_WINDOW_MS = 6 * 60_000L;
+
+    /** payload.countdown del heartbeat: "confirmando", "cancelado" (ventana) o null (se omite). */
+    static String countdownLabel(boolean confirming, long msSinceCancel) {
+        if (confirming) return "confirmando";
+        return msSinceCancel >= 0 && msSinceCancel <= COUNTDOWN_CANCEL_WINDOW_MS ? "cancelado" : null;
+    }
+
+    /** Descarga de geocercas: 60 s; ante fallos 2, 4, 8 min... tope 5 min. */
+    static long geoRefreshMs(int failures) {
+        if (failures <= 0) return 60_000L;
+        return Math.min(5 * 60_000L, 60_000L << Math.min(failures, 4));
+    }
 }

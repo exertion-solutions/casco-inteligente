@@ -28,7 +28,7 @@ final class SpanishVoice implements TextToSpeech.OnInitListener {
     static final String LLAMADA = "Llamada del supervisor";
     static final String LLAMADA_FIN = "Llamada finalizada";
     static final String AUDIO_ON = "Transmisión con audio";
-    static final String CAIDA = "Caída detectada. Presione cualquier botón para cancelar la alerta";
+    static final String CAIDA = ManDownPolicy.CANCEL_PHRASE; // F11 dispara SOS: nunca "cualquier boton"
 
     /** Instancia del proceso (la crea MediaWatcherService si voice_prompts es true). */
     static volatile SpanishVoice instance;

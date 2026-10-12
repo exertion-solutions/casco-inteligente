@@ -55,6 +55,11 @@ public class HealthPayloadCheck {
         eq(1, mg.get("bat"), "merge no pisa");
         eq(5L, mg.get("up_s"), "merge agrega");
         eq(90, mg.get("rot"), "merge conserva rot");
+        Map<String, Object> st = HealthPayload.status(false, true, null);
+        eq(false, st.get("sos_ok"), "sos_ok false si no hay accesibilidad");
+        eq(true, st.get("gps"), "gps fresco");
+        eq(false, st.containsKey("countdown"), "countdown omitido");
+        eq("confirmando", HealthPayload.status(true, false, "confirmando").get("countdown"), "countdown");
         System.out.println("HealthPayloadCheck OK");
     }
 }

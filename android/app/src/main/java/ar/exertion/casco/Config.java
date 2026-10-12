@@ -8,10 +8,12 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileOutputStream;
 
 /**
- * Lee config.json desde el almacenamiento propio de la app (no va al repo):
- * /sdcard/Android/data/ar.exertion.casco/files/config.json
+ * Lee config.json del almacenamiento INTERNO (filesDir). La primera vez se provisiona con adb push a
+ * /sdcard/Android/data/ar.exertion.casco/files/config.json (no va al repo): al arrancar se mueve al interno y
+ * se borra de la sdcard (Config.load).
  * {"supabase_url":"https://xxx.supabase.co","anon_key":"...","device_email":"...",
  *  "device_password":"...","device_id":"4132"}
  * Video (opcionales salvo stream_host): stream_host, stream_width, stream_height, stream_fps,
@@ -74,27 +76,60 @@ final class Config {
         return url.startsWith("https://") && !anonKey.isEmpty() && !email.isEmpty() && !password.isEmpty();
     }
 
-    /** null si falta el archivo, no se puede leer o no es JSON. Nunca loguea el contenido. */
+    /**
+     * null si falta el archivo, no se puede leer o no es JSON. Nunca loguea el contenido.
+     * La password NO queda en la sdcard: si hay un config.json en getExternalFilesDir (primera instalacion por
+     * adb push), se valida, se copia a filesDir (almacenamiento interno, privado) y la copia externa se borra.
+     * Despues se lee siempre la interna.
+     */
     static Config load(Context c) {
+        File internal = new File(c.getFilesDir(), "config.json");
         try {
             File dir = c.getExternalFilesDir(null);
-            if (dir == null) {
-                Log.e("CascoAgente", "almacenamiento externo no disponible");
-                return null;
+            File ext = dir == null ? null : new File(dir, "config.json");
+            if (ext != null && ext.isFile()) {
+                try {
+                    byte[] raw = readAll(ext);
+                    Config cfg = parse(raw); // valida antes de reemplazar la interna
+                    File tmp = new File(internal.getPath() + ".tmp");
+                    try (FileOutputStream o = new FileOutputStream(tmp)) { o.write(raw); }
+                    if (!tmp.renameTo(internal)) {
+                        internal.delete();
+                        if (!tmp.renameTo(internal)) throw new java.io.IOException("no se pudo mover a filesDir");
+                    }
+                    if (!ext.delete()) {
+                        try (FileOutputStream o = new FileOutputStream(ext)) { /* trunca: sin password en la sdcard */ }
+                        Log.w("CascoAgente", "config.json externo: no se pudo borrar, se vacio="
+                                + (ext.length() == 0));
+                    } else {
+                        Log.i("CascoAgente", "config.json movido al almacenamiento interno");
+                    }
+                    return cfg;
+                } catch (Exception e) {
+                    Log.w("CascoAgente", "config.json externo no sirvio, se usa el interno: "
+                            + e.getClass().getSimpleName());
+                }
             }
-            File f = new File(dir, "config.json");
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            try (FileInputStream in = new FileInputStream(f)) {
-                byte[] buf = new byte[4096];
-                int n;
-                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-            }
-            String s = out.toString("UTF-8");
-            if (s.startsWith("﻿")) s = s.substring(1); // BOM de editores Windows
-            return new Config(new JSONObject(s));
+            return parse(readAll(internal));
         } catch (Exception e) {
             Log.e("CascoAgente", "config.json no se pudo leer: " + e.getClass().getSimpleName());
             return null;
         }
+    }
+
+    private static byte[] readAll(File f) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[4096];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+        }
+        return out.toByteArray();
+    }
+
+    private static Config parse(byte[] raw) throws Exception {
+        String s = new String(raw, "UTF-8");
+        if (s.startsWith("﻿")) s = s.substring(1); // BOM de editores Windows
+        return new Config(new JSONObject(s));
     }
 }

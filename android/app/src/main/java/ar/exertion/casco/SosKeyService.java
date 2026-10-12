@@ -15,10 +15,13 @@ public class SosKeyService extends AccessibilityService {
     private static final String TAG = "CascoAgente";
     static final int SOS_KEYCODE = KeyEvent.KEYCODE_F11;
     private long downAt = -1;
+    /** true mientras el servicio esta conectado (el heartbeat lo informa como sos_ok). */
+    static volatile boolean connected;
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        connected = true;
         Log.i(TAG, "SosKeyService conectado");
         startWatcher(new Intent(this, MediaWatcherService.class));
     }
@@ -41,6 +44,7 @@ public class SosKeyService extends AccessibilityService {
             // cancelan la cuenta regresiva de hombre caido y (F12) atienden una llamada pendiente; no se consumen
             MediaWatcherService.onCancelKey();
             BroadcastAgent.silenceSiren(); // tambien silencian la sirena de evacuacion
+            MediaWatcherService.onSilenceZoneKey(); // y la alarma de geocerca (el aviso al supervisor sigue)
             if (kc == KeyEvent.KEYCODE_F12) VoiceCallManager.acceptPending();
             return false;
         }
@@ -63,4 +67,14 @@ public class SosKeyService extends AccessibilityService {
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) { }
     @Override public void onInterrupt() { }
+
+    @Override public boolean onUnbind(Intent intent) {
+        connected = false;
+        return super.onUnbind(intent);
+    }
+
+    @Override public void onDestroy() {
+        connected = false;
+        super.onDestroy();
+    }
 }

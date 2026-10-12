@@ -68,6 +68,26 @@ public class AgentPolicyCheck {
         eq(false, r.contains("eyJ"), "sin jwt");
         eq(true, r.contains("pass=***&x=1"), "pass redactado");
         eq("", AgentPolicy.redact(null), "null");
+        // 0.6.0: press_ms se recorta (nunca se descarta el SOS), solo mime admitidos por el bucket
+        eq(600_000, AgentPolicy.clampPressMs(900_000), "press recortado");
+        eq(0, AgentPolicy.clampPressMs(-5), "press negativo");
+        eq(1234, AgentPolicy.clampPressMs(1234), "press normal");
+        eq("image/jpeg", AgentPolicy.mimeFor("A.JPG"), "jpg");
+        eq("image/png", AgentPolicy.mimeFor("a.png"), "png");
+        eq("video/mp4", AgentPolicy.mimeFor("v.mp4"), "mp4");
+        eq(null, AgentPolicy.mimeFor("v.3gp"), "3gp no admitido");
+        eq(null, AgentPolicy.mimeFor("v.mkv"), "mkv no admitido");
+        eq(true, AgentPolicy.uploadRejected(415), "415 definitivo");
+        eq(true, AgentPolicy.uploadRejected(400), "400 definitivo");
+        eq(false, AgentPolicy.uploadRejected(500), "500 reintenta");
+        eq(false, AgentPolicy.uploadRejected(403), "403 reintenta");
+        eq("confirmando", AgentPolicy.countdownLabel(true, -1), "cuenta en curso");
+        eq("cancelado", AgentPolicy.countdownLabel(false, 60_000), "cancelado reciente");
+        eq(null, AgentPolicy.countdownLabel(false, 7 * 60_000), "cancelado viejo se omite");
+        eq(null, AgentPolicy.countdownLabel(false, -1), "nunca cancelado");
+        eq(60_000L, AgentPolicy.geoRefreshMs(0), "geo 60 s");
+        eq(120_000L, AgentPolicy.geoRefreshMs(1), "geo backoff 1");
+        eq(300_000L, AgentPolicy.geoRefreshMs(50), "geo tope 5 min");
         System.out.println("AgentPolicyCheck OK");
     }
 }

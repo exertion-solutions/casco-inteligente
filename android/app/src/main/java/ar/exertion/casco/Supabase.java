@@ -164,25 +164,25 @@ final class Supabase {
 
     private static String clean(String s) { return s.replaceAll("[^A-Za-z0-9._-]", "_"); }
 
-    private static String contentTypeOf(String name) {
-        String n = name.toLowerCase(Locale.ROOT);
-        if (n.endsWith(".mp4")) return "video/mp4";
-        if (n.endsWith(".3gp")) return "video/3gpp";
-        if (n.endsWith(".mkv")) return "video/x-matroska";
-        if (n.endsWith(".png")) return "image/png";
-        return "image/jpeg";
-    }
+    /** Resultado de uploadMedia: el bucket rechazo el archivo para siempre (tipo/tamano): no reintentar. */
+    static final String UPLOAD_REJECTED = "<rejected>";
 
     /**
-     * Sube un archivo al bucket y devuelve la ruta (o null si falla). La ruta se sanea a
+     * Sube un archivo al bucket y devuelve la ruta; null si falla (reintentable) o UPLOAD_REJECTED si el bucket
+     * no admite el archivo (solo image/jpeg, image/png, video/mp4). La ruta se sanea a
      * [A-Za-z0-9._-] para que sea valida en URL y en Storage (nombres con espacios, tildes, etc.).
      */
     String uploadMedia(File f, String type, String origName) {
         try {
             String name = clean(origName);
+            String mime = AgentPolicy.mimeFor(name);
+            if (mime == null) return UPLOAD_REJECTED;
             String path = clean(cfg.deviceId) + "/" + type + "/" + System.currentTimeMillis() + "_" + name;
-            call("POST", "/storage/v1/object/" + BUCKET + "/" + path, contentTypeOf(name), null, f);
+            call("POST", "/storage/v1/object/" + BUCKET + "/" + path, mime, null, f);
             return path;
+        } catch (HttpError e) {
+            Log.w(TAG, "upload fallo: " + e.getMessage());
+            return AgentPolicy.uploadRejected(e.code) ? UPLOAD_REJECTED : null;
         } catch (Exception e) {
             Log.w(TAG, "upload fallo: " + e.getMessage());
             return null;
@@ -341,6 +341,20 @@ final class Supabase {
             Log.w(TAG, "turn-credentials fallo: " + e.getMessage());
             return null;
         }
+    }
+
+    // ---- geocercas (docs/PROTOCOLO-GEO.md): RLS ya filtra activas, sin baja y de este casco ----
+
+    /** JSON crudo de geofences (array). Lanza excepcion ante error de red/HTTP. */
+    String geofencesJson() throws Exception {
+        return getShort("/rest/v1/geofences?select=id,name,kind,shape,geometry,message,alarm,device_ids"
+                + "&active=eq.true&deleted_at=is.null&limit=200");
+    }
+
+    /** JSON crudo de geo_points 'peligro' (array). Lanza excepcion ante error de red/HTTP. */
+    String dangerPointsJson() throws Exception {
+        return getShort("/rest/v1/geo_points?select=id,name,lat,lng,alert_radius_m,message,alarm"
+                + "&category=eq.peligro&active=eq.true&deleted_at=is.null&limit=200");
     }
 
     // ---- ordenes del supervisor (broadcasts + broadcast_acks, docs/PROTOCOLO-CENTRO.md seccion 4) ----

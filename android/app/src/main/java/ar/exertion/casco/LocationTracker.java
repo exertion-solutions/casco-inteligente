@@ -85,7 +85,7 @@ final class LocationTracker implements LocationListener {
         try {
             Location l = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER);
             if (l == null) l = lm.getLastKnownLocation(LocationManager.PASSIVE_PROVIDER);
-            return l == null ? null : new Fix(l);
+            return valid(l) ? new Fix(l) : null;
         } catch (RuntimeException e) {
             return null;
         }
@@ -98,7 +98,13 @@ final class LocationTracker implements LocationListener {
         registered = false;
     }
 
-    @Override public void onLocationChanged(Location l) { last = new Fix(l); }
+    /** El HAL MediaTek entrega (0,0) con precision cuando no hay fix: no es una posicion. */
+    static boolean valid(Location l) {
+        return l != null && !(l.getLatitude() == 0.0 && l.getLongitude() == 0.0)
+                && Math.abs(l.getLatitude()) <= 90 && Math.abs(l.getLongitude()) <= 180;
+    }
+
+    @Override public void onLocationChanged(Location l) { if (valid(l)) last = new Fix(l); }
     @Override public void onStatusChanged(String p, int s, Bundle e) { }
     @Override public void onProviderEnabled(String p) { }
     @Override public void onProviderDisabled(String p) { }

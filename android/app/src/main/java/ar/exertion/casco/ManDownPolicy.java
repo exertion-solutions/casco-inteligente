@@ -21,6 +21,13 @@ final class ManDownPolicy {
     static final long ACTIVITY_MAX_AGE_MS = 10 * 60_000L;
     static final int ACTIVITY_MIN_WINDOWS = 10;       // 10 s de movimiento = "uso reciente"
 
+    /**
+     * Frase de la cuenta regresiva. Cancelan F10 (camara), F12 (microfono) o el movimiento; F11 (SOS) dispara la
+     * alerta, asi que jamas se dice "cualquier boton". No hay "diga cancelar": el reconocimiento por voz no existe.
+     */
+    static final String CANCEL_PHRASE = "Caída detectada. Para cancelar, presione el botón de cámara "
+            + "o el de micrófono, o muévase. El botón SOS envía la alerta";
+
     static final String REASON_FALL = "hombre_caido";
     static final String REASON_MANUAL = "manual_en_caida";
 

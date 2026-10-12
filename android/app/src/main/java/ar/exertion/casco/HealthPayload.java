@@ -86,4 +86,13 @@ final class HealthPayload {
         if (health != null) for (Map.Entry<String, Object> e : health.entrySet()) m.putIfAbsent(e.getKey(), e.getValue());
         return m;
     }
+
+    /** Estado del agente para el heartbeat: sos_ok (accesibilidad conectada), gps (fix fresco), countdown. */
+    static Map<String, Object> status(boolean sosOk, boolean gpsFresh, String countdown) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sos_ok", sosOk);
+        m.put("gps", gpsFresh);
+        put(m, "countdown", countdown == null || countdown.isEmpty() ? null : countdown);
+        return m;
+    }
 }
