@@ -41,3 +41,11 @@
 1. adb install de android/app/build/outputs/apk/debug/app-debug.apk (tools/instalar-agente.ps1) con stream_host=216-238-110-97.sslip.io en config.
 2. pm disable-user --user 0 com.tencent.liteav.demo (revertir: pm enable).
 3. web/config.js: LIVE_MODE "own". Probar Iniciar en el visor.
+
+## Estado 2026-10-12 03:07 UTC: VIDEO PROPIO ACTIVO (piloto casco 4132)
+- Cadena verificada en servidor: RTMP del casco -> MediaMTX (live/4132, H264) -> WebRTC al visor (peer connection established).
+- RundeCap PAUSADO en el casco: pm disable-user --user 0 com.tencent.liteav.demo. Revertir: pm enable com.tencent.liteav.demo.
+- Casco usa stream_host=216.238.110.97 (IP directa): el casco NO resuelve *.sslip.io. El visor usa 216-238-110-97.sslip.io (HTTPS).
+- Fixes de servidor: CA raiz montada en MediaMTX; webrtcAllowOrigins con el origen del visor (lista vacia = 403 a todo navegador).
+- Visor: LIVE_MODE "own"; config.js versionado (?v=) contra cache.
+- Pendiente: probar SOS fisico (auto 120 s), medir latencia real, RTMPS, rotar MEDIA_AUTH_SECRET, revocar llave SSH del asistente.
