@@ -330,11 +330,12 @@ const FAKE_RTC = () => {
     navigator.mediaDevices.getUserMedia = async () => { throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); };
   }
 };
-async function newPage(opts, deny) {
+async function newPage(opts, deny, extraInit) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', locale: 'es-AR', timezoneId: 'America/Argentina/Buenos_Aires', serviceWorkers: 'block', acceptDownloads: true });
   await mock(ctx, opts);
   if (process.env.NOAUTO || process.env.NOCROP) await ctx.addInitScript("let v;Object.defineProperty(window,'CASCO_CONFIG',{get:()=>v,set:x=>{v=x;" + (process.env.NOAUTO ? 'x.REC_AUTO_ON_ALERT=false;' : '') + (process.env.NOCROP ? 'x.OVERLAY_CROP={};' : '') + "}})");
   await ctx.addInitScript('window.__noTrack=' + (process.env.NOTRACK ? 'true' : 'false') + ';window.__noAudio=' + (process.env.NOAUDIO ? 'true' : 'false') + ';window.__micDeny=' + (deny ? 'true' : 'false') + ';(' + FAKE_RTC.toString() + ')()');
+  if (extraInit) await ctx.addInitScript(extraInit);
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push('[fix] pageerror: ' + e.message));
   page.on('crash', () => console.log('PAGE CRASH'));
@@ -851,6 +852,68 @@ if (!process.env.ONLY4) {
   await page.locator('#pendList .pitem', { hasText: '4132' }).first().locator('button', { hasText: 'Ver en vivo' }).click();
   check(await waitFor(() => posts(state, 'stream_commands').length > n0), 'live: "Ver en vivo" de la tarjeta envia start');
   check(await page.locator('#lives .live', { hasText: '4132' }).isVisible(), 'live: panel del casco 4132 visible');
+  await ctx.close();
+}
+
+// ---- 11) Foto desde el video en vivo y microfono ----
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ whep: true, state });
+  await closeOv(page);
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  await sec.locator('button', { hasText: 'Iniciar' }).first().click();
+  check(await waitFor(async () => /En vivo/.test(await sec.locator('.state').first().innerText()), 15000), 'foto: video en vivo del 4132');
+  await waitFor(() => page.evaluate(() => { const v = document.querySelector('#lives video'); return !!(v && v.videoWidth); }), 8000);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }).catch(() => null), sec.getByRole('button', { name: /Sacar una foto con el casco 4132/ }).click()]);
+  check(!!dl && /^vigia-4132_.*\.png$/.test(dl.suggestedFilename()), 'foto: con video en vivo toma el cuadro y lo descarga: ' + (dl && dl.suggestedFilename()));
+  check(posts(state, 'device_commands').length === 0, 'foto: no se envia comando al casco mientras transmite');
+  check(/Cuadro del video guardado/.test(await page.locator('dialog[open]').innerText()), 'foto: cartel de confirmacion');
+  await page.keyboard.press('Escape');
+  check((await sec.locator('.thumb', { hasText: 'Cuadro del video · guardado en tu PC' }).count()) === 1, 'foto: miniatura con la etiqueta del cuadro');
+  await ctx.close();
+}
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ whep: true, t4: true, state });
+  await closeOv(page);
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  await sec.getByRole('button', { name: /Sacar una foto con el casco 4132/ }).click();
+  await waitFor(() => posts(state, 'device_commands').length === 1);
+  state.acks = [{ command_id: 'cmd-1', device_id: '4132', ok: false, detail: 'camara ocupada', created_at: new Date().toISOString() }];
+  const bf = sec.getByRole('button', { name: /Tomar un cuadro del video en vivo del casco 4132/ });
+  check(await waitFor(async () => await bf.isVisible(), 9000), 'foto: ante "camara ocupada" ofrece "Tomar cuadro del video"');
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }).catch(() => null), bf.click()]);
+  check(!!dl && /^vigia-4132_.*\.png$/.test(dl.suggestedFilename()), 'foto: arranca el video y toma el cuadro: ' + (dl && dl.suggestedFilename()));
+  await ctx.close();
+}
+const MICQ = s => "navigator.permissions.query = async () => ({ state: '" + s + "' });";
+const MICERR = n => MICQ('prompt') + "navigator.mediaDevices.getUserMedia = async () => { throw Object.assign(new Error('x'), { name: '" + n + "' }); };";
+if (!process.env.ONLY4) {
+  let [ctx, page] = await newPage({}, false, MICQ('denied'));
+  await closeOv(page);
+  await page.click('#testMic');
+  const t = await page.locator('dialog[open]').innerText();
+  check(/candado/.test(t) && /Configuración del sitio/.test(t) && /F5/.test(t) && /chrome:\/\/settings\/content\/microphone/.test(t) && /Windows/.test(t), 'mic: permiso denegado muestra el panel con los pasos, la ruta y la nota de Windows');
+  await page.locator('dialog[open] button', { hasText: 'Copiar' }).click();
+  check(await waitFor(async () => /copiad|Seleccionada/i.test(await page.locator('dialog[open] button', { hasText: /Copiado|Seleccionada/ }).innerText().catch(() => ''))), 'mic: boton Copiar responde');
+  await ctx.close();
+  [ctx, page] = await newPage({}, false, MICERR('NotFoundError'));
+  await closeOv(page);
+  await page.click('#testMic');
+  check(await waitFor(async () => /no se encontró un micrófono/.test(await page.locator('dialog[open]').innerText())), 'mic: sin dispositivo dice "no se encontró un micrófono"');
+  await ctx.close();
+  [ctx, page] = await newPage({}, false, MICERR('NotReadableError'));
+  await closeOv(page);
+  await page.click('#testMic');
+  check(await waitFor(async () => /otra aplicación/.test(await page.locator('dialog[open]').innerText())), 'mic: en uso dice "otra aplicación está usando el micrófono"');
+  await ctx.close();
+  [ctx, page] = await newPage({}, false, MICQ('prompt'));
+  await closeOv(page);
+  await page.click('#testMic');
+  check(await waitFor(async () => await page.locator('dialog[open] meter:visible').count() === 1), 'mic: con permiso muestra el medidor de nivel');
+  await page.keyboard.press('Escape');
   await ctx.close();
 }
 

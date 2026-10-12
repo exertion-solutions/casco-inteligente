@@ -577,3 +577,7 @@ button.trash { gap: 6px; }
 button.trash.icon-only { min-width: 44px; padding: 0; }
 .img-gone { font-style: italic; }
 .delfails { display: grid; gap: var(--sp-1); list-style: none; padding: 0; margin: 0; }
+
+.micsteps { margin: 0; padding-left: var(--sp-5); display: grid; gap: var(--sp-1); }
+.dlg code { overflow-wrap: anywhere; padding: 4px 8px; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 3px; }
+.thumb .thumb-t { max-width: 96px; white-space: normal; line-height: 1.2; }

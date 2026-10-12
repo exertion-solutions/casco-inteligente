@@ -534,6 +534,7 @@
       if (!frameInfo()) { if (!auto) setRec('Todavía no hay imagen del casco para grabar.', true); return; }
       // Microfono de la PC (mezclado con el audio del casco). Sin permiso o con error: se graba igual solo con el casco.
       const micWanted = cMic.checked;
+      if (micWanted && !auto && !(L.call && !L.call.ended) && (await micPermState()) === 'denied') showMicHelp();
       let mic = null, micErr = '';
       if (micWanted && !(L.call && !L.call.ended && L.call.stream)) {
         starting = true;
@@ -587,18 +588,21 @@
     }
     bRec.addEventListener('click', () => { if (rec) stopRec('Grabación detenida.', false); else startRec(false); });
     bAgain.addEventListener('click', () => { if (!lastUrl) return; try { save(lastUrl, lastName); } catch (e) { setRec('No se pudo descargar: ' + ((e && e.message) || 'el navegador bloqueó la descarga') + '.', true); } });
-    bShot.addEventListener('click', () => {
-      const f = frameInfo();
-      if (!f) { setRec('Todavía no hay imagen del casco para capturar.', true); return; }
-      const cv2 = document.createElement('canvas'); cv2.width = f.cw; cv2.height = f.ch;
-      paint(cv2.getContext('2d'), f.cw, f.ch, f);
-      cv2.toBlob(b => {
-        if (!b) { setRec('No se pudo generar la captura.', true); return; }
-        const url = URL.createObjectURL(b), name = 'vigia-' + id + '_' + stampOf(new Date()) + '.png';
-        save(url, name); setTimeout(() => URL.revokeObjectURL(url), 10000);
-        setRec('Captura guardada en tu PC: ' + name);
-      }, 'image/png');
+    const snapBlob = () => new Promise(res => {
+      const f = frameInfo(); if (!f) return res(null);
+      const c2 = document.createElement('canvas'); c2.width = f.cw; c2.height = f.ch;
+      paint(c2.getContext('2d'), f.cw, f.ch, f);
+      c2.toBlob(b => res(b), 'image/png');
     });
+    bShot.addEventListener('click', async () => {
+      const b = await snapBlob();
+      if (!b) { setRec('Todavía no hay imagen del casco para capturar.', true); return; }
+      const url = URL.createObjectURL(b), name = 'vigia-' + id + '_' + stampOf(new Date()) + '.png';
+      save(url, name); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      setRec('Captura guardada en tu PC: ' + name);
+    });
+    L.hasFrame = () => liveNow() && !!frameInfo();
+    L.snap = async () => { const b = await snapBlob(); return b ? { blob: b, name: 'vigia-' + id + '_' + stampOf(new Date()) + '.png' } : null; };
     L.recReady = ok => { bShot.disabled = !ok; if (!rec) bRec.disabled = !(ok && canRec); if (ok) autoRecSync(); };
     L.recLost = why => { if (rec && !rec.stopping) stopRec(why, true); };
     L.isRecording = () => !!rec;
@@ -702,12 +706,13 @@
       try {
         if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !window.RTCPeerConnection)
           throw soft('este navegador no permite llamadas de voz (hace falta HTTPS)');
+        if ((await micPermState()) === 'denied') { showMicHelp(); throw soft('permiso de micrófono denegado: seguí los pasos del cartel'); }
         try {
           c.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
         } catch (e) {
           const n = e && e.name;
-          throw soft(n === 'NotAllowedError' || n === 'SecurityError' ? 'permiso de micrófono denegado: habilitalo en el navegador para hablar'
-            : n === 'NotFoundError' || n === 'OverconstrainedError' ? 'no se encontró un micrófono' : 'no se pudo usar el micrófono (' + (n || 'error') + ')');
+          if (n === 'NotAllowedError' || n === 'SecurityError') showMicHelp();
+          throw soft(micMsg(n));
         }
         if (c.ended) { c.stream.getTracks().forEach(t => t.stop()); return; }
         const tok = await getToken();
@@ -2931,7 +2936,17 @@
   function fillThumbs(strip, dev) {
     const arr = (photos.get(dev) || []).filter(p => !IMG.has(p.id));
     const adm = isAdmin();
-    if (!arr.length) { strip.replaceChildren(mk('span', 'mute', 'Sin fotos todavía. Tocá “Sacar foto”.')); return; }
+    const fr = frames.get(dev) || [];
+    if (!arr.length && !fr.length) { strip.replaceChildren(mk('span', 'mute', 'Sin fotos todavía. “Sacar foto” toma un cuadro del video si está en vivo; si no, se la pide al casco.')); return; }
+    const fkids = fr.map(f => {
+      const b = mk('button', 'thumb'); b.type = 'button';
+      const desc = 'Cuadro del video del casco ' + dev + ', ' + fmt(f.created_at);
+      b.setAttribute('aria-label', 'Ampliar: ' + desc);
+      const img = mk('img'); img.alt = desc; img.width = 96; img.height = 72; img.src = f.url;
+      b.append(img, mk('span', 'thumb-t', 'Cuadro del video · guardado en tu PC'));
+      b.addEventListener('click', () => openFrame(dev, f));
+      return b;
+    });
     const kids = arr.slice(0, 6).map(p => {
       const w = mk('div', 'thumbwrap');
       const b = mk('button', 'thumb'); b.type = 'button';
@@ -2961,7 +2976,7 @@
       }
       return w;
     });
-    strip.replaceChildren(...kids);
+    strip.replaceChildren(...fkids, ...kids);
     const nSel = arr.filter(p => delSel.has(p.id)).length;
     if (adm && nSel) {
       const b = mk('button', 'attend', 'Eliminar seleccionadas (' + nSel + ')'); b.type = 'button';
@@ -3034,11 +3049,12 @@
   const ACTION_LBL = { photo: 'Foto', torch_on: 'Linterna encendida', torch_off: 'Linterna apagada', restart_agent: 'Reinicio del agente', ping: 'Enlace' };
   function announce(t) { const el = $('cmdLive'); if (el) el.textContent = t; }
   function cmdText(it) {
+    if (it.action === 'frame') return 'Cuadro del video: ' + (it.state === 'ok' ? 'guardado en tu PC · ' : '') + it.detail + (it.state === 'error' ? '.' : '');
     const a = ACTION_LBL[it.action] || it.action;
     if (it.state === 'na') return MISSING_TXT;
     if (it.state === 'pending') return a + ': pendiente, esperando al casco…';
     if (it.state === 'timeout') return a + ': sin respuesta del casco (puede estar sin señal o apagado).';
-    if (it.state === 'error') return a + ': error' + (it.detail ? ' · ' + it.detail : '') + '.';
+    if (it.state === 'error') return a + ': error' + (it.detail ? ' · ' + it.detail : '') + '.' + (it.offerFrame ? ' Podés tomar un cuadro del video en vivo.' : '');
     let t = a + ': listo';
     if (it.action === 'ping' && it.took != null) t += ' · respuesta en ' + n1(it.took / 1000) + ' s';
     if (it.action === 'photo') t += it.photo ? ' · foto recibida' : ' · esperando la imagen…';
@@ -3054,7 +3070,9 @@
     const bPhoto = mkb('Sacar foto', 'photo', 'Sacar una foto con el casco ' + id);
     const bTorch = mkb('Linterna: encender', 'torch', 'Encender la linterna del casco ' + id);
     const bPing = mkb('Probar enlace', 'ping', 'Probar el enlace con el casco ' + id);
-    const row = rowOf(bPhoto, bTorch, bPing);
+    const bFrame = mkb('Tomar cuadro del video', 'frame', 'Tomar un cuadro del video en vivo del casco ' + id);
+    bFrame.classList.add('hidden');
+    const row = rowOf(bPhoto, bTorch, bPing, bFrame);
     if (isAdmin()) {   // configuracion y reinicio: solo admin (RLS lo exige tambien en el servidor)
       const bCfg = mkb('Configuración del casco', 'cfg', 'Configuración remota del casco ' + id);
       const bRst = mkb('Reiniciar agente', 'rst', 'Reiniciar el agente del casco ' + id);
@@ -3065,13 +3083,15 @@
     const stat = mk('p', 'mute cmdstat');
     const strip = mk('div', 'thumbs');
     box.append(row, stat, strip);
-    bPhoto.addEventListener('click', () => sendCmd(id, 'photo'));
+    bPhoto.addEventListener('click', () => takePhoto(id));
+    bFrame.addEventListener('click', () => frameFromVideo(id));
     bTorch.addEventListener('click', () => sendCmd(id, CMD.torch.get(id) === true ? 'torch_off' : 'torch_on'));
     bPing.addEventListener('click', () => sendCmd(id, 'ping'));
     const v = { id, box, update() {
       const it = CMD.last.get(id);
       stat.textContent = it ? cmdText(it) : (CMD.avail === 'missing' ? MISSING_TXT : '');
       stat.classList.toggle('bad', !!it && (it.state === 'error' || it.state === 'timeout'));
+      bFrame.classList.toggle('hidden', !(it && it.offerFrame));
       const on = CMD.torch.get(id) === true;
       bTorch.textContent = 'Linterna: ' + (on ? 'apagar' : 'encender');
       bTorch.setAttribute('aria-label', (on ? 'Apagar' : 'Encender') + ' la linterna del casco ' + id);
@@ -3119,6 +3139,7 @@
     if (!it || (it.state !== 'pending' && it.state !== 'timeout')) return;
     it.state = a.ok === true ? 'ok' : 'error';
     it.detail = String(a.detail || '').slice(0, 200);
+    if (it.action === 'photo' && it.state === 'error' && /ocupad/i.test(it.detail)) it.offerFrame = true;   // la camara esta transmitiendo
     if (a.created_at && it.srvAt) { const d = new Date(a.created_at) - new Date(it.srvAt); if (isFinite(d) && d >= 0) it.took = d; }
     if (it.state === 'ok') { if (it.action === 'torch_on') CMD.torch.set(it.dev, true); else if (it.action === 'torch_off') CMD.torch.set(it.dev, false); }
     cmdRefresh(it.dev); announce(label(it.dev) + ' · ' + cmdText(it));
@@ -3643,6 +3664,105 @@
     e.preventDefault(); showTab('cmd');
   });
 
+  // ---- Foto desde el video en vivo: el casco no puede sacar foto mientras transmite, asi que se toma el cuadro en el visor ----
+  const frames = new Map();   // device_id -> [{ id, created_at, url, name }] (solo en este navegador; tope 4 por casco)
+  const FRAME_KEEP = 4;
+  const setFrameNote = (dev, state, detail) => { CMD.last.set(dev, { id: null, dev, action: 'frame', at: Date.now(), state, detail, took: null }); cmdRefresh(dev); announce(label(dev) + ' · ' + cmdText(CMD.last.get(dev))); };
+  function openFrame(dev, f) {
+    const img = mk('img', 'photo-big'); img.src = f.url; img.alt = 'Cuadro del video del casco ' + dev + ', ' + fmt(f.created_at);
+    const again = mk('button', '', 'Descargar de nuevo'); again.type = 'button';
+    again.addEventListener('click', () => saveUrl(f.url, f.name));
+    openDlg('Cuadro del video · casco ' + dev, [img, mk('p', 'mute', 'Archivo: ' + f.name + '. Se guarda solo en tu PC; la plataforma no conserva copias.'), rowOf(again)]);
+  }
+  function showFrame(dev, r) {
+    const f = { id: 'f' + Date.now(), created_at: new Date().toISOString(), url: URL.createObjectURL(r.blob), name: r.name };
+    let a = frames.get(dev); if (!a) frames.set(dev, a = []);
+    a.unshift(f);
+    while (a.length > FRAME_KEEP) { try { URL.revokeObjectURL(a.pop().url); } catch (_) {} }
+    try { saveUrl(f.url, f.name); } catch (_) {}
+    setFrameNote(dev, 'ok', f.name);
+    const img = mk('img', 'photo-big'); img.src = f.url; img.alt = 'Cuadro del video del casco ' + dev + ', ' + fmt(f.created_at);
+    const d = openDlg('Cuadro del video guardado', [img,
+      mk('p', '', 'Se guardó en tu PC como ' + f.name + '.'),
+      mk('p', 'mute', 'Es un cuadro del video en vivo (con el giro y el recorte del visor). La plataforma no conserva copias: informá al personal.')]);
+    return d;
+  }
+  async function takePhoto(dev) {
+    const L = lives.get(dev);
+    if (L && L.hasFrame()) { const r = await L.snap(); if (r) { showFrame(dev, r); return; } }
+    return sendCmd(dev, 'photo');
+  }
+  async function frameFromVideo(dev) {
+    const L = ensureLive(dev);
+    if (!L) { setFrameNote(dev, 'error', 'el video en vivo no está disponible'); return; }
+    if (!L.hasFrame()) {
+      setFrameNote(dev, 'pending', 'iniciando el video del casco…');
+      if (!L.isLive()) L.start();
+      const t0 = Date.now();
+      while (Date.now() - t0 < 30000 && !L.hasFrame()) await sleep(500);
+    }
+    const r = L.hasFrame() ? await L.snap() : null;
+    if (!r) { setFrameNote(dev, 'error', 'no llegó imagen del video en 30 s (revisá la señal del casco)'); return; }
+    showFrame(dev, r);
+  }
+
+  // ---- Microfono: permiso, ayuda paso a paso y prueba con medidor ----
+  const MIC_PATH = 'chrome://settings/content/microphone';
+  const micMsg = n => n === 'NotAllowedError' || n === 'SecurityError' ? 'permiso de micrófono denegado: habilitalo en el navegador'
+    : n === 'NotFoundError' || n === 'OverconstrainedError' || n === 'DevicesNotFoundError' ? 'no se encontró un micrófono conectado'
+    : n === 'NotReadableError' || n === 'AbortError' || n === 'TrackStartError' ? 'otra aplicación está usando el micrófono: cerrala y probá de nuevo'
+    : 'no se pudo usar el micrófono (' + (n || 'error') + ')';
+  async function micPermState() {
+    try { if (navigator.permissions && navigator.permissions.query) return (await navigator.permissions.query({ name: 'microphone' })).state; } catch (_) {}
+    return 'unknown';
+  }
+  function showMicHelp() {
+    const steps = mk('ol', 'micsteps');
+    for (const t of ['Tocá el candado a la izquierda de la dirección de la página.', 'Elegí “Configuración del sitio”.', 'En “Micrófono” poné “Permitir”.', 'Recargá la página (F5).']) steps.append(mk('li', '', t));
+    const code = mk('code', 'mono', MIC_PATH);
+    const copy = mk('button', 'ghost', 'Copiar'); copy.type = 'button';
+    copy.setAttribute('aria-label', 'Copiar la ruta ' + MIC_PATH);
+    copy.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(MIC_PATH); announce('Ruta copiada.'); copy.textContent = 'Copiado'; }
+      catch (_) { const r = document.createRange(); r.selectNodeContents(code); const sl = window.getSelection(); sl.removeAllRanges(); sl.addRange(r); announce('Seleccionada: copiala con Ctrl+C.'); copy.textContent = 'Seleccionada: Ctrl+C'; }
+    });
+    openDlg('El micrófono está bloqueado', [
+      mk('p', '', 'El navegador no deja usar el micrófono en este sitio. Para habilitarlo:'), steps,
+      mk('p', 'mute', 'También podés abrir esta dirección en una pestaña nueva (copiala, el navegador no deja abrirla desde acá):'), rowOf(code, copy),
+      mk('p', 'mute', 'En Windows, revisá además Configuración > Privacidad > Micrófono: tiene que estar permitido para el navegador.')]);
+  }
+  async function testMic() {
+    if ((await micPermState()) === 'denied') { showMicHelp(); return; }
+    const msg = mk('p', 'mute', 'Pidiendo acceso al micrófono…'); msg.setAttribute('role', 'status');
+    const m = mk('meter'); m.min = 0; m.max = 1; m.value = 0; m.hidden = true; m.setAttribute('aria-label', 'Nivel del micrófono');
+    const d = openDlg('Probar micrófono', [msg, m, mk('p', 'mute', 'Hablá: la barra tiene que moverse. No se graba ni se envía nada.')]);
+    let stream = null, ac = null, tm = null;
+    d.addEventListener('close', () => { clearInterval(tm); if (stream) stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} }); if (ac) { try { ac.close(); } catch (_) {} } });
+    const r = await acquireMic(15000);
+    if (!d.open) { if (r.ms) r.ms.getTracks().forEach(t => t.stop()); return; }
+    if (!r.ms) {
+      if (r.err === 'NotAllowedError' || r.err === 'SecurityError') { d.close(); showMicHelp(); return; }
+      msg.textContent = 'No se pudo usar el micrófono: ' + micMsg(r.err) + '.'; msg.classList.add('bad');
+      return;
+    }
+    stream = r.ms;
+    const tr = stream.getAudioTracks()[0];
+    msg.textContent = 'Micrófono listo' + (tr && tr.label ? ': ' + tr.label : '') + '.';
+    m.hidden = false;
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      const an = ac.createAnalyser(); an.fftSize = 256;
+      ac.createMediaStreamSource(stream).connect(an);
+      const buf = new Uint8Array(an.fftSize);
+      tm = setInterval(() => {
+        an.getByteTimeDomainData(buf);
+        let sum = 0; for (const v of buf) { const x = (v - 128) / 128; sum += x * x; }
+        m.value = Math.min(1, Math.sqrt(sum / buf.length) * 4);
+      }, 100);
+    } catch (_) { msg.textContent += ' (sin medidor en este navegador)'; }
+  }
+  $('testMic').addEventListener('click', testMic);
+
   // ---- Roles en la UI (el servidor tambien lo exige por RLS): admin hace todo; supervisor (viewer) mira, atiende y manda mensajes ----
   function applyRole() {
     const adm = isAdmin();
@@ -3661,6 +3781,8 @@
     clearInterval(CMD.timer); CMD.timer = null; CMD.polling = false;
     if (CMD.ch) { try { sb.removeChannel(CMD.ch); } catch (_) {} CMD.ch = null; }
     photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear(); IMG.clear(); delSel.clear();
+    for (const a of frames.values()) a.forEach(f => { try { URL.revokeObjectURL(f.url); } catch (_) {} });
+    frames.clear();
     QR.view = 'unknown'; repQ.reset(); histQ.reset();
     ARC.ids.clear(); ARC.avail = 'unknown'; ARC.show = false;
     if (ARC.ch) { try { sb.removeChannel(ARC.ch); } catch (_) {} ARC.ch = null; }
