@@ -29,7 +29,9 @@ rtmpEncryption: "no"
 webrtc: true
 webrtcAddress: :8889          # solo red interna docker (no publicado)
 webrtcEncryption: false       # TLS lo pone Caddy
-webrtcAllowOrigins: []        # CORS lo maneja Caddy (evita cabeceras duplicadas)
+# Lista vacia = MediaMTX responde 403 a TODO pedido con cabecera Origin (todo navegador).
+# Solo el visor; Caddy pisa la cabecera Access-Control-Allow-Origin con el mismo valor.
+webrtcAllowOrigins: ['https://exertion-solutions.github.io']
 webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189  # respaldo TCP si el UDP esta bloqueado
 webrtcIPsFromInterfaces: false  # no anunciar IPs internas de docker
