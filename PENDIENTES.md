@@ -18,3 +18,8 @@
 - Pulsaciones largas de camara (F10) y microfono (F12) no dejaron archivos en CapCamera/CapRecord: probablemente se transmiten sin guardar local.
 - Verificar que un servicio de accesibilidad recibe KEYCODE_F11 sin que RundeCap lo pierda.
 - Verificar lectura de /sdcard/Android/data/com.tencent.liteav.demo/files desde otra app (Android 10, targetSdk 28).
+
+## Sensores (relevado por ADB)
+- Acelerometro, giroscopio, magnetometro, barometro, luz y proximidad (MTK) + fusionados AOSP.
+- RundeCap ya detecta caida (TYPE_FALL_SOS / doFallSos / gSensorListener) y la reporta a su plataforma.
+- Agente: FallDetector (caida libre + impacto) publica evento `fall`. Calibrar umbrales con pruebas reales.

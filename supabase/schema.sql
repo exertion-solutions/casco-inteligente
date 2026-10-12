@@ -8,7 +8,7 @@ create table if not exists public.events (
   id          uuid primary key default gen_random_uuid(),
   created_at  timestamptz not null default now(),
   device_id   text not null,
-  type        text not null check (type in ('sos','photo','video','heartbeat')),
+  type        text not null check (type in ('sos','photo','video','heartbeat','fall')),
   key_code    text,
   press_ms    integer,
   media_path  text,
@@ -17,6 +17,11 @@ create table if not exists public.events (
   battery     integer,
   payload     jsonb not null default '{}'::jsonb
 );
+
+-- Migracion para bases ya creadas antes de agregar 'fall' (idempotente):
+alter table public.events drop constraint if exists events_type_check;
+alter table public.events add constraint events_type_check
+  check (type in ('sos','photo','video','heartbeat','fall'));
 
 create index if not exists events_created_idx on public.events (created_at desc);
 create index if not exists events_device_idx  on public.events (device_id, created_at desc);

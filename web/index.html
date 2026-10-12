@@ -27,7 +27,7 @@
   li.ev { display:grid; gap:8px; }
   .row { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
   .tag { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--mute); }
-  .tag.sos { background:var(--sos); color:#fff; border-color:var(--sos); }
+  .tag.sos, .tag.fall { background:var(--sos); color:#fff; border-color:var(--sos); }
   .mute { color:var(--mute); font-size:14px; }
   img.media, video.media { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
   .hidden { display:none !important; }
@@ -111,7 +111,7 @@
 
   function alertSos(ev) {
     const b = $('sos');
-    b.textContent = 'SOS — Casco ' + ev.device_id + ' — ' + fmt(ev.created_at);
+    b.textContent = (ev.type === 'fall' ? 'CAÍDA' : 'SOS') + ' — Casco ' + ev.device_id + ' — ' + fmt(ev.created_at);
     b.style.display = 'block';
     beep();
     if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
@@ -134,7 +134,7 @@
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, p => {
         const ev = p.new;
         if (ev.type === 'heartbeat') return;
-        if (ev.type === 'sos') alertSos(ev);
+        if (ev.type === 'sos' || ev.type === 'fall') alertSos(ev);
         render(ev, true);
       })
       .subscribe(s => { $('status').textContent = s === 'SUBSCRIBED' ? 'En vivo' : s; });

@@ -10,6 +10,7 @@ import android.os.BatteryManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.hardware.SensorManager;
 import android.os.IBinder;
 import android.util.Log;
 
@@ -31,6 +32,7 @@ public class MediaWatcherService extends Service {
     private Supabase sb;
     private Config cfg;
     private final List<android.os.FileObserver> observers = new ArrayList<>();
+    private FallDetector fall;
     private boolean started;
 
     @Override
@@ -53,6 +55,9 @@ public class MediaWatcherService extends Service {
                 watch("CapPicture", "photo");
                 watch("CapCamera", "video");
                 scheduleHeartbeat();
+                fall = new FallDetector((SensorManager) getSystemService(SENSOR_SERVICE),
+                        () -> sb.insertEvent("fall", null, null, null, battery()));
+                if (!fall.start(h)) Log.w(TAG, "sin acelerometro: deteccion de caida deshabilitada");
                 started = true;
             }
         }
@@ -123,6 +128,7 @@ public class MediaWatcherService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public void onDestroy() {
+        if (fall != null) fall.stop();
         for (android.os.FileObserver o : observers) o.stopWatching();
         thread.quitSafely();
         super.onDestroy();
