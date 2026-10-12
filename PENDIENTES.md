@@ -73,3 +73,10 @@
 - Pruebas RLS contra la base real: 774 casos, 32 "fallos" = artefactos (el casco 4132 real ya existe en devices -> fixtures duplican pkey; limite de 30 heartbeats/min). Sin fallos de seguridad reales.
 - Pendiente del usuario: ejecutar server/activar-voz.sh en la consola del VPS (voz bidireccional) y poner VOICE_ENABLED=true; probar a viva voz los comandos; calibrar umbrales de caida/inmovilidad; evaluar cierre de SSH (instalar llave propia antes).
 - Pendiente tecnico: aplicar recortes ponytail (out/ponytail-audit.md); borrar archivos huerfanos de Storage en la purga; reemplazar bootaudio del casco (ingles) solo con OK explicito (riesgo dm-verity).
+
+## Estado 2026-10-12 (tarde): VPS recuperado, voz bidireccional, estabilidad de video
+- Acceso al VPS recuperado por modo rescate (Finnix) con permiso del usuario: llave del asistente `claude-casco-vps-2` en /root/.ssh/authorized_keys (revocar: `sh vps-soporte.sh --revocar` o borrar la linea). Contraseña de root cambiada (guardada en vps-root-password.local.txt, ignorado por git).
+- Voz bidireccional ACTIVA: coturn corriendo (3478, 49160-49200/udp abiertos), secretos TURN_SECRET/TURN_HOST en Supabase, funcion turn-credentials desplegada (Verify JWT off), VOICE_ENABLED=true. Falta probar con micrófono real del navegador.
+- Video: cortes RTMP por uplink 4G inestable (RSRP -104 dBm): casco bajado a 480x360 @12 fps @300 kbps. Revisar si hace falta mas ajuste o ABR.
+- Ver en vivo ante alerta: espera 120 s, reenvia start cada 20 s, boton Reintentar.
+- Pendiente: ver prueba hablada de comandos y llamada; sitio .sslip.io; cerrar SSH a IP admin cuando haya llave propia del usuario.
