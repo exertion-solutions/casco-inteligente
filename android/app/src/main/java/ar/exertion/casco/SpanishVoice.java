@@ -21,6 +21,7 @@ final class SpanishVoice implements TextToSpeech.OnInitListener {
 
     // Frases (seccion 3 y 6)
     static final String EMERGENCIA = "Emergencia enviada";
+    static final String EMERGENCIA_SIN_RED = "Emergencia registrada, sin conexión, reintentando";
     static final String FOTO = "Foto tomada";
     static final String STREAM_ON = "Transmisión de video iniciada";
     static final String STREAM_OFF = "Transmisión detenida";

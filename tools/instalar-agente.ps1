@@ -20,6 +20,8 @@ if (-not (Test-Path $Config)) { throw "No existe config: $Config" }
 # Tanda 3 (salud, ordenes del supervisor, audio del video): sin permisos nuevos; ver android/config.example.json.
 # RECORD_AUDIO tambien es de runtime (targetSdk 28): llamada de voz bidireccional. MODIFY_AUDIO_SETTINGS es normal.
 & $Adb shell pm grant $pkg android.permission.RECORD_AUDIO
+# v0.4.0: posicion en SOS/caida y evento location (docs/PROTOCOLO-GEO.md). Runtime con targetSdk 28.
+& $Adb shell pm grant $pkg android.permission.ACCESS_FINE_LOCATION
 & $Adb shell "mkdir -p /sdcard/Android/data/$pkg/files"
 & $Adb push $Config "/sdcard/Android/data/$pkg/files/config.json"
 # Habilitar accesibilidad (deteccion de SOS)

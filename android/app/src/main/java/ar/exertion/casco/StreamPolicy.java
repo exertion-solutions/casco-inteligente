@@ -45,6 +45,24 @@ final class StreamPolicy {
         return 2_000L << Math.max(0, Math.min(attempt - 1, 4));
     }
 
+    /** Reintentos de la transmision de SOS/caida (local): no se rinde; backoff acotado a 10 s. Tope: MAX_STREAM_MS. */
+    static final long LOCAL_RETRY_MAX_MS = 10_000L;
+
+    /** El remoto se rinde tras MAX_RETRIES; el local (alerta) sigue hasta el tope de 10 min. */
+    static boolean giveUp(int src, int attempt) {
+        return src != SRC_LOCAL && attempt > MAX_RETRIES;
+    }
+
+    static long retryDelayMs(int attempt, int src) {
+        long d = retryDelayMs(attempt);
+        return src == SRC_LOCAL ? Math.min(d, LOCAL_RETRY_MAX_MS) : d;
+    }
+
+    /** A los 120 s el video local solo se corta si esta conectado; si no, sigue reintentando (tope 10 min). */
+    static boolean localWindowEnds(boolean connected) {
+        return connected;
+    }
+
     // ---- audio del casco en el video (docs/PROTOCOLO-CENTRO.md seccion 5) ----
 
     /** Ruta RTMP: con audio activo el casco publica en ingest/<id> (el servidor lo pasa a Opus y republica en live/<id>). */

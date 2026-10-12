@@ -59,6 +59,17 @@ public class StreamPolicyCheck {
         eq(false, StreamPolicy.wantAudio(true, true, true), "audio fallo antes: solo video");
         eq(true, StreamPolicy.audioMuted(true), "silencia en llamada");
         eq(false, StreamPolicy.audioMuted(false), "reanuda al colgar");
+        // video de SOS (local): no se rinde a los 62 s; backoff acotado a 10 s; remoto sigue con tope de 5
+        eq(false, StreamPolicy.giveUp(SRC_LOCAL, 6), "local no se rinde");
+        eq(false, StreamPolicy.giveUp(SRC_LOCAL, 500), "local sigue (tope 10 min lo pone el timer)");
+        eq(true, StreamPolicy.giveUp(SRC_REMOTE, 6), "remoto se rinde tras 5");
+        eq(false, StreamPolicy.giveUp(SRC_REMOTE, 5), "remoto 5 aun reintenta");
+        eq(2_000L, StreamPolicy.retryDelayMs(1, SRC_LOCAL), "local retry 1");
+        eq(10_000L, StreamPolicy.retryDelayMs(5, SRC_LOCAL), "local retry acotado a 10 s");
+        eq(10_000L, StreamPolicy.retryDelayMs(40, SRC_LOCAL), "local retry largo");
+        eq(32_000L, StreamPolicy.retryDelayMs(5, SRC_REMOTE), "remoto sin cambios");
+        eq(false, StreamPolicy.localWindowEnds(false), "a los 120 s sin conexion sigue");
+        eq(true, StreamPolicy.localWindowEnds(true), "a los 120 s con video corta");
         System.out.println("StreamPolicyCheck OK");
     }
 }

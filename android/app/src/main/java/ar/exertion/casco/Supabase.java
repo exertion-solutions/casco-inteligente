@@ -13,6 +13,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.Locale;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Cliente minimo de Supabase (Auth + REST + Storage) con HttpURLConnection.
@@ -22,34 +23,76 @@ final class Supabase {
     private static final String TAG = "CascoAgente";
     private static final String BUCKET = "casco-media";
     private final Config cfg;
-    private String token;
-    private long tokenExpiresAt; // elapsedRealtime
+    private volatile String token;
+    private volatile long tokenExpiresAt; // elapsedRealtime
+    private volatile String refreshToken;
+    private final ReentrantLock loginLock = new ReentrantLock(); // solo serializa la renovacion; el camino rapido no lo toma
     private volatile long serverOffsetMs;  // servidor - casco (ms), de la cabecera Date
 
     Supabase(Config cfg) { this.cfg = cfg; }
 
     private static final class HttpError extends Exception {
         final int code;
-        HttpError(int code, String msg) { super(msg); this.code = code; }
+        final String usedToken; // bearer con el que fallo (para no invalidar un token ya renovado)
+        HttpError(int code, String msg, String usedToken) { super(msg); this.code = code; this.usedToken = usedToken; }
     }
 
-    private synchronized String token() throws Exception { return token(60_000); }
+    private String token() throws Exception { return token(60_000); }
 
-    private synchronized String token(long minRemainingMs) throws Exception {
-        if (token != null && SystemClock.elapsedRealtime() < tokenExpiresAt - minRemainingMs) return token;
+    /**
+     * Token vigente. Camino rapido sin lock. La renovacion (refresh_token, con respaldo a password) es de un
+     * solo hilo a la vez; los demas usan el token actual si todavia no vencio, o esperan el resultado.
+     */
+    private String token(long minRemainingMs) throws Exception {
+        String t = token;
+        long now = SystemClock.elapsedRealtime();
+        if (t != null && now < tokenExpiresAt - minRemainingMs) return t;
+        if (!loginLock.tryLock()) {
+            if (t != null && now < tokenExpiresAt - 5_000L) return t; // otro hilo renueva: este sigue valido
+            loginLock.lock();
+        }
+        try {
+            t = token;
+            if (t != null && SystemClock.elapsedRealtime() < tokenExpiresAt - minRemainingMs) return t; // ya renovado
+            return renew();
+        } finally {
+            loginLock.unlock();
+        }
+    }
+
+    /** Con loginLock tomado. refresh_token primero (no usa la password); si falla, login por password. */
+    private String renew() throws Exception {
+        String rt = refreshToken;
+        if (rt != null) {
+            try {
+                return store(new JSONObject(http("POST", "/auth/v1/token?grant_type=refresh_token", "application/json",
+                        new JSONObject().put("refresh_token", rt).toString().getBytes("UTF-8"), null, false)));
+            } catch (Exception e) {
+                refreshToken = null;
+                Log.i(TAG, "refresh_token no sirvio, login por password");
+            }
+        }
         JSONObject body = new JSONObject().put("email", cfg.email).put("password", cfg.password);
-        String res = http("POST", "/auth/v1/token?grant_type=password", "application/json",
-                body.toString().getBytes("UTF-8"), null, false);
-        JSONObject j = new JSONObject(res);
-        token = j.getString("access_token");
+        return store(new JSONObject(http("POST", "/auth/v1/token?grant_type=password", "application/json",
+                body.toString().getBytes("UTF-8"), null, false)));
+    }
+
+    private String store(JSONObject j) throws Exception {
+        String t = j.getString("access_token");
+        String rt = j.optString("refresh_token", "");
+        refreshToken = rt.isEmpty() ? null : rt;
         tokenExpiresAt = SystemClock.elapsedRealtime() + j.optLong("expires_in", 3600) * 1000;
-        return token;
+        token = t;
+        return t;
     }
 
     /** Access token vigente (para RTMP pass=); se renueva si le quedan menos de 5 min. Bloqueante. */
     String accessToken() throws Exception { return token(5 * 60_000L); }
 
-    private synchronized void invalidateToken() { token = null; }
+    /** Fuerza renovacion en la proxima llamada, solo si el token que dio 401 sigue siendo el actual. */
+    private void invalidateToken(String used) {
+        if (used != null && used.equals(token)) tokenExpiresAt = 0;
+    }
 
     /** Una llamada autenticada; ante 401 renueva el token y reintenta una vez. */
     private String call(String method, String path, String contentType, byte[] body, File file) throws Exception {
@@ -57,7 +100,7 @@ final class Supabase {
             return http(method, path, contentType, body, file, true);
         } catch (HttpError e) {
             if (e.code != 401) throw e;
-            invalidateToken();
+            invalidateToken(e.usedToken);
             return http(method, path, contentType, body, file, true);
         }
     }
@@ -108,8 +151,10 @@ final class Supabase {
             }
             String text = out.toString("UTF-8");
             if (code >= 400) {
+                if (path.startsWith("/auth/")) text = ""; // las respuestas de auth no se registran
                 if (text.length() > 200) text = text.substring(0, 200);
-                throw new HttpError(code, "HTTP " + code + " " + method + " " + path.split("\\?")[0] + " " + text);
+                throw new HttpError(code, AgentPolicy.redact("HTTP " + code + " " + method + " "
+                        + path.split("\\?")[0] + " " + text), auth ? bearer : null);
             }
             return text;
         } finally {
@@ -157,7 +202,7 @@ final class Supabase {
             res = http("GET", path, null, null, null, true, 4_000, 6_000);
         } catch (HttpError e) {
             if (e.code != 401) throw e;
-            invalidateToken();
+            invalidateToken(e.usedToken);
             res = http("GET", path, null, null, null, true, 4_000, 6_000);
         }
         org.json.JSONArray a = new org.json.JSONArray(res);
@@ -174,6 +219,23 @@ final class Supabase {
     /** Igual que arriba con payload jsonb (objeto, <= 2 KB: lo exige events_payload_ck). */
     boolean insertEvent(String type, String keyCode, Integer pressMs, String mediaPath, Integer battery,
                         JSONObject payload) {
+        return insertEvent(type, keyCode, pressMs, mediaPath, battery, payload, null, null);
+    }
+
+    /** Con posicion opcional (columnas lat/lng; docs/PROTOCOLO-GEO.md). */
+    boolean insertEvent(String type, String keyCode, Integer pressMs, String mediaPath, Integer battery,
+                        JSONObject payload, Double lat, Double lng) {
+        return postEvent(type, keyCode, pressMs, mediaPath, battery, payload, lat, lng) == EV_OK;
+    }
+
+    static final int EV_OK = 0, EV_RETRY = 1, EV_REJECTED = 2;
+
+    /**
+     * Inserta y distingue: EV_OK; EV_RETRY (red, 5xx, 401/403, limite de frecuencia: reintentar);
+     * EV_REJECTED (400/413/422: el servidor rechaza el contenido, reintentarlo igual no sirve).
+     */
+    int postEvent(String type, String keyCode, Integer pressMs, String mediaPath, Integer battery,
+                  JSONObject payload, Double lat, Double lng) {
         try {
             JSONObject ev = new JSONObject()
                     .put("device_id", cfg.deviceId)
@@ -182,6 +244,7 @@ final class Supabase {
             if (pressMs != null) ev.put("press_ms", pressMs);
             if (mediaPath != null) ev.put("media_path", mediaPath);
             if (battery != null) ev.put("battery", battery);
+            if (lat != null && lng != null) ev.put("lat", lat).put("lng", lng);
             if (payload != null) {
                 if (payload.toString().getBytes("UTF-8").length > 2048) {
                     Log.w(TAG, "insertEvent " + type + ": payload > 2 KB, se omite");
@@ -190,10 +253,15 @@ final class Supabase {
                 }
             }
             call("POST", "/rest/v1/events", "application/json", ev.toString().getBytes("UTF-8"), null);
-            return true;
-        } catch (Exception e) {
+            return EV_OK;
+        } catch (HttpError e) {
             Log.w(TAG, "insertEvent " + type + " fallo: " + e.getMessage());
-            return false;
+            boolean bad = e.code == 400 || e.code == 413 || e.code == 422;
+            boolean rate = e.getMessage() != null && e.getMessage().contains("rate limit");
+            return bad && !rate ? EV_REJECTED : EV_RETRY;
+        } catch (Exception e) {
+            Log.w(TAG, "insertEvent " + type + " fallo: " + AgentPolicy.redact(e.getMessage()));
+            return EV_RETRY;
         }
     }
 
@@ -205,7 +273,7 @@ final class Supabase {
             return http("GET", path, null, null, null, true, 4_000, 6_000);
         } catch (HttpError e) {
             if (e.code != 401) throw e;
-            invalidateToken();
+            invalidateToken(e.usedToken);
             return http("GET", path, null, null, null, true, 4_000, 6_000);
         }
     }

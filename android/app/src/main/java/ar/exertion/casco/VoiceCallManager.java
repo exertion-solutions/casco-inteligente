@@ -125,8 +125,17 @@ final class VoiceCallManager {
                 List<Supabase.Signal> list = sb.viewerSignals(OFFER_MAX_AGE_MS);
                 if (fails > 0) Log.i(TAG, "voz: sondeo recuperado");
                 fails = 0;
+                // offer + hangup del mismo call_id en la lista: la oferta ya esta colgada, no abrir el microfono
+                List<String> ids = new ArrayList<>(), kinds = new ArrayList<>();
+                for (Supabase.Signal s : list) { ids.add(s.callId); kinds.add(s.kind); }
+                java.util.Set<String> hung = AgentPolicy.hungUpCalls(ids, kinds);
                 for (Supabase.Signal s : list) {
-                    if (seen.add(s.id)) handle(s);
+                    if (!seen.add(s.id)) continue;
+                    if ("offer".equals(s.kind) && hung.contains(s.callId)) {
+                        Log.i(TAG, "voz: oferta ya colgada, se ignora");
+                        continue;
+                    }
+                    handle(s);
                 }
                 while (seen.size() > 400) {
                     java.util.Iterator<String> it = seen.iterator();

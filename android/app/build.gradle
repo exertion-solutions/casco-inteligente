@@ -12,8 +12,8 @@ android {
         minSdk 26
         // targetSdk 28: acceso legacy al almacenamiento compartido (el casco es Android 10).
         targetSdk 28
-        versionCode 3
-        versionName '0.3.0'
+        versionCode 4
+        versionName '0.4.0'
         // El casco es ARMv7: solo se empaqueta esa .so de WebRTC (las 4 ABI suman ~50 MB).
         ndk { abiFilters 'armeabi-v7a' }
     }

@@ -59,7 +59,29 @@ final class BroadcastAgent {
         this.seenFile = new File(app.getFilesDir(), "broadcast_seen.txt");
     }
 
+    private android.content.SharedPreferences prefs() {
+        return app.getSharedPreferences("casco_volumes", Context.MODE_PRIVATE);
+    }
+
+    /** Si el proceso murio con el volumen subido por una orden, lo devuelve a lo que habia. */
+    private void restoreStaleVolumes() {
+        android.content.SharedPreferences p = prefs();
+        int a = p.getInt("alarm", -1), m = p.getInt("music", -1);
+        if (a < 0 && m < 0) return;
+        try {
+            AudioManager am = (AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
+            if (a >= 0) am.setStreamVolume(AudioManager.STREAM_ALARM, a, 0);
+            if (m >= 0) am.setStreamVolume(AudioManager.STREAM_MUSIC, m, 0);
+            Log.i(TAG, "volumen restaurado tras un cierre inesperado");
+        } catch (RuntimeException e) {
+            Log.w(TAG, "no se pudo restaurar el volumen previo: " + e);
+        } finally {
+            p.edit().clear().commit();
+        }
+    }
+
     void start() {
+        restoreStaleVolumes();
         try (FileInputStream in = new FileInputStream(seenFile)) {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             byte[] buf = new byte[2048];
@@ -208,6 +230,8 @@ final class BroadcastAgent {
             if (savedAlarm < 0) {
                 savedAlarm = am.getStreamVolume(AudioManager.STREAM_ALARM);
                 savedMusic = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+                // antes de subirlo: si el proceso muere, al arrancar se restaura (restoreStaleVolumes)
+                prefs().edit().putInt("alarm", savedAlarm).putInt("music", savedMusic).commit();
             }
             am.setStreamVolume(AudioManager.STREAM_ALARM,
                     BroadcastPolicy.volumeIndex(cfg.broadcastVolume, am.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0);
@@ -228,6 +252,7 @@ final class BroadcastAgent {
             Log.w(TAG, "orden: no se pudo restaurar el volumen: " + e);
         } finally {
             savedAlarm = savedMusic = -1;
+            prefs().edit().clear().commit();
         }
     }
 

@@ -12,6 +12,8 @@
     <!-- Voz: RECORD_AUDIO es de runtime (targetSdk 28): se concede con pm grant (tools/instalar-agente.ps1). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Posicion en SOS/caida y evento location (docs/PROTOCOLO-GEO.md). Runtime con targetSdk 28: pm grant. -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application
         android:label="Casco Agente"
@@ -51,10 +53,14 @@
             android:exported="false"
             android:foregroundServiceType="camera" />
 
-        <receiver android:name=".BootReceiver" android:exported="true">
+        <!-- BOOT_COMPLETED es un broadcast del sistema: llega aunque no este exportado. -->
+        <receiver android:name=".BootReceiver" android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Alarma cada ~5 min: relanza MediaWatcherService si el sistema lo mato. -->
+        <receiver android:name=".WatchdogReceiver" android:exported="false" />
     </application>
 </manifest>

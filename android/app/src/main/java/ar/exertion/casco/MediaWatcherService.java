@@ -11,6 +11,9 @@ import android.content.pm.PackageManager;
 import android.hardware.SensorManager;
 import android.media.AudioManager;
 import android.media.ToneGenerator;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.os.BatteryManager;
 import android.os.FileObserver;
@@ -27,6 +30,8 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -36,20 +41,27 @@ import java.util.Set;
  * almacenamiento propio (RundeCap lo borra tras subirlo), lo sube y publica eventos
  * (photo/video/sos/fall/heartbeat) en Supabase.
  *
- * Hilos: observer = FileObserver (solo copia rapida), h = eventos, up = subidas (lentas),
- * main = sensores (callback liviano que despacha a h).
+ * Eventos: TODO evento sale por Outbox (cola en archivo, sobrevive a reinicios). SOS/caida reintentan sin
+ * tope y avisan por voz/beep al instante (con o sin red).
+ * Hilos: observer = FileObserver (solo copia rapida), h = decisiones (hombre caido, SOS; sin red),
+ * net = envio de SOS/caida, bg = heartbeat/polls/envio del resto, up = subidas (lentas),
+ * tele = ubicacion/orientacion/poll de carpetas, sensores en su hilo.
  */
 public class MediaWatcherService extends Service {
     static final String ACTION_SOS = "ar.exertion.casco.SOS";
+    static final String ACTION_WATCHDOG = "ar.exertion.casco.WATCHDOG";
     private static final String TAG = "CascoAgente";
     private static final long HEARTBEAT_MS = 5 * 60_000L;
     private static final long POLL_MS = 5_000L;
-    private static final long UPLOAD_RETRY_MS = 30_000L;
-    private static final int UPLOAD_ATTEMPTS = 3;
+    private static final long SPOOL_CAP_BYTES = 200L * 1024 * 1024;
     private static final String[][] DIRS = {{"CapPicture", "photo"}, {"CapCamera", "video"}};
 
-    private HandlerThread hThread, upThread;
-    private Handler h, up;
+    private HandlerThread hThread, upThread, netThread, bgThread;
+    private Handler h, up, net, bg;
+    private Outbox outbox;
+    private LocationTracker loc;
+    private long lastLocFixTime = -1;
+    private PowerManager.WakeLock sosWake, upWake;
     private Supabase sb;
     private Config cfg;
     private File spool;
@@ -76,8 +88,21 @@ public class MediaWatcherService extends Service {
         upThread = new HandlerThread("casco-upload");
         upThread.start();
         up = new Handler(upThread.getLooper());
+        netThread = new HandlerThread("casco-net", android.os.Process.THREAD_PRIORITY_URGENT_AUDIO);
+        netThread.start();
+        net = new Handler(netThread.getLooper());
+        bgThread = new HandlerThread("casco-bg");
+        bgThread.start();
+        bg = new Handler(bgThread.getLooper());
+        PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+        sosWake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "casco:sos");
+        sosWake.setReferenceCounted(false);
+        upWake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "casco:upload");
+        upWake.setReferenceCounted(false);
         spool = new File(getFilesDir(), "spool");
         spool.mkdirs();
+        outbox = new Outbox(new File(getFilesDir(), "outbox.jsonl"));
+        outbox.load(); // SOS/caida que no salieron antes de un reinicio del servicio
         instance = this;
         Log.i(TAG, "MediaWatcherService onCreate");
     }
@@ -99,16 +124,12 @@ public class MediaWatcherService extends Service {
                 StreamService.shared = sb;
                 recoverSpool();
                 armObservers(true);
-                h.postDelayed(poll, POLL_MS);
                 if (cfg.streamHost.isEmpty()) {
                     Log.w(TAG, "sin stream_host valido en config.json: video deshabilitado");
                 }
-                // el poll corre siempre: comandos de video (si hay stream_host) y ordenes del supervisor
-                h.postDelayed(cmdPoll, 5_000L);
-                scheduleHeartbeat();
                 SpanishVoice.promptsOn = cfg.voicePrompts;
-                // el TTS tambien hace falta para las ordenes del supervisor aunque voice_prompts sea false
-                if (cfg.voicePrompts || cfg.broadcastEnabled) SpanishVoice.instance = new SpanishVoice(this);
+                // el TTS siempre: el aviso de emergencia suena aunque voice_prompts sea false
+                SpanishVoice.instance = new SpanishVoice(this);
                 mandown = new ManDownPolicy(cfg.mandownEnabled, cfg.mandownStillSeconds,
                         cfg.mandownConfirmSeconds, cfg.mandownInactivitySeconds);
                 SensorManager smgr = (SensorManager) getSystemService(SENSOR_SERVICE);
@@ -120,7 +141,7 @@ public class MediaWatcherService extends Service {
                     @Override public void onFall(float impact) {
                         h.post(() -> {
                             startLocalStream(); // primero el video (sin red), luego el evento
-                            sendEvent("fall", null, null, null, 0, 6);
+                            emit("fall", null, null, null, null);
                             handleMandown(mandown.onImpact(SystemClock.elapsedRealtime(), impact));
                         });
                     }
@@ -138,6 +159,12 @@ public class MediaWatcherService extends Service {
                 tele = new Handler(teleThread.getLooper());
                 tele.post(() -> sensorOrientation = OrientationTracker.readSensorOrientation(this));
                 tele.postDelayed(oriTick, 5_000L);
+                tele.postDelayed(poll, POLL_MS);
+                loc = new LocationTracker(this);
+                tele.post(locTick);
+                // el poll corre siempre: comandos de video (si hay stream_host) y ordenes del supervisor
+                bg.postDelayed(cmdPoll, 5_000L);
+                scheduleHeartbeat();
                 voiceCall = new VoiceCallManager(this, sb, cfg);
                 voiceCall.start();
                 if (cfg.broadcastEnabled) {
@@ -146,24 +173,27 @@ public class MediaWatcherService extends Service {
                 }
                 started = true;
                 Log.i(TAG, "agente iniciado device_id=" + cfg.deviceId);
+                if (outbox.hasCritical()) { // quedaron SOS/caida de antes del reinicio
+                    if (!online()) announceOffline(null);
+                    kick(true);
+                }
+                kick(false);
             }
         }
+        WatchdogReceiver.schedule(this); // proxima alarma de vigilancia (~5 min)
         if (ACTION_SOS.equals(action)) {
             final int ms = intent.getIntExtra("press_ms", 0);
-            if (sb == null) {
-                Log.e(TAG, "SOS recibido pero sin config valida: evento perdido");
-            } else {
-                h.post(() -> {
-                    startLocalStream();
-                    if (mandown != null && mandown.onManualSos(SystemClock.elapsedRealtime())
-                            == ManDownPolicy.Act.ALERT) {
-                        // F11 durante la cuenta regresiva: un solo SOS, con reason manual_en_caida
-                        sendEvent("sos", "KEY_F11", ms, null, mandownPayload(), 0, 6);
-                    } else {
-                        sendEvent("sos", "KEY_F11", ms, null, null, 0, 6);
-                    }
-                });
-            }
+            // sin config valida igual se encola: sale cuando el agente logre arrancar (watchdog)
+            h.post(() -> {
+                startLocalStream();
+                if (mandown != null && mandown.onManualSos(SystemClock.elapsedRealtime())
+                        == ManDownPolicy.Act.ALERT) {
+                    // F11 durante la cuenta regresiva: un solo SOS, con reason manual_en_caida
+                    emit("sos", "KEY_F11", ms, null, mandownPayload());
+                } else {
+                    emit("sos", "KEY_F11", ms, null, null);
+                }
+            });
         }
         return START_STICKY;
     }
@@ -177,10 +207,10 @@ public class MediaWatcherService extends Service {
     private String lastCmdId;
     private int cmdFails;
 
-    /** Cada 3 s (en h): ultimo comando de stream -> StreamPolicy decide. Backoff hasta 30 s si falla la red. */
+    /** Cada 3 s (en bg): ultimo comando de stream -> StreamPolicy decide. Backoff hasta 30 s si falla la red. */
     private final Runnable cmdPoll = new Runnable() {
         @Override public void run() {
-            if (!cfg.streamHost.isEmpty()) {
+            if (sb != null && !cfg.streamHost.isEmpty()) {
                 try {
                     String[] c = sb.latestStreamCommand();
                     String id = c == null ? null : c[0];
@@ -201,27 +231,149 @@ public class MediaWatcherService extends Service {
             }
             // ordenes del supervisor: la red corre en su propio hilo (no demora SOS en h); backoff propio
             if (bcast != null) bcast.tick();
-            h.postDelayed(this, StreamPolicy.pollDelayMs(cmdFails));
+            bg.postDelayed(this, StreamPolicy.pollDelayMs(cmdFails));
         }
     };
 
-    /** Inserta un evento reintentando (en h, cada 10 s) hasta maxAttempts: SOS/caida no deben perderse. */
-    private void sendEvent(String type, String key, Integer ms, String path, int attempt, int maxAttempts) {
-        sendEvent(type, key, ms, path, null, attempt, maxAttempts);
+    // ---- eventos: cola persistente + envio ----
+
+    /**
+     * Cualquier hilo. Persiste el evento (con payload.t y, en SOS/caida, la ultima posicion conocida; sin fix
+     * sale igual), avisa por voz si es una emergencia sin red y dispara el envio.
+     */
+    private void emit(String type, String key, Integer ms, String path, JSONObject payload) {
+        emit(type, key, ms, path, payload, null);
     }
 
-    private void sendEvent(String type, String key, Integer ms, String path, JSONObject payload,
-                           int attempt, int maxAttempts) {
-        if (sb.insertEvent(type, key, ms, path, battery(), payload)) {
-            Log.i(TAG, "evento " + type + " enviado");
-            if ("sos".equals(type)) SpanishVoice.say(SpanishVoice.EMERGENCIA);
-        } else if (attempt + 1 < maxAttempts) {
-            h.postDelayed(() -> sendEvent(type, key, ms, path, payload, attempt + 1, maxAttempts), 10_000L);
-        } else {
-            Log.e(TAG, "evento " + type + " descartado tras " + maxAttempts + " intentos");
+    private void emit(String type, String key, Integer ms, String path, JSONObject payload,
+                      LocationTracker.Fix fix) {
+        boolean crit = AgentPolicy.critical(type);
+        Outbox.Entry e = outbox.newEntry(type, System.currentTimeMillis());
+        e.key = key;
+        if (ms != null) e.pressMs = ms;
+        e.path = path;
+        Integer b = battery();
+        if (b != null) e.battery = b;
+        if (fix == null && crit && loc != null) fix = loc.last();
+        try {
+            JSONObject p = payload != null ? payload : new JSONObject();
+            p.put("t", e.t);
+            if (fix != null) {
+                e.lat = fix.lat;
+                e.lng = fix.lng;
+                if (crit) {
+                    p.put("loc_age_s", fix.ageS());
+                    if (fix.hasAcc) p.put("acc", Math.round(fix.acc));
+                }
+            }
+            e.payload = p.toString();
+        } catch (Exception ex) {
+            e.payload = null;
+        }
+        if (crit) hold(sosWake, 90_000L);
+        outbox.add(e);
+        if (AgentPolicy.announces(type) && !online()) announceOffline(e); // al instante, antes de intentar
+        kick(crit);
+    }
+
+    private void kick(boolean crit) {
+        Handler hd = crit ? net : bg;
+        Drain d = crit ? drainCritical : drainOther;
+        d.holdUntil = 0; // evento nuevo: intentar ya, sin esperar el backoff del anterior
+        if (hd != null) hd.post(d);
+    }
+
+    /** Envio con backoff propio: criticas en hilo net (sin tope de intentos), el resto en bg (2,5 s entre envios). */
+    private final class Drain implements Runnable {
+        private final boolean crit;
+        private int fails;
+        private volatile long holdUntil;
+
+        Drain(boolean crit) { this.crit = crit; }
+
+        @Override public void run() {
+            Handler hd = crit ? net : bg;
+            hd.removeCallbacks(this);
+            long now = SystemClock.elapsedRealtime();
+            if (now < holdUntil) { hd.postDelayed(this, holdUntil - now); return; }
+            Outbox.Entry e = outbox.next(crit);
+            if (e == null) {
+                if (crit) drop(sosWake);
+                return;
+            }
+            if (crit) hold(sosWake, 90_000L); // se renueva en cada intento; nunca queda tomado
+            int r = send(e);
+            if (r == Supabase.EV_OK) {
+                fails = 0;
+                outbox.done(e);
+                Log.i(TAG, "evento " + e.type + " enviado");
+                if (AgentPolicy.announces(e.type)) {
+                    SpanishVoice.announce(SpanishVoice.EMERGENCIA);
+                    if (VoiceCallManager.inCall) beep(); // durante una llamada la voz calla
+                }
+                hd.postDelayed(this, crit ? 0 : 2_500L); // limite del servidor: 30 por minuto y tipo
+            } else if (r == Supabase.EV_REJECTED) {
+                if (AgentPolicy.critical(e.type) && !e.stripped) {
+                    Log.w(TAG, "evento " + e.type + " rechazado: se reintenta sin posicion ni payload");
+                    outbox.strip(e);
+                } else {
+                    Log.e(TAG, "evento " + e.type + " rechazado por el servidor, se descarta");
+                    outbox.done(e);
+                }
+                hd.post(this);
+            } else {
+                fails++;
+                if (AgentPolicy.announces(e.type)) announceOffline(e);
+                long d = AgentPolicy.retryMs(crit, fails);
+                holdUntil = SystemClock.elapsedRealtime() + d;
+                if (fails == 1 || fails % 10 == 0) {
+                    Log.w(TAG, "evento " + e.type + " sin enviar (intento " + fails + "), reintento en " + d + " ms");
+                }
+                hd.postDelayed(this, d);
+            }
         }
     }
 
+    private final Drain drainCritical = new Drain(true), drainOther = new Drain(false);
+
+    private int send(Outbox.Entry e) {
+        if (sb == null) return Supabase.EV_RETRY; // config todavia no cargo
+        JSONObject p = null;
+        try {
+            if (e.payload != null) p = new JSONObject(e.payload);
+        } catch (Exception ignored) { /* payload ilegible: sale sin el */ }
+        return sb.postEvent(e.type, e.key, e.pressMs < 0 ? null : e.pressMs, e.path,
+                e.battery < 0 ? null : e.battery, p,
+                e.hasPos() ? e.lat : null, e.hasPos() ? e.lng : null);
+    }
+
+    private boolean online() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            NetworkInfo ni = cm == null ? null : cm.getActiveNetworkInfo();
+            return ni != null && ni.isConnected();
+        } catch (RuntimeException ex) {
+            return true; // sin dato: no inventar un "sin red"
+        }
+    }
+
+    /** Voz es-AR + beep ya mismo: el operario sabe que el SOS quedo registrado aunque no haya red. */
+    private void announceOffline(Outbox.Entry e) {
+        if (e != null) {
+            if (e.announcedOffline) return;
+            e.announcedOffline = true;
+        }
+        SpanishVoice.announce(SpanishVoice.EMERGENCIA_SIN_RED);
+        beep();
+    }
+
+    private void hold(PowerManager.WakeLock w, long ms) {
+        try { w.acquire(ms); } catch (RuntimeException ignored) { }
+    }
+
+    private void drop(PowerManager.WakeLock w) {
+        try { if (w.isHeld()) w.release(); } catch (RuntimeException ignored) { }
+    }
     // ---- hombre caido (docs/PROTOCOLO-VOZ.md seccion 6) ----
 
     /** En h. Ejecuta lo que pide la politica. */
@@ -238,7 +390,7 @@ public class MediaWatcherService extends Service {
             case ALERT:
                 Log.w(TAG, "hombre caido: ALERTA");
                 startLocalStream();
-                sendEvent("sos", null, null, null, mandownPayload(), 0, 6);
+                emit("sos", null, null, null, mandownPayload());
                 break;
             case RECOVERED:
                 Log.i(TAG, "hombre caido: recuperado por movimiento");
@@ -267,7 +419,7 @@ public class MediaWatcherService extends Service {
         try {
             final ToneGenerator tg = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
             tg.startTone(ToneGenerator.TONE_PROP_BEEP, 250);
-            h.postDelayed(tg::release, 600);
+            bg.postDelayed(tg::release, 600);
         } catch (RuntimeException e) {
             Log.w(TAG, "beep: " + e);
         }
@@ -300,7 +452,9 @@ public class MediaWatcherService extends Service {
                         oriPubs.addLast(now);
                         lastOriPubAt = now;
                         lastOriPub = o;
-                        sb.insertEvent("heartbeat", null, null, null, battery(), orientationPayload());
+                        final JSONObject p = orientationPayload();
+                        final Integer bat = battery();
+                        bg.post(() -> sb.insertEvent("heartbeat", null, null, null, bat, p));
                     }
                 }
             } catch (RuntimeException e) {
@@ -310,6 +464,38 @@ public class MediaWatcherService extends Service {
         }
     };
 
+    // ---- ubicacion (docs/PROTOCOLO-GEO.md seccion 1) ----
+
+    /** SOS/caida pendiente, hombre caido confirmando/en alerta o transmision local de emergencia. */
+    private boolean alertActive() {
+        ManDownPolicy m = mandown;
+        ManDownPolicy.State st = m != null ? m.state() : ManDownPolicy.State.NORMAL;
+        return outbox.hasCritical() || StreamService.source == StreamPolicy.SRC_LOCAL
+                || st == ManDownPolicy.State.CONFIRMANDO || st == ManDownPolicy.State.ALERTA;
+    }
+
+    /** En tele. Evento location cada 60 s (30 s con alerta); sin fix reciente y preciso no publica nada. */
+    private final Runnable locTick = new Runnable() {
+        @Override public void run() {
+            try {
+                loc.ensureStarted(teleThread.getLooper());
+                LocationTracker.Fix f = loc.last();
+                if (f != null && AgentPolicy.fixFresh(f.ageS()) && AgentPolicy.accuracyOk(f.hasAcc, (float) f.acc)
+                        && AgentPolicy.newFix(f.time, lastLocFixTime)) {
+                    lastLocFixTime = f.time;
+                    JSONObject p = new JSONObject().put("acc", Math.round(f.acc)).put("src", "gps");
+                    if (f.spd >= 0) p.put("spd", Math.round(f.spd * 10) / 10.0);
+                    if (f.brg >= 0) p.put("brg", Math.round(f.brg));
+                    if (!Double.isNaN(f.alt)) p.put("alt", Math.round(f.alt));
+                    if (f.sats >= 0) p.put("n", f.sats);
+                    emit("location", null, null, null, p, f);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "ubicacion: " + e);
+            }
+            tele.postDelayed(this, AgentPolicy.locationIntervalMs(alertActive()));
+        }
+    };
     private JSONObject orientationPayload() {
         try {
             int ori = orient != null ? orient.orientation() : 0;
@@ -352,7 +538,7 @@ public class MediaWatcherService extends Service {
         }
     }
 
-    /** Red de seguridad: re-arma carpetas que aparecen tarde y detecta archivos que inotify no avise. */
+    /** En tele. Red de seguridad: re-arma carpetas que aparecen tarde y detecta archivos que inotify no avise. */
     private final Runnable poll = new Runnable() {
         @Override public void run() {
             try {
@@ -367,7 +553,7 @@ public class MediaWatcherService extends Service {
             } catch (RuntimeException e) {
                 Log.w(TAG, "poll: " + e);
             }
-            h.postDelayed(this, POLL_MS);
+            tele.postDelayed(this, POLL_MS);
         }
     };
 
@@ -401,7 +587,7 @@ public class MediaWatcherService extends Service {
         final String origName = f.getName();
         Log.i(TAG, "archivo nuevo " + type + ": " + origName + " (" + f.length() + " bytes)");
         if (f.length() > Config.MAX_UPLOAD_BYTES) {
-            h.post(() -> sendEvent(type, null, null, null, 0, 2));
+            emit(type, null, null, null, null);
             return;
         }
         final File copy = new File(spool, type + "_" + System.currentTimeMillis() + "_"
@@ -412,10 +598,11 @@ public class MediaWatcherService extends Service {
             // el original ya no esta (RundeCap lo borro antes de poder copiarlo): queda al menos el evento
             Log.w(TAG, "no se pudo copiar " + origName + ": " + e);
             copy.delete();
-            h.post(() -> sendEvent(type, null, null, null, 0, 2));
+            emit(type, null, null, null, null);
             return;
         }
         if (type.equals("photo")) SpanishVoice.say(SpanishVoice.FOTO);
+        trimSpool();
         up.post(() -> upload(copy, type, origName, 0));
     }
 
@@ -427,18 +614,49 @@ public class MediaWatcherService extends Service {
         }
     }
 
-    /** En hilo up. Reintenta la subida 3 veces (30 s); al final registra el evento con o sin media_path. */
+    /**
+     * En hilo up. La copia del spool NO se borra hasta subirla (RundeCap ya borro el original): reintenta con
+     * backoff 30 s .. 10 min mientras haya espacio; si el spool la descarto, sale el evento sin media_path.
+     */
     private void upload(File copy, String type, String origName, int attempt) {
-        String path = sb.uploadMedia(copy, type, origName);
-        if (path == null && attempt + 1 < UPLOAD_ATTEMPTS) {
-            up.postDelayed(() -> upload(copy, type, origName, attempt + 1), UPLOAD_RETRY_MS);
+        if (!copy.exists()) {
+            emit(type, null, null, null, null);
+            return;
+        }
+        hold(upWake, 5 * 60_000L); // wakelock corto solo durante la subida
+        String path;
+        try {
+            path = sb == null ? null : sb.uploadMedia(copy, type, origName);
+        } finally {
+            drop(upWake);
+        }
+        if (path == null) {
+            long d = AgentPolicy.uploadRetryMs(attempt);
+            Log.w(TAG, "subida de " + type + " pendiente (intento " + (attempt + 1) + "), reintento en "
+                    + d / 1000 + " s");
+            up.postDelayed(() -> upload(copy, type, origName, attempt + 1), d);
             return;
         }
         copy.delete();
         Log.i(TAG, "subida " + origName + " -> " + path);
-        h.post(() -> sendEvent(type, null, null, path, 0, 3));
+        emit(type, null, null, path, null);
     }
 
+    /** Tope de espacio del spool: borra las copias mas viejas (FIFO) si pasa de 200 MB. */
+    private void trimSpool() {
+        synchronized (spool) {
+            File[] fs = spool.listFiles();
+            if (fs == null) return;
+            Arrays.sort(fs, Comparator.comparingLong(File::lastModified));
+            long[] sizes = new long[fs.length];
+            for (int i = 0; i < fs.length; i++) sizes[i] = fs[i].length();
+            int n = AgentPolicy.dropOldest(sizes, SPOOL_CAP_BYTES);
+            for (int i = 0; i < n; i++) {
+                Log.w(TAG, "spool lleno: se descarta " + fs[i].getName());
+                fs[i].delete();
+            }
+        }
+    }
     /** Archivos copiados que quedaron sin subir (reinicio/crash del servicio). Nombre: type_ts_orig. */
     private void recoverSpool() {
         File[] left = spool.listFiles();
@@ -453,10 +671,10 @@ public class MediaWatcherService extends Service {
     }
 
     private void scheduleHeartbeat() {
-        h.postDelayed(new Runnable() {
+        bg.postDelayed(new Runnable() {
             @Override public void run() {
                 sb.insertEvent("heartbeat", null, null, null, battery(), orientationPayload());
-                h.postDelayed(this, HEARTBEAT_MS);
+                bg.postDelayed(this, HEARTBEAT_MS);
             }
         }, 10_000L);
     }
@@ -493,6 +711,13 @@ public class MediaWatcherService extends Service {
         if (sensorThread != null) sensorThread.quitSafely();
         if (tele != null) tele.removeCallbacksAndMessages(null);
         if (teleThread != null) teleThread.quitSafely();
+        if (loc != null) loc.stop();
+        if (net != null) net.removeCallbacksAndMessages(null);
+        if (bg != null) bg.removeCallbacksAndMessages(null);
+        if (netThread != null) netThread.quitSafely();
+        if (bgThread != null) bgThread.quitSafely();
+        if (sosWake != null) drop(sosWake);
+        if (upWake != null) drop(upWake);
         SpanishVoice v = SpanishVoice.instance;
         if (v != null) v.shutdown();
         for (FileObserver o : observers) if (o != null) o.stopWatching();

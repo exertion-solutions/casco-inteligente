@@ -80,6 +80,12 @@ Tabla `public.geo_points`: `id`, `name`, `category` (`'punto_reunion'`,`'extinto
   | "casco, iniciar video" / "casco, detener video" | transmision de video |
   | "casco, estado" | dice bateria, senal y si hay video |
   | "casco, ayuda" | dice la lista de comandos disponibles (en espanol) |
+  | "casco, activar SOS" | igual que "emergencia" |
+  | "casco, activar camara" / "casco, desactivar camara" | video en vivo (sinonimo de iniciar/detener video) |
+  | "casco, activar audio" / "casco, desactivar audio" | agrega o saca el audio del video en vivo (`stream_audio`) |
+  | "casco, activar linterna" / "prender linterna" / "desactivar linterna" / "apagar linterna" | linterna del casco (`CameraManager.setTorchMode`, permiso CAMERA ya concedido) |
+  | "casco, repetir" | repite la ultima frase |
+  La lista visible para operadores esta en `web/comandos.html` (mantener ambas en sincronia).
 - Config `voice_commands` (por defecto **false** hasta validar en campo), `voice_wake_word` ("casco").
 - El microfono se libera durante llamadas WebRTC y mientras el casco habla (evita auto-disparo). Bateria: reconocimiento
   solo con pantalla/servicio activos, nunca con el casco sin movimiento > 10 min (config `voice_idle_off_minutes`).

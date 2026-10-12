@@ -141,16 +141,25 @@ public class StreamService extends Service {
             Log.w(TAG, "stream: tope de " + StreamPolicy.MAX_STREAM_MS / 60_000 + " min alcanzado, se detiene");
             shutdown();
         }, StreamPolicy.MAX_STREAM_MS);
-        if (src == StreamPolicy.SRC_LOCAL) {
-            sh.postDelayed(() -> {
-                if (source == StreamPolicy.SRC_LOCAL) {
-                    Log.i(TAG, "stream: fin de transmision local SOS/caida");
-                    shutdown();
-                }
-            }, StreamPolicy.LOCAL_SOS_MS);
-        }
+        connected = false;
+        if (src == StreamPolicy.SRC_LOCAL) sh.postDelayed(localEnd, StreamPolicy.LOCAL_SOS_MS);
         connect();
     }
+
+    private boolean connected;         // RTMP conectado ahora (solo hilo sh)
+
+    /** SOS/caida: a los 120 s corta solo si hay video; sin conexion sigue reintentando (tope de 10 min). */
+    private final Runnable localEnd = new Runnable() {
+        @Override public void run() {
+            if (source != StreamPolicy.SRC_LOCAL) return;
+            if (StreamPolicy.localWindowEnds(connected)) {
+                Log.i(TAG, "stream: fin de transmision local SOS/caida");
+                shutdown();
+            } else {
+                sh.postDelayed(this, StreamPolicy.LOCAL_RETRY_MAX_MS);
+            }
+        }
+    };
 
     private void connect() {
         if (source == StreamPolicy.SRC_NONE) return;
@@ -174,6 +183,11 @@ public class StreamService extends Service {
                     sh.post(() -> {
                         if (g != gen) return;
                         attempt = 0;
+                        connected = true;
+                        if (source == StreamPolicy.SRC_LOCAL) { // 120 s de video efectivo desde que conecta
+                            sh.removeCallbacks(localEnd);
+                            sh.postDelayed(localEnd, StreamPolicy.LOCAL_SOS_MS);
+                        }
                         Log.i(TAG, "stream: RTMP conectado, transmitiendo");
                         if (!announced) {
                             announced = true;
@@ -288,6 +302,8 @@ public class StreamService extends Service {
     private void retry(int g, String why) {
         if (g != gen || source == StreamPolicy.SRC_NONE) return;
         gen++; // invalida los demas callbacks de este intento
+        connected = false;
+        why = AgentPolicy.redact(why); // el motivo de RootEncoder puede traer la URL con el token
         sh.removeCallbacks(audioTick);
         releaseCamera();
         attempt++;
@@ -295,13 +311,13 @@ public class StreamService extends Service {
             audioFailed = true; // no perder el video por el microfono: reintentos siguientes sin audio, en live/
             Log.w(TAG, "stream: el audio no se estabiliza, se continua solo con video");
         }
-        if (attempt > StreamPolicy.MAX_RETRIES) {
+        if (StreamPolicy.giveUp(source, attempt)) {
             Log.e(TAG, "stream: " + why + ". Sin mas reintentos (" + StreamPolicy.MAX_RETRIES + "), se detiene");
             shutdown();
             return;
         }
-        long d = StreamPolicy.retryDelayMs(attempt);
-        Log.w(TAG, "stream: " + why + ". Reintento " + attempt + "/" + StreamPolicy.MAX_RETRIES + " en " + d + " ms");
+        long d = StreamPolicy.retryDelayMs(attempt, source);
+        Log.w(TAG, "stream: " + why + ". Reintento " + attempt + " en " + d + " ms");
         sh.postDelayed(this::connect, d);
     }
 

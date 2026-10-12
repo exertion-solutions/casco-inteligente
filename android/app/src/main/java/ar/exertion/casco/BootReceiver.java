@@ -10,6 +10,7 @@ public class BootReceiver extends BroadcastReceiver {
     public void onReceive(Context ctx, Intent intent) {
         if (Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) {
             Log.i("CascoAgente", "BOOT_COMPLETED: arrancando MediaWatcherService");
+            WatchdogReceiver.schedule(ctx);
             try {
                 ctx.startForegroundService(new Intent(ctx, MediaWatcherService.class));
             } catch (RuntimeException e) {
