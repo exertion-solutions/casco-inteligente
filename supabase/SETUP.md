@@ -76,6 +76,28 @@ Un casco mas = un usuario mas con su propio `device_id`.
 - **Visor web**: se entra con el email y contrasena del supervisor.
 - Prueba final: con el visor abierto, mandar un SOS del casco; debe aparecer en vivo y con sonido.
 
+## 9. Video en vivo (opcional, despues de que todo lo anterior funcione)
+
+El visor pide "ver en vivo" al casco. Hay 3 piezas en Supabase:
+
+**9.1 Tabla de comandos.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/003_stream_commands.sql`, **Run**. Debe decir `Success`. (Si ya usaste `ejecutar-todo.sql` actualizado, ya esta incluido.) Se puede repetir sin problema.
+
+**9.2 Inventar el secreto.** Elegi una frase larga al azar (32 caracteres o mas, solo letras y numeros). Guardala en tu gestor de contrasenas. Se llama `MEDIA_AUTH_SECRET`.
+
+**9.3 Publicar la funcion `media-auth`.**
+1. **Edge Functions** > **Deploy a new function** > **Via Editor**, nombre `media-auth`.
+2. Pega TODO `supabase/functions/media-auth/index.ts` > **Deploy**.
+3. Entra a la funcion y **desactiva "Verify JWT"**. Guarda. (Es a proposito: el servidor de video no tiene un token de Supabase; la funcion se protege con el secreto.)
+4. **Edge Functions** > **Secrets** > **Add new secret**: nombre `MEDIA_AUTH_SECRET`, valor tu secreto.
+
+**9.4 Anotar la URL para el servidor de video.** En `server/.env` (archivo local, NUNCA al repo):
+
+```
+MEDIA_AUTH_URL=https://zgfvhjpdzkohouktakvt.supabase.co/functions/v1/media-auth?k=TU_SECRETO
+```
+
+Despues volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
+
 ## Si algo falla
 
 | Sintoma | Causa probable |
@@ -84,3 +106,5 @@ Un casco mas = un usuario mas con su propio `device_id`.
 | El visor dice "Sin permiso" | el usuario no tiene `role` viewer/admin, o falta volver a iniciar sesion |
 | Las fotos no se ven | el evento tiene `media_path` vacio (fallo la subida) o el archivo supera 50 MB |
 | HTTP 429 / "rate limit" en el casco | mas de 30 eventos del mismo tipo por minuto (limite anti-abuso) |
+| El video no arranca: el servidor responde 401 | secreto distinto entre la funcion y `MEDIA_AUTH_URL`, "Verify JWT" sigue activado, o el usuario no tiene el rol/`device_id` correcto |
+| "rate limit" al pedir video | mas de 10 comandos start/stop en un minuto |

@@ -1,0 +1,36 @@
+# HTTPS automatico (Let's Encrypt) + CORS para el visor en GitHub Pages.
+# {$LIVE_DOMAIN} y {$ALLOWED_ORIGIN} vienen de docker-compose.yml (.env).
+{$LIVE_DOMAIN} {
+	encode zstd gzip
+
+	# Preflight CORS: lo contesta Caddy sin molestar a MediaMTX ni a la Edge Function.
+	@preflight {
+		method OPTIONS
+		path_regexp ^/live/[A-Za-z0-9_-]{1,64}/whep(/.*)?$
+	}
+	handle @preflight {
+		header {
+			Access-Control-Allow-Origin "{$ALLOWED_ORIGIN}"
+			Access-Control-Allow-Methods "POST, PATCH, DELETE, OPTIONS"
+			Access-Control-Allow-Headers "Authorization, Content-Type, If-Match"
+			Access-Control-Max-Age "86400"
+			Vary "Origin"
+		}
+		respond 204
+	}
+
+	# Solo WHEP del stream live/<id> (y su sesion /whep/<sesion>). Todo lo demas: 404.
+	@whep path_regexp ^/live/[A-Za-z0-9_-]{1,64}/whep(/.*)?$
+	handle @whep {
+		reverse_proxy mediamtx:8889 {
+			# Pisar cualquier CORS que mande MediaMTX y exponer Location/Link al navegador.
+			header_down Access-Control-Allow-Origin "{$ALLOWED_ORIGIN}"
+			header_down Access-Control-Expose-Headers "Location, Link, ETag, Accept-Patch"
+			header_down Vary "Origin"
+		}
+	}
+
+	handle {
+		respond "no encontrado" 404
+	}
+}

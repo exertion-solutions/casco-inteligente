@@ -1,0 +1,46 @@
+# Casco Inteligente - servidor de video propio (MediaMTX + Caddy)
+# Variables: se leen del archivo .env (copiar de .env.example). No poner secretos en el repo.
+name: casco-video
+
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.21.2   # version fijada; actualizar a proposito (ver README)
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      # MediaMTX permite sobreescribir cualquier parametro con MTX_<NOMBRE>.
+      MTX_AUTHHTTPADDRESS: ${MEDIA_AUTH_URL:?falta MEDIA_AUTH_URL en .env}
+      MTX_WEBRTCADDITIONALHOSTS: ${PUBLIC_IP:?falta PUBLIC_IP en .env}
+    ports:
+      - "1935:1935"        # RTMP: el casco publica aqui
+      - "8189:8189/udp"    # WebRTC ICE sobre UDP (medios hacia el visor)
+      - "8189:8189/tcp"    # WebRTC ICE sobre TCP (respaldo si el UDP esta bloqueado)
+    # El puerto 8889 (WHEP) NO se publica: solo Caddy lo alcanza por la red interna.
+    # API (9997), metrics (9998) y pprof estan desactivados en mediamtx.yml.
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+    ports:
+      - "80:80"      # necesario para emitir el certificado Let's Encrypt
+      - "443:443"
+    environment:
+      LIVE_DOMAIN: ${LIVE_DOMAIN:?falta LIVE_DOMAIN en .env}
+      ALLOWED_ORIGIN: ${ALLOWED_ORIGIN:-https://exertion-solutions.github.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # certificados: NO borrar (limite de emision de Let's Encrypt)
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data:
+  caddy_config:

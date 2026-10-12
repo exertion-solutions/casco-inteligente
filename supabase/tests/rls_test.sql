@@ -2,7 +2,7 @@
 -- USO: Supabase > SQL Editor > pegar TODO > Run. Es solo lectura neta: cada caso corre
 -- en una subtransaccion que se revierte (no deja filas ni objetos).
 -- Resultado: una tabla con columnas test | expected | got | ok. TODAS deben ser ok = true.
--- Requiere haber ejecutado antes supabase/schema.sql.
+-- Requiere haber ejecutado antes supabase/schema.sql y migrations/002 y 003.
 --
 -- Como simula identidades: fija request.jwt.claims (lo que lee auth.jwt()) y hace
 -- SET LOCAL ROLE anon|authenticated, igual que PostgREST/Storage.
@@ -39,7 +39,14 @@ with c as (select
   '{"role":"authenticated","sub":"00000000-0000-0000-0000-000000000005","app_metadata":{"role":"viewer"}}'::text as viewer,
   '{"role":"authenticated","sub":"00000000-0000-0000-0000-000000000006","app_metadata":{"role":"admin"}}'::text as admin,
   $s$insert into public.events(device_id,type) values ('4132','sos'),('9999','sos')$s$ as seed_ev,
-  $s$insert into storage.objects(bucket_id,name) values ('casco-media','4132/photo/seed.jpg')$s$ as seed_obj
+  $s$insert into storage.objects(bucket_id,name) values ('casco-media','4132/photo/seed.jpg')$s$ as seed_obj,
+  -- stream_commands: el trigger fuerza created_at=now(); para "vencido" se envejece con UPDATE (como postgres).
+  $s$insert into public.stream_commands(device_id,action,requested_by) values ('4132','start','00000000-0000-0000-0000-000000000009')$s$ as seed_cmd,
+  $s$insert into public.stream_commands(device_id,action,requested_by) values ('9999','start','00000000-0000-0000-0000-000000000009')$s$ as seed_cmd_other,
+  $s$do $d$ begin
+       insert into public.stream_commands(device_id,action,requested_by) values ('4132','start','00000000-0000-0000-0000-000000000009');
+       update public.stream_commands set created_at = now() - interval '5 minutes';
+     end $d$$s$ as seed_cmd_old
 )
 select r.* from c, lateral (
   -- ===================== anon (solo anon key) =====================
@@ -91,6 +98,33 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('viewer: DELETE storage',            'DENIED',  'authenticated', c.viewer, $q$delete from storage.objects where name='4132/photo/seed.jpg'$q$, c.seed_obj)
   union all select * from pg_temp.t('admin: SELECT events',              'ALLOWED', 'authenticated', c.admin, 'select * from public.events', c.seed_ev)
   union all select * from pg_temp.t('admin: INSERT events',              'DENIED',  'authenticated', c.admin, $q$insert into public.events(device_id,type) values ('4132','sos')$q$)
+  -- ======================= stream_commands (video) =======================
+  -- Requiere migrations/003_stream_commands.sql. Sub 000...0009 = usuario del seed.
+  union all select * from pg_temp.t('cmd anon: SELECT',                  'DENIED',  'anon', c.anon, 'select * from public.stream_commands', c.seed_cmd)
+  union all select * from pg_temp.t('cmd anon: INSERT',                  'DENIED',  'anon', c.anon, $q$insert into public.stream_commands(device_id,action) values ('4132','start')$q$)
+  union all select * from pg_temp.t('cmd sin rol: SELECT',               'DENIED',  'authenticated', c.norole, 'select * from public.stream_commands', c.seed_cmd)
+  union all select * from pg_temp.t('cmd sin rol: INSERT',               'DENIED',  'authenticated', c.norole, $q$insert into public.stream_commands(device_id,action) values ('4132','start')$q$)
+  union all select * from pg_temp.t('cmd user_metadata falso: INSERT',   'DENIED',  'authenticated', c.usermeta, $q$insert into public.stream_commands(device_id,action) values ('4132','start')$q$)
+  union all select * from pg_temp.t('cmd device: SELECT propio reciente','ALLOWED', 'authenticated', c.dev, $q$select * from public.stream_commands where device_id='4132'$q$, c.seed_cmd)
+  union all select * from pg_temp.t('cmd device: SELECT ajeno',          'DENIED',  'authenticated', c.dev, $q$select * from public.stream_commands where device_id='9999'$q$, c.seed_cmd_other)
+  union all select * from pg_temp.t('cmd device: SELECT propio vencido', 'DENIED',  'authenticated', c.dev, 'select * from public.stream_commands', c.seed_cmd_old)
+  union all select * from pg_temp.t('cmd device: INSERT',                'DENIED',  'authenticated', c.dev, $q$insert into public.stream_commands(device_id,action) values ('4132','start')$q$)
+  union all select * from pg_temp.t('cmd device: UPDATE',                'DENIED',  'authenticated', c.dev, $q$update public.stream_commands set action='stop'$q$, c.seed_cmd)
+  union all select * from pg_temp.t('cmd device: DELETE',                'DENIED',  'authenticated', c.dev, 'delete from public.stream_commands', c.seed_cmd)
+  union all select * from pg_temp.t('cmd viewer: INSERT start',          'ALLOWED', 'authenticated', c.viewer, $q$insert into public.stream_commands(device_id,action) values ('4132','start')$q$)
+  union all select * from pg_temp.t('cmd admin: INSERT stop',            'ALLOWED', 'authenticated', c.admin, $q$insert into public.stream_commands(device_id,action) values ('4132','stop')$q$)
+  union all select * from pg_temp.t('cmd viewer: SELECT todo',           'ALLOWED', 'authenticated', c.viewer, 'select * from public.stream_commands', c.seed_cmd_old)
+  union all select * from pg_temp.t('cmd viewer: action invalida',       'DENIED',  'authenticated', c.viewer, $q$insert into public.stream_commands(device_id,action) values ('4132','reboot')$q$)
+  union all select * from pg_temp.t('cmd viewer: device_id con HTML',    'DENIED',  'authenticated', c.viewer, $q$insert into public.stream_commands(device_id,action) values ('<b>','start')$q$)
+  union all select * from pg_temp.t('cmd viewer: falsear requested_by',  'DENIED',  'authenticated', c.viewer, $q$insert into public.stream_commands(device_id,action,requested_by) values ('4132','start','00000000-0000-0000-0000-0000000000aa')$q$)
+  union all select * from pg_temp.t('cmd viewer: falsear created_at',    'DENIED',  'authenticated', c.viewer, $q$insert into public.stream_commands(device_id,action,created_at) values ('4132','start', now() + interval '1 day')$q$)
+  union all select * from pg_temp.t('cmd viewer: UPDATE',                'DENIED',  'authenticated', c.viewer, $q$update public.stream_commands set action='stop'$q$, c.seed_cmd)
+  union all select * from pg_temp.t('cmd viewer: DELETE',                'DENIED',  'authenticated', c.viewer, 'delete from public.stream_commands', c.seed_cmd)
+  union all select * from pg_temp.t('cmd viewer: 10 comandos/min',       'ALLOWED', 'authenticated', c.viewer, $q$do $b$ begin for i in 1..10 loop insert into public.stream_commands(device_id,action) values ('4132','start'); end loop; end $b$$q$)
+  union all select * from pg_temp.t('cmd viewer: 11 comandos/min',       'DENIED',  'authenticated', c.viewer, $q$do $b$ begin for i in 1..11 loop insert into public.stream_commands(device_id,action) values ('4132','start'); end loop; end $b$$q$)
+  union all select 'RLS activo en stream_commands', 'OK',
+            (select case when relrowsecurity then 'OK' else 'BAD' end from pg_class where oid = 'public.stream_commands'::regclass),
+            (select relrowsecurity from pg_class where oid = 'public.stream_commands'::regclass)
   -- ============================ configuracion ============================
   union all select 'bucket privado, con limite de tamano y mime', 'OK',
             (select case when not public and file_size_limit is not null and allowed_mime_types is not null

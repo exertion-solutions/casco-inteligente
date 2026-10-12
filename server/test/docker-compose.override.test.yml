@@ -1,0 +1,8 @@
+# SOLO PRUEBAS: reemplaza la config por test/mediamtx.test.yml (auth interna, sin Edge Function).
+# Uso (desde la carpeta server/):
+#   docker compose -f docker-compose.yml -f test/docker-compose.override.test.yml up -d
+# NO usar en produccion.
+services:
+  mediamtx:
+    volumes:
+      - ./test/mediamtx.test.yml:/mediamtx.yml:ro

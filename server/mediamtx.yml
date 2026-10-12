@@ -1,0 +1,47 @@
+# MediaMTX v1.21.x - configuracion del piloto Casco Inteligente.
+# authHTTPAddress y webrtcAdditionalHosts NO van aqui: llegan por variables de
+# entorno desde docker-compose.yml (MTX_AUTHHTTPADDRESS, MTX_WEBRTCADDITIONALHOSTS).
+
+logLevel: info
+
+# --- Autenticacion: cada publish/read se consulta por POST a la Edge Function ---
+authMethod: http
+authHTTPAddress:          # se completa con MTX_AUTHHTTPADDRESS (.env: MEDIA_AUTH_URL)
+authHTTPExclude: []       # nada se salta la autenticacion
+
+# --- Control API / metrics / pprof: apagados (no se exponen ni en local) ---
+api: false
+metrics: false
+pprof: false
+
+# --- Protocolos no usados: apagados ---
+rtsp: false
+hls: false
+srt: false
+playback: false
+
+# --- RTMP: entrada desde el casco (en claro; mejora futura: RTMPS) ---
+rtmp: true
+rtmpAddress: :1935
+rtmpEncryption: "no"
+
+# --- WebRTC/WHEP: salida hacia el visor. Caddy hace de HTTPS por delante ---
+webrtc: true
+webrtcAddress: :8889          # solo red interna docker (no publicado)
+webrtcEncryption: false       # TLS lo pone Caddy
+webrtcAllowOrigins: []        # CORS lo maneja Caddy (evita cabeceras duplicadas)
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189  # respaldo TCP si el UDP esta bloqueado
+webrtcIPsFromInterfaces: false  # no anunciar IPs internas de docker
+# webrtcAdditionalHosts: viene de MTX_WEBRTCADDITIONALHOSTS (= PUBLIC_IP)
+webrtcHandshakeTimeout: 10s
+webrtcTrackGatherTimeout: 2s
+
+# --- Latencia / memoria ---
+writeQueueSize: 512           # valor por defecto; bajarlo provoca perdida de cuadros
+readTimeout: 10s
+
+# --- Paths: SOLO live/<id>. Todo lo demas se rechaza (no hay all_others) ---
+paths:
+  "~^live/[A-Za-z0-9_-]{1,64}$":
+    maxReaders: 10            # visores simultaneos maximos por casco

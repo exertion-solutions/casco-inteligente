@@ -37,6 +37,12 @@
   button.attend { background:var(--sosbg); color:#fff; font-weight:600; }
   button[disabled] { opacity:.6; cursor:wait; }
   .hidden { display:none !important; }
+  #lives { display:grid; gap:12px; margin-bottom:12px; }
+  .live { display:grid; gap:8px; }
+  .live h2 { font-size:16px; margin:0; overflow-wrap:anywhere; }
+  .live video { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
+  .live .state { font-weight:600; }
+  .live .state.bad { color:var(--sos); }
 </style>
 </head>
 <body>
@@ -62,6 +68,7 @@
       <a class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo</a>
       <span id="status" class="mute">Conectando…</span>
     </div>
+    <div id="lives" class="hidden"></div>
     <ul id="feed"></ul>
   </section>
 </main>
@@ -101,6 +108,151 @@
   const acks = new Map();     // event_id -> ack
   let me = null;
 
+  // ---- Video en vivo propio (WHEP contra MediaMTX en LIVE_HOST; ver docs/PROTOCOLO-VIDEO.md) ----
+  const LIVE_HOST = String(cfg.LIVE_HOST || '').trim();
+  const DEV_RE = /^[A-Za-z0-9_-]{1,64}$/;
+  const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
+  const RETRY_WINDOW_MS = 40000;   // el casco tarda hasta ~30 s en arrancar
+  const lives = new Map();         // device_id -> panel
+  const devOf = new Map();         // event_id -> device_id
+  let token = null;
+  sb.auth.onAuthStateChange((_e, s) => { token = s ? s.access_token : null; });
+  async function getToken() {
+    const { data } = await sb.auth.getSession();
+    if (data && data.session) token = data.session.access_token;
+    return token;
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
+
+  function gathered(pc, ms) {
+    return new Promise(res => {
+      if (pc.iceGatheringState === 'complete') return res();
+      const done = () => { pc.removeEventListener('icegatheringstatechange', on); clearTimeout(t); res(); };
+      const on = () => { if (pc.iceGatheringState === 'complete') done(); };
+      const t = setTimeout(done, ms);
+      pc.addEventListener('icegatheringstatechange', on);
+    });
+  }
+
+  function ensureLive(id) {
+    if (!LIVE_HOST || !DEV_RE.test(id)) return null;
+    if (lives.has(id)) return lives.get(id);
+    const sec = mk('section', 'card live');
+    sec.setAttribute('aria-label', 'Video en vivo del casco ' + id);
+    sec.append(mk('h2', '', 'Video en vivo · Casco ' + id));
+    const row = mk('div', 'row');
+    const bStart = mk('button', '', 'Iniciar'); bStart.type = 'button';
+    const bStop = mk('button', 'ghost', 'Detener'); bStop.type = 'button'; bStop.disabled = true;
+    const state = mk('span', 'state', 'Detenido'); state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite');
+    const stats = mk('span', 'mute');
+    row.append(bStart, bStop, state, stats);
+    const video = mk('video'); video.autoplay = true; video.muted = true; video.playsInline = true;
+    video.setAttribute('aria-label', 'Video en vivo del casco ' + id); video.classList.add('hidden');
+    sec.append(row, video);
+    $('lives').append(sec); $('lives').classList.remove('hidden');
+
+    const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
+    const setState = (t, bad) => { state.textContent = t; state.classList.toggle('bad', !!bad); };
+    const base = 'https://' + LIVE_HOST + '/live/' + encodeURIComponent(id) + '/whep';
+
+    function closePc() {
+      clearInterval(L.statsTimer); L.statsTimer = null; stats.textContent = '';
+      if (L.pc) { L.pc.onconnectionstatechange = null; L.pc.ontrack = null; try { L.pc.close(); } catch (_) {} L.pc = null; }
+    }
+    async function deleteSession() {   // WHEP: DELETE sobre el Location devuelto
+      const loc = L.loc; L.loc = null; if (!loc) return;
+      try { await fetch(loc, { method: 'DELETE', headers: { Authorization: 'Bearer ' + await getToken() }, keepalive: true }); } catch (_) {}
+    }
+    function fail(msg) { closePc(); setState('Error: ' + msg, true); bStart.disabled = false; bStop.disabled = true; }
+
+    async function whepOnce(gen) {
+      const tok = await getToken();
+      if (!tok) throw Object.assign(new Error('sin sesión'), { fatal: true });
+      const pc = new RTCPeerConnection({ iceServers: STUN });
+      L.pc = pc;
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.ontrack = e => { video.srcObject = (e.streams && e.streams[0]) || new MediaStream([e.track]); video.classList.remove('hidden'); };
+      await pc.setLocalDescription(await pc.createOffer());
+      await gathered(pc, 2000);
+      if (gen !== L.gen) throw Object.assign(new Error('cancelado'), { fatal: true });
+      let res;
+      try {
+        res = await fetch(base, { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
+      } catch (e) { throw new Error('sin conexión con el servidor'); }
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error('no autorizado (' + res.status + ')'), { fatal: true });
+      if (res.status !== 201 && !res.ok) throw new Error('el servidor respondió ' + res.status);
+      const loc = res.headers.get('Location');
+      if (loc) L.loc = new URL(loc, base).href;
+      await pc.setRemoteDescription({ type: 'answer', sdp: await res.text() });
+      await new Promise((ok, ko) => {
+        const t = setTimeout(() => ko(new Error('sin medios (ICE)')), 10000);
+        const chk = () => {
+          if (pc.connectionState === 'connected') { clearTimeout(t); ok(); }
+          else if (pc.connectionState === 'failed' || pc.connectionState === 'closed') { clearTimeout(t); ko(new Error('conexión fallida')); }
+        };
+        pc.onconnectionstatechange = chk; chk();
+      });
+    }
+
+    function watch(gen) {
+      L.pc.onconnectionstatechange = () => {
+        const s = L.pc && L.pc.connectionState;
+        if ((s === 'failed' || s === 'closed') && gen === L.gen) { setState('Reconectando…'); closePc(); deleteSession().then(() => run(gen)); }
+      };
+      L.statsTimer = setInterval(async () => {
+        if (!L.pc || !L.pc.getStats) return;
+        try {
+          const rep = await L.pc.getStats(); const out = [];
+          rep.forEach(r => {
+            if (r.type === 'inbound-rtp' && r.kind === 'video' && r.frameWidth) out.push(r.frameWidth + '×' + r.frameHeight + (r.framesPerSecond ? ' · ' + Math.round(r.framesPerSecond) + ' fps' : ''));
+            if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated && r.currentRoundTripTime != null) out.push('RTT ' + Math.round(r.currentRoundTripTime * 1000) + ' ms');
+          });
+          if (gen === L.gen) stats.textContent = out.join(' · ');
+        } catch (_) {}
+      }, 2000);
+    }
+
+    async function run(gen) {
+      const deadline = Date.now() + RETRY_WINDOW_MS; let n = 0, last = '';
+      while (gen === L.gen) {
+        setState('Esperando al casco…');
+        try { await whepOnce(gen); if (gen !== L.gen) return; setState('En vivo'); watch(gen); return; }
+        catch (e) {
+          closePc();
+          if (gen !== L.gen) return;
+          if (e.fatal) { fail(e.message); return; }
+          last = e.message;
+        }
+        if (Date.now() > deadline) { fail('el casco no respondió (' + last + ')'); return; }
+        await sleep(Math.min(1000 * ++n, 5000));
+      }
+    }
+
+    L.start = async () => {
+      const gen = ++L.gen;
+      bStart.disabled = true; bStop.disabled = false;
+      setState('Solicitando…');
+      const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'start' });
+      if (gen !== L.gen) return;
+      if (error) { fail('no se pudo solicitar: ' + error.message); return; }
+      run(gen);
+    };
+    L.stop = async () => {
+      L.gen++;
+      bStart.disabled = false; bStop.disabled = true;
+      closePc(); video.srcObject = null; video.classList.add('hidden');
+      setState('Deteniendo…');
+      await deleteSession();
+      const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'stop' });
+      if (error) setState('Error: no se pudo enviar stop: ' + error.message, true); else setState('Detenido');
+    };
+    bStart.addEventListener('click', L.start);
+    bStop.addEventListener('click', L.stop);
+    lives.set(id, L);
+    return L;
+  }
+
   const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall';
 
   function refreshBanner() {
@@ -121,6 +273,18 @@
     live.className = 'btn'; live.textContent = 'Cámara en vivo';
     live.href = 'https://caps.runde.pro/index/spyl'; live.target = '_blank'; live.rel = 'noopener noreferrer';
     box.append(live);
+    const devId = devOf.get(ev.id);
+    if (LIVE_HOST && DEV_RE.test(devId || '')) {
+      const see = document.createElement('button'); see.type = 'button'; see.className = 'ghost';
+      see.textContent = 'Ver en vivo'; see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
+      see.addEventListener('click', () => {
+        const L = ensureLive(devId); if (!L) return;
+        L.sec.scrollIntoView({ block: 'nearest' });
+        if (!L.bStart.disabled) L.start();
+        L.bStop.focus();
+      });
+      box.append(see);
+    }
     const ack = acks.get(ev.id);
     if (ack) {
       li.classList.remove('pending');
@@ -161,6 +325,8 @@
     const li = document.createElement('li');
     li.className = 'card ev';
     cards.set(ev.id, li);
+    devOf.set(ev.id, ev.device_id);
+    ensureLive(ev.device_id);
     const row = document.createElement('div'); row.className = 'row';
     const tag = document.createElement('span'); tag.className = 'tag ' + ev.type; tag.textContent = ev.type.toUpperCase();
     const dev = document.createElement('strong'); dev.textContent = 'Casco ' + ev.device_id;
