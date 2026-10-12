@@ -28,6 +28,7 @@ exec ffmpeg -hide_banner -nostdin -nostats -loglevel warning \
   -rtsp_transport tcp -i "$BASE/ingest/$ID?token=$TOKEN" \
   -map 0:v:0 -map "0:a:0?" \
   -c:v copy \
+  -af "aresample=async=1:first_pts=0,volume=${AUDIO_GAIN_DB:-22}dB,alimiter=limit=0.9:level=disabled" \
   -c:a libopus -application lowdelay -b:a 24k -ar 48000 -ac 1 \
   -muxdelay 0 -flush_packets 1 \
   -f rtsp -rtsp_transport tcp "$BASE/live/$ID?token=$TOKEN"
