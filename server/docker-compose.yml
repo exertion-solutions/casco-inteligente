@@ -8,6 +8,9 @@ services:
     restart: unless-stopped
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+      # La imagen no trae certificados raiz: sin esto MediaMTX no valida el HTTPS de la
+      # Edge Function de Supabase ("x509: certificate signed by unknown authority").
+      - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
     environment:
       # MediaMTX permite sobreescribir cualquier parametro con MTX_<NOMBRE>.
       MTX_AUTHHTTPADDRESS: ${MEDIA_AUTH_URL:?falta MEDIA_AUTH_URL en .env}
