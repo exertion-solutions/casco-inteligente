@@ -30,6 +30,10 @@
   .tag.sos, .tag.fall { background:var(--sosbg); color:#fff; border-color:var(--sosbg); }
   .mute { color:var(--mute); font-size:14px; }
   img.media, video.media { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
+  li.pending { border-color:var(--sosbg); border-width:2px; }
+  .tag.ok { background:transparent; color:var(--ink); }
+  button.attend { background:var(--sosbg); color:#fff; font-weight:600; }
+  button[disabled] { opacity:.6; cursor:wait; }
   .hidden { display:none !important; }
 </style>
 </head>
@@ -89,9 +93,66 @@
     return el;
   }
 
+  const cards = new Map();    // event_id -> <li>
+  const pending = new Map();  // event_id -> ev (SOS/caida sin atender)
+  const acks = new Map();     // event_id -> ack
+  let me = null;
+
+  const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall';
+
+  function refreshBanner() {
+    const b = $('sos');
+    if (!pending.size) { b.style.display = 'none'; return; }
+    const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
+    b.textContent = pending.size + ' alerta(s) sin atender — última: ' +
+      (last.type === 'fall' ? 'CAÍDA' : 'SOS') + ' · Casco ' + last.device_id + ' · ' + fmt(last.created_at);
+    b.style.display = 'block';
+  }
+
+  function renderAction(ev) {
+    const li = cards.get(ev.id); if (!li) return;
+    li.querySelector('.action')?.remove();
+    const box = document.createElement('div'); box.className = 'row action';
+    const ack = acks.get(ev.id);
+    if (ack) {
+      li.classList.remove('pending');
+      const t = document.createElement('span'); t.className = 'tag ok'; t.textContent = 'ATENDIDO';
+      const w = document.createElement('span'); w.className = 'mute';
+      w.textContent = 'por ' + ack.acked_by_email + ' · ' + fmt(ack.acked_at) + (ack.note ? ' · ' + ack.note : '');
+      box.append(t, w);
+    } else {
+      li.classList.add('pending');
+      const note = document.createElement('input');
+      note.type = 'text'; note.maxLength = 500; note.placeholder = 'Nota (opcional)';
+      note.setAttribute('aria-label', 'Nota de atención'); note.style.flex = '1 1 200px';
+      const btn = document.createElement('button'); btn.className = 'attend'; btn.type = 'button';
+      btn.textContent = 'Atender';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const row = { event_id: ev.id };
+        if (note.value.trim()) row.note = note.value.trim();
+        const { error } = await sb.from('event_acks').insert(row);
+        if (error && error.code !== '23505') { btn.disabled = false; $('status').textContent = 'No se pudo atender: ' + error.message; return; }
+        const { data } = await sb.from('event_acks').select('*').eq('event_id', ev.id).maybeSingle();
+        if (data) applyAck(data);
+      });
+      box.append(note, btn);
+    }
+    li.append(box);
+  }
+
+  function applyAck(ack) {
+    acks.set(ack.event_id, ack);
+    pending.delete(ack.event_id);
+    const li = cards.get(ack.event_id);
+    if (li) renderAction({ id: ack.event_id });
+    refreshBanner();
+  }
+
   async function render(ev, prepend) {
     const li = document.createElement('li');
     li.className = 'card ev';
+    cards.set(ev.id, li);
     const row = document.createElement('div'); row.className = 'row';
     const tag = document.createElement('span'); tag.className = 'tag ' + ev.type; tag.textContent = ev.type.toUpperCase();
     const dev = document.createElement('strong'); dev.textContent = 'Casco ' + ev.device_id;
@@ -103,15 +164,17 @@
     if (ev.battery != null) bits.push('batería ' + ev.battery + '%');
     if (ev.lat != null && ev.lng != null) bits.push(Number(ev.lat).toFixed(5) + ', ' + Number(ev.lng).toFixed(5));
     if (bits.length) { const m = document.createElement('div'); m.className = 'mute'; m.textContent = bits.join(' · '); li.append(m); }
-    if (ev.media_path) { const el = await mediaEl(ev.media_path, ev.type); if (el) li.append(el); }
     const feed = $('feed');
     prepend ? feed.prepend(li) : feed.append(li);
+    if (needsAttention(ev)) {
+      if (!acks.has(ev.id)) pending.set(ev.id, ev);
+      renderAction(ev);
+      refreshBanner();
+    }
+    if (ev.media_path) { const el = await mediaEl(ev.media_path, ev.type); if (el) li.insertBefore(el, li.querySelector('.action')); }
   }
 
   function alertSos(ev) {
-    const b = $('sos');
-    b.textContent = (ev.type === 'fall' ? 'CAÍDA' : 'SOS') + ' — Casco ' + ev.device_id + ' — ' + fmt(ev.created_at);
-    b.style.display = 'block';
     beep();
     if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
   }
@@ -126,16 +189,25 @@
     const { data, error } = await sb.from('events').select('*')
       .neq('type', 'heartbeat').order('created_at', { ascending: false }).limit(50);
     if (error) { $('status').textContent = 'Sin permiso o error: ' + error.message; return; }
+    me = session.user;
+    cards.clear(); pending.clear(); acks.clear();
+    const ids = data.filter(needsAttention).map(e => e.id);
+    if (ids.length) {
+      const r = await sb.from('event_acks').select('*').in('event_id', ids);
+      if (!r.error) for (const a of r.data) acks.set(a.event_id, a);
+    }
     for (const ev of data) await render(ev, false);
+    if (!data.length) { const li = document.createElement('li'); li.className = 'mute'; li.textContent = 'Sin eventos todavía.'; $('feed').append(li); }
 
     if (channel) sb.removeChannel(channel);
     channel = sb.channel('events-feed')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, p => {
         const ev = p.new;
         if (ev.type === 'heartbeat') return;
-        if (ev.type === 'sos' || ev.type === 'fall') alertSos(ev);
+        if (needsAttention(ev)) alertSos(ev);
         render(ev, true);
       })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_acks' }, p => applyAck(p.new))
       .subscribe(s => { $('status').textContent = s === 'SUBSCRIBED' ? 'En vivo' : s; });
   }
 
