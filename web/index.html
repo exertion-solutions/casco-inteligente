@@ -30,6 +30,8 @@
   .tag.sos, .tag.fall { background:var(--sosbg); color:#fff; border-color:var(--sosbg); }
   .mute { color:var(--mute); font-size:14px; }
   img.media, video.media { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
+  a.btn { display:inline-block; padding:10px 14px; border-radius:8px; background:transparent; color:var(--ink); border:1px solid var(--line); text-decoration:none; font:inherit; }
+  a.btn:focus-visible, button:focus-visible, input:focus-visible { outline:2px solid var(--acc); outline-offset:2px; }
   li.pending { border-color:var(--sosbg); border-width:2px; }
   .tag.ok { background:transparent; color:var(--ink); }
   button.attend { background:var(--sosbg); color:#fff; font-weight:600; }
@@ -57,6 +59,7 @@
     <div id="sos" role="alert"></div>
     <div class="row" style="margin-bottom:12px">
       <button id="enableSound" class="ghost">Activar sonido de alerta</button>
+      <a class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo</a>
       <span id="status" class="mute">Conectando…</span>
     </div>
     <ul id="feed"></ul>
@@ -113,6 +116,11 @@
     const li = cards.get(ev.id); if (!li) return;
     li.querySelector('.action')?.remove();
     const box = document.createElement('div'); box.className = 'row action';
+    // Video en vivo: lo sirve la plataforma Runde (el casco solo transmite alli). Abre su Centro de video.
+    const live = document.createElement('a');
+    live.className = 'btn'; live.textContent = 'Cámara en vivo';
+    live.href = 'https://caps.runde.pro/index/spyl'; live.target = '_blank'; live.rel = 'noopener noreferrer';
+    box.append(live);
     const ack = acks.get(ev.id);
     if (ack) {
       li.classList.remove('pending');
