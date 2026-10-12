@@ -23,3 +23,8 @@ Thumbs.db
 
 # Salidas de agentes de prueba
 out/
+
+*.local.txt
+
+*.local.sh
+*.local.*
