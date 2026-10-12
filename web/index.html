@@ -17,7 +17,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610120819">
+<link rel="stylesheet" href="app.css?v=202610121000">
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
@@ -32,6 +32,10 @@
     <button id="themeBtn" type="button" class="icon-btn" aria-label="Cambiar tema claro u oscuro" title="Cambiar tema claro u oscuro">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
     </button>
+    <a id="cmdLink" class="btn" href="comandos.html" aria-label="Comandos de voz del casco: abrir la guía en esta pestaña" title="Comandos de voz del casco">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+      <span>Comandos de voz</span>
+    </a>
     <span id="who" class="mute"></span>
     <button id="logout" class="ghost hidden">Salir</button>
   </div>
@@ -65,7 +69,7 @@
       </button>
       <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
-        <span>Historial</span><span id="doneCount" class="count">0</span>
+        <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden" aria-hidden="true">0</span>
       </button>
     </nav>
 
@@ -73,6 +77,7 @@
       <div id="sos" role="alert" aria-live="assertive" aria-atomic="true"></div>
       <div class="toolbar">
         <button id="enableSound" class="ghost">Probar sirena de alerta</button>
+        <button id="enableMic" class="ghost hidden" type="button">Habilitar micrófono para grabar</button>
         <a id="rundeLink" class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo (Runde)</a>
         <p id="escState" class="mute esc" role="status">Escalamiento: consultando…</p>
       </div>
@@ -142,12 +147,7 @@
                 <div id="msgErr" class="err" role="alert"></div>
               </form>
               <div id="orderOk" class="okmsg" role="status"></div>
-              <h3>Historial de órdenes (últimas 20)</h3>
-              <ul id="bcList"><li class="empty mute">Todavía no hay órdenes.</li></ul>
-            </section>
-            <section class="block" aria-labelledby="feedH">
-              <h2 id="feedH" class="sec">Eventos recientes</h2>
-              <ul id="feed"></ul>
+              <p class="mute">El historial de órdenes y los eventos recientes están en la pestaña Historial.</p>
             </section>
           </div>
         </div>
@@ -157,6 +157,7 @@
         <section class="block" aria-labelledby="mapH">
           <h2 id="mapH" class="sec">Mapa de cascos y zonas</h2>
           <div class="row">
+            <button id="gLocate" type="button">Ubicar casco</button>
             <button id="gDrawCircle" type="button" class="ghost" aria-pressed="false">Dibujar círculo</button>
             <button id="gDrawPoly" type="button" class="ghost" aria-pressed="false">Dibujar polígono</button>
             <button id="gAddPoint" type="button" class="ghost" aria-pressed="false">Agregar punto de interés</button>
@@ -202,13 +203,22 @@
           <h2 id="doneH" class="sec">SOS y caídas atendidos</h2>
           <ul id="feedDone"></ul>
         </section>
+        <details id="histOrders" class="block fold" open>
+          <summary><h2 id="ordersHistH" class="sec">Órdenes enviadas (últimas 20)</h2></summary>
+          <ul id="bcList"><li class="empty mute">Todavía no hay órdenes.</li></ul>
+        </details>
+        <details id="histEvents" class="block fold" open>
+          <summary><h2 id="feedH" class="sec">Eventos recientes</h2></summary>
+          <ul id="feed"></ul>
+        </details>
+        <p id="histLive" class="sr-only" role="status" aria-live="polite"></p>
       </div>
     </div>
   </section>
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120841"></script>
-<script src="app.js?v=202610120819"></script>
+<script src="config.js?v=202610121000"></script>
+<script src="app.js?v=202610121000"></script>
 </body>
 </html>

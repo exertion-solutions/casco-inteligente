@@ -3,7 +3,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const WEB = 'C:/CASCO INTELIGENTE/web';
+const WEB = process.env.WEBDIR || 'C:/CASCO INTELIGENTE/web';
 const OUT = 'C:/CASCO INTELIGENTE/out';
 const TAG = process.argv[2] || 'a';
 const SB = 'https://zgfvhjpdzkohouktakvt.supabase.co';
@@ -39,6 +39,7 @@ const locs = [
   { device_id: '4132', created_at: iso(300000), lat: -34.6, lng: -58.4, battery: 15 },
   { device_id: '4132', created_at: iso(60000), lat: -34.603, lng: -58.398, battery: 15 },
   { device_id: '4133', created_at: iso(50000), lat: -34.601, lng: -58.402, battery: 70 },
+  { device_id: '4133', created_at: iso(10000), lat: 0, lng: 0, battery: 70 },
 ];
 const devicesT = [
   { device_id: '4132', name: 'Casco Perforación', model: 'rd_aqm6816', group_id: 'g1', sector: 'Pozo 12', status: 'activo', imei: '860000000000001' },
@@ -54,7 +55,14 @@ const points = [{ id: 'pt1', name: 'Punto de reunión A', category: 'punto_reuni
 
 const CORS = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
 async function mock(ctx, opts = {}) {
-  await ctx.route('https://216-238-110-97.sslip.io/**', r => r.fulfill({ status: 503, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' }, body: 'no' }));
+  const H = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
+  await ctx.route('https://216-238-110-97.sslip.io/**', r => {
+    if (!opts.whep) return r.fulfill({ status: 503, headers: H, body: 'no' });
+    const m = r.request().method();
+    if (m === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+    if (m === 'POST') return r.fulfill({ status: 201, headers: { ...H, location: '/live/4132/whep/s1', 'content-type': 'application/sdp' }, body: 'v=0\r\n' });
+    return r.fulfill({ status: 200, headers: H, body: '' });
+  });
   await ctx.route(SB + '/**', async route => {
     const req = route.request(), u = new URL(req.url());
     if (req.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: CORS });
@@ -66,12 +74,18 @@ async function mock(ctx, opts = {}) {
     if (req.method() !== 'GET' && req.method() !== 'HEAD') return json(req.method() === 'POST' ? [{ id: 'new' }] : [], 201);
     const q = u.search;
     if (t === 'events') {
+      if (opts.failEvents === 'srv') return json({ code: 'XX000', message: 'Error de servidor' }, 500);
       if (opts.failEvents) return json({ code: 'PGRST301', message: 'JWT expired' }, 401);
       if (q.includes('type=eq.heartbeat')) return json(hbs);
       if (q.includes('type=eq.location')) return json(locs);
-      return json(events);
+      if (q.includes('type=in.')) return json([...events, ...(opts.old || [])]);
+      return json([...((opts.state && opts.state.extra) || []), ...events]);
     }
-    if (t === 'event_acks') return json(acks);
+    if (t === 'event_acks') {
+      const one = (q.match(/event_id=eq\.([^&]+)/) || [])[1];   // maybeSingle() tras Atender
+      if (one) return json([{ event_id: decodeURIComponent(one), acked_by_email: 'supervisor@demo.test', acked_at: new Date().toISOString(), note: null }]);
+      return json(acks);
+    }
     if (t === 'devices_full' || t === 'devices') return json(devicesT);
     if (t === 'people_full' || t === 'people') return json(people);
     if (t === 'groups') return json(groups);
@@ -82,6 +96,7 @@ async function mock(ctx, opts = {}) {
     return json([]);
   });
   await ctx.routeWebSocket(/realtime\/v1\/websocket/, ws => {
+    if (opts.state) (opts.state.sockets || (opts.state.sockets = [])).push(ws);
     ws.onMessage(m => {
       let j; try { j = JSON.parse(m); } catch { return; }
       const rep = (payload) => ws.send(JSON.stringify({ ref: j.ref, join_ref: j.join_ref, topic: j.topic, event: 'phx_reply', payload }));
@@ -94,7 +109,7 @@ async function mock(ctx, opts = {}) {
   });
 }
 
-const browser = await chromium.launch({ channel: 'chrome' });
+const browser = await chromium.launch({ channel: 'chrome', args: ['--mute-audio', '--autoplay-policy=no-user-gesture-required', '--disable-features=AudioServiceOutOfProcess', '--disable-gpu'] });
 const errors = [];
 const report = [];
 const SIZES = [['1440', 1440, 900], ['1920', 1920, 1080], ['375', 375, 812]];
@@ -124,13 +139,13 @@ async function enter(page) {
 }
 const shot = (page, name) => page.screenshot({ path: `${OUT}/rediseno-${name}.png`, fullPage: false });
 
-for (const scheme of ['dark', 'light']) {
+for (const scheme of process.env.ONLYFIX ? [] : ['dark', 'light']) {
   for (const [sz, w, h] of SIZES) {
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: scheme, locale: 'es-AR', timezoneId: 'America/Argentina/Buenos_Aires', serviceWorkers: 'block' });
     await mock(ctx);
     const page = await ctx.newPage();
     page.on('pageerror', e => errors.push(`[${scheme} ${sz}] pageerror: ${e.message}`));
-    page.on('console', m => { if (m.type() === 'error' && !/tile\.openstreetmap|fonts\.g|ERR_|favicon/.test(m.text() + (m.location().url || ''))) errors.push(`[${scheme} ${sz}] console.error: ${m.text()} @ ${m.location().url}`); });
+    page.on('console', m => { if (m.type() === 'error' && !/tile\.openstreetmap|fonts\.g|ERR_|favicon|sslip\.io\/live/.test(m.text() + (m.location().url || ''))) errors.push(`[${scheme} ${sz}] console.error: ${m.text()} @ ${m.location().url}`); });
     await login(page);
     if (sz === '1440' || sz === '375') await shot(page, `${TAG}-login-${sz}-${scheme}`);
     await enter(page);
@@ -156,7 +171,7 @@ for (const scheme of ['dark', 'light']) {
 
     // En vivo
     await page.click('#tabLive'); await page.waitForTimeout(250);
-    const start = page.locator('#lives .live button', { hasText: 'Iniciar' }).first();
+    const start = page.locator('#lives .live', { hasText: '4132' }).locator('button', { hasText: 'Iniciar' }).first();
     if (await start.count()) { await start.click(); await page.waitForTimeout(500); }
     await shot(page, `${TAG}-envivo-${sz}-${scheme}`);
     // Mapa
@@ -202,9 +217,9 @@ for (const scheme of ['dark', 'light']) {
 }
 
 // estado de error con reintento + login con error
-{
+if (!process.env.ONLYFIX) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', locale: 'es-AR', serviceWorkers: 'block' });
-  await mock(ctx, { failEvents: true });
+  await mock(ctx, { failEvents: 'srv' });
   const page = await ctx.newPage();
   page.on('pageerror', e => errors.push('[err-state] pageerror: ' + e.message));
   await login(page);
@@ -214,6 +229,203 @@ for (const scheme of ['dark', 'light']) {
   await shot(page, `${TAG}-estado-error-1440-dark`);
   log('error-state:', await page.evaluate(() => document.querySelector('#pendList .err-state').innerText.replace(/\s+/g, ' ')));
   await ctx.close();
+}
+
+// ---- Casos de la correccion web: pendiente viejo, resync tras reconexion, sesion vencida, grabacion/cartel ----
+const FAKE_RTC = () => {
+  class FakePC {
+    constructor() { this.iceGatheringState = 'complete'; this.connectionState = 'new'; this.localDescription = { type: 'offer', sdp: 'v=0\r\n' }; this.ontrack = null; this.onconnectionstatechange = null; }
+    addTransceiver() {} addEventListener() {} removeEventListener() {}
+    async createOffer() { return { type: 'offer', sdp: 'v=0\r\n' }; }
+    async setLocalDescription() {}
+    async getStats() { return new Map(); }
+    close() { this.connectionState = 'closed'; }
+    async setRemoteDescription() {
+      setTimeout(() => {
+        const c = document.createElement('canvas'); c.width = 320; c.height = 240; const x = c.getContext('2d');
+        let k = 0; setInterval(() => { x.fillStyle = 'hsl(' + ((k += 17) % 360) + ',70%,50%)'; x.fillRect(0, 0, 320, 240); }, 50);
+        const vs = c.captureStream(15);
+        if (window.__noTrack) { this.connectionState = 'connected'; if (this.onconnectionstatechange) this.onconnectionstatechange(); return; }
+        const ac = (window.__fac = window.__fac || new AudioContext()), d = ac.createMediaStreamDestination(), o = ac.createOscillator(); o.connect(d); o.start();
+        this.connectionState = 'connected';
+        if (this.ontrack) { if (!window.__noAudio) this.ontrack({ track: d.stream.getAudioTracks()[0], streams: [d.stream] }); this.ontrack({ track: vs.getVideoTracks()[0], streams: [vs] }); }
+        if (this.onconnectionstatechange) this.onconnectionstatechange();
+      }, 60);
+    }
+  }
+  window.RTCPeerConnection = FakePC;
+  if (!window.__micDeny) {
+    navigator.mediaDevices.getUserMedia = async () => { const ac = (window.__fac = window.__fac || new AudioContext()), d = ac.createMediaStreamDestination(), o = ac.createOscillator(); o.connect(d); o.start(); return d.stream; };
+  } else {
+    navigator.mediaDevices.getUserMedia = async () => { throw Object.assign(new Error('denied'), { name: 'NotAllowedError' }); };
+  }
+};
+async function newPage(opts, deny) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'dark', locale: 'es-AR', timezoneId: 'America/Argentina/Buenos_Aires', serviceWorkers: 'block', acceptDownloads: true });
+  await mock(ctx, opts);
+  if (process.env.NOAUTO || process.env.NOCROP) await ctx.addInitScript("let v;Object.defineProperty(window,'CASCO_CONFIG',{get:()=>v,set:x=>{v=x;" + (process.env.NOAUTO ? 'x.REC_AUTO_ON_ALERT=false;' : '') + (process.env.NOCROP ? 'x.OVERLAY_CROP={};' : '') + "}})");
+  await ctx.addInitScript('window.__noTrack=' + (process.env.NOTRACK ? 'true' : 'false') + ';window.__noAudio=' + (process.env.NOAUDIO ? 'true' : 'false') + ';window.__micDeny=' + (deny ? 'true' : 'false') + ';(' + FAKE_RTC.toString() + ')()');
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errors.push('[fix] pageerror: ' + e.message));
+  page.on('crash', () => console.log('PAGE CRASH'));
+  page.on('console', m => { if (m.type() === 'error' && !/tile.openstreetmap|fonts.g|ERR_|favicon/.test(m.text())) console.log('console.error:', m.text().slice(0, 200)); });
+  await login(page);
+  await page.click('#login button[type=submit]');
+  await page.waitForSelector('#pendList .pitem', { timeout: 15000 });
+  await page.waitForTimeout(500);
+  return [ctx, page];
+}
+const closeOv = async page => { if (await page.locator('#sosOverlay').isVisible()) await page.locator('.sos-ov-btns button').last().click(); };
+const check = (ok, msg) => { log((ok ? 'OK   ' : 'FAIL ') + msg); if (!ok) errors.push('[fix] ' + msg); };
+
+// 1) pendiente viejo (5 dias, fuera de los ultimos 50) + sin select('*')
+if (!process.env.ONLY4) {
+  const state = {};
+  const old = [{ id: 'e-old', device_id: '4140', type: 'sos', created_at: iso(5 * 86400000), lat: null, lng: null, battery: 40, payload: null, media_path: null }];
+  const reqs = [];
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'es-AR', serviceWorkers: 'block' });
+  ctx.on('request', r => { if (r.url().includes('/rest/v1/')) reqs.push(r.url()); });
+  await mock(ctx, { old, state });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errors.push('[old] pageerror: ' + e.message));
+  await login(page);
+  await page.click('#login button[type=submit]');
+  await page.waitForSelector('#pendList .pitem', { timeout: 15000 });
+  await page.waitForTimeout(800);
+  const n = await page.locator('#pendList .pitem').count();
+  check(n === 4, 'pendiente viejo (7 dias) aparece junto a los 3 recientes (pendientes=' + n + ')');
+  const star = reqs.filter(u => /[?&]select=\*/.test(u) || /select=%2A/.test(u));
+  check(star.length === 0, "ninguna consulta usa select('*') (" + star.length + ')');
+  const fb = reqs.filter(u => /\/events\?/.test(u) && /type=in\./.test(u)).length;
+  check(fb >= 1, 'consulta explicita de SOS/caida/geocerca de 7 dias enviada');
+  await ctx.close();
+}
+
+// 2) resync tras reconexion: llega un SOS mientras el canal estaba caido
+if (!process.env.ONLY4) {
+  const state = { extra: [] };
+  const [ctx, page] = await newPage({ state });
+  await closeOv(page);
+  const before = await page.locator('#pendList .pitem').count();
+  state.extra = [{ id: 'e-gap', device_id: '4150', type: 'sos', created_at: iso(1000), lat: null, lng: null, battery: 60, payload: null, media_path: null }];
+  const nsock = state.sockets ? state.sockets.length : 0;
+  if (nsock) await state.sockets[nsock - 1].close();
+  let got = false;
+  for (let i = 0; i < 40 && !got; i++) { await page.waitForTimeout(500); got = (await page.locator('#pendList .pitem').count()) === before + 1; }
+  check(got, 'resync al reconectar Realtime recupera el SOS perdido (antes ' + before + ')');
+  check(await page.locator('#sosOverlay').isVisible(), 'cartel SOS reaparece por la alerta recuperada');
+  for (let i = 0; i < 6; i++) await page.keyboard.press('Tab');
+  const inside = await page.evaluate(() => document.getElementById('sosOverlay').contains(document.activeElement));
+  check(inside, 'la trampa de foco mantiene el foco dentro del cartel SOS');
+  await page.keyboard.press('Escape');
+  check(!(await page.locator('#sosOverlay').isVisible()), 'Escape cierra el cartel SOS (Ver el panel)');
+  const inert = await page.evaluate(() => document.getElementById('app').inert);
+  check(!inert, 'el panel deja de estar inerte al cerrar el cartel');
+  await ctx.close();
+}
+
+// 3) sesion vencida: 401 al consultar eventos
+if (!process.env.ONLY4) {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'es-AR', serviceWorkers: 'block' });
+  await mock(ctx, { failEvents: true });
+  const page = await ctx.newPage();
+  await login(page);
+  await page.click('#login button[type=submit]');
+  await page.waitForSelector('#sessBar', { timeout: 15000 });
+  const txt = await page.locator('#sessBar').innerText();
+  check(/Sesión vencida, ingresá de nuevo/.test(txt), 'aviso de sesion vencida ante 401/JWT expired');
+  await page.locator('#sessBar button').click();
+  check(await page.locator('#login').isVisible(), 'vuelve al login desde el aviso de sesion vencida');
+  await ctx.close();
+}
+
+// 4) grabacion automatica por alerta + cartel de guardado (con y sin permiso de microfono)
+for (const deny of [false, true]) {
+  const [ctx, page] = await newPage({ whep: true }, deny);
+  const tag = deny ? '[sin micro] ' : '[con micro] ';
+  const ping = async n => { const t = Date.now(); const ok = await Promise.race([page.evaluate(() => 1), new Promise(r => setTimeout(() => r('HUNG'), 4000))]); if (process.env.DBG) console.log('ping', n, ok, Date.now() - t); };
+  await ping('a');
+  await closeOv(page); await ping('b');
+  await page.click('#tabLive'); await ping('c');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  await sec.locator('button', { hasText: 'Iniciar' }).first().click(); await ping('d');
+  await page.waitForTimeout(300); await ping('e'); await page.waitForTimeout(1000); await ping('f');
+  let rec = '';
+  for (let i = 0; i < 40 && !/REC automático por alerta/.test(rec); i++) { await page.waitForTimeout(400); rec = await sec.locator('.recdot').innerText({ timeout: 300 }).catch(() => ''); }
+  if (process.env.DBG) console.log('PANEL:', (await sec.innerText()).replace(/\s+/g, ' ').slice(0, 500));
+  check(/REC automático por alerta/.test(rec), tag + 'grabacion automatica arranca sola con SOS pendiente y video en vivo: ' + rec.slice(0, 50));
+  await page.waitForTimeout(1200);
+  const st = await sec.locator('.rec .state').innerText({ timeout: 2000 }).catch(() => '');
+  if (deny) check(/sin micrófono: permiso pendiente/.test(st), tag + 'estado avisa sin micrófono: ' + st.slice(0, 90));
+  else check(/micrófono/.test(st), tag + 'estado incluye micrófono: ' + st.slice(0, 90));
+  await page.waitForTimeout(1500);
+  await page.click('#tabMain');
+  await page.locator('#pendList .pitem', { hasText: '4132' }).first().locator('button.attend').click();
+  await page.waitForSelector('#saveOverlay:not([hidden])', { timeout: 10000 });
+  const body = await page.locator('#saveOverlay').innerText();
+  check(/Casco 4132/.test(body) && /casco-4132_/.test(body) && /duración/.test(body), tag + 'cartel de guardado muestra casco, duracion y archivo');
+  check(/solo en tu PC/.test(body) && /Informá al personal/.test(body), tag + 'cartel incluye aviso de guardado solo en la PC');
+  if (deny) check(/sin micrófono/.test(body), tag + 'cartel avisa que no hay micrófono');
+  else check(/micrófono y del casco/.test(body), tag + 'cartel indica audio de micrófono y casco');
+  await page.keyboard.press('Escape');
+  check(await page.locator('#saveOverlay').isVisible(), tag + 'Escape no descarta el cartel de guardado');
+  await page.locator('#saveOverlay button', { hasText: 'Descartar' }).first().click();
+  check(/¿Descartar sin guardar\?/.test(await page.locator('#saveOverlay').innerText()), tag + 'descartar pide confirmacion');
+  await page.locator('#saveOverlay button', { hasText: 'Volver' }).click();
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 8000 }).catch(() => null), page.locator('#saveOverlay button', { hasText: 'Guardar en mi PC' }).click()]);
+  check(!!dl && /^casco-4132_.*\.(webm|mp4)$/.test(dl.suggestedFilename()), tag + 'Guardar en mi PC descarga el archivo: ' + (dl && dl.suggestedFilename()));
+  await shot(page, `${TAG}-cartel-guardado-${deny ? 'sinmic' : 'conmic'}`);
+  await page.locator('#saveOverlay button', { hasText: 'Cerrar' }).click();
+  check(!(await page.locator('#saveOverlay').isVisible()), tag + 'cartel se cierra tras guardar');
+  await ctx.close();
+}
+
+// 5) mapa: icono de casco, 0,0 ignorado, recorrido apagado, ultima posicion conocida, comandos.html
+if (!process.env.ONLY4) {
+  const [ctx, page] = await newPage({});
+  await closeOv(page);
+  await page.click('#tabMap');
+  await page.waitForSelector('#mapBox .leaflet-container', { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+  const m = await page.evaluate(() => ({
+    hm: [...document.querySelectorAll('#mapBox .hm .hm-id')].map(e => e.textContent),
+    zero: [...document.querySelectorAll('#mapDevList li')].some(l => /0\.00000, 0\.00000/.test(l.textContent)),
+    paths: document.querySelectorAll('#mapBox .leaflet-overlay-pane path.leaflet-interactive').length,
+    rec: (() => { const c = [...document.querySelectorAll('#mapLayers input')].find(i => /Recorrido/.test(i.parentElement.textContent)); return c ? c.checked : null; })(),
+    list: [...document.querySelectorAll('#mapDevList li')].map(l => l.innerText.replace(/\s+/g, ' ').slice(0, 160)),
+  }));
+  check(m.hm.includes('4132') && m.hm.includes('4133'), 'marcadores con icono de casco e id: ' + m.hm.join(','));
+  check(!m.zero, 'una posicion 0,0 se ignora');
+  const where = await page.evaluate(() => ({
+    centroSinFeed: !document.getElementById('panelMain').contains(document.getElementById('feed')) && !document.getElementById('panelMain').contains(document.getElementById('bcList')),
+    historialConFeed: document.getElementById('panelDone').contains(document.getElementById('feed')) && document.getElementById('panelDone').contains(document.getElementById('bcList')),
+  }));
+  check(where.centroSinFeed && where.historialConFeed, 'Eventos recientes y Historial de ordenes viven en la pestana Historial, no en Centro');
+  check(m.rec === false, 'capa Recorrido desmarcada por defecto');
+  log('lista mapa:', JSON.stringify(m.list));
+  const cen = await page.evaluate(() => document.getElementById('devList').innerText.replace(/\s+/g, ' '));
+  check(/Ubicación/.test(cen) && /Ver en el mapa/.test(await page.evaluate(() => document.getElementById('devList').innerHTML.length ? [...document.querySelectorAll('#devList button')].map(b => b.textContent).join('|') : '')), 'tarjeta del casco muestra Ubicación y Ver en el mapa');
+  await page.click('#gLocate');
+  await ctx.close();
+  // comandos.html
+  const c2 = await browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'es-AR', serviceWorkers: 'block' });
+  const pg = await c2.newPage();
+  const cerr = [];
+  pg.on('pageerror', e => cerr.push(e.message));
+  pg.on('console', mm => { if (mm.type() === 'error' && !/fonts\.g|ERR_|favicon/.test(mm.text() + (mm.location().url || ''))) cerr.push(mm.text()); });
+  await pg.goto(BASE + 'comandos.html');
+  await pg.waitForSelector('#q');
+  const before = await pg.evaluate(() => [...document.querySelectorAll('.cmd-table tbody tr')].filter(r => r.offsetParent).length);
+  await pg.fill('#q', 'linterna'); await pg.waitForTimeout(300);
+  const after = await pg.evaluate(() => [...document.querySelectorAll('.cmd-table tbody tr')].filter(r => r.offsetParent).length);
+  check(before > 0 && after < before, 'comandos.html: el filtro oculta filas (' + before + ' -> ' + after + ')');
+  check(cerr.length === 0, 'comandos.html carga sin errores de consola ' + cerr.join(' | ').slice(0, 150));
+  await c2.close();
+  // enlace en index
+  const [c3, p3] = await newPage({});
+  const href = await p3.locator('#cmdLink').getAttribute('href');
+  check(href === 'comandos.html', 'index tiene el enlace Comandos de voz');
+  await c3.close();
 }
 await browser.close();
 server.close();
