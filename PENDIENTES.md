@@ -6,7 +6,7 @@
 - Esqueleto del proyecto: web (visor + login), supabase/schema.sql, agente Android (fuentes), scripts, workflow de Pages.
 
 ## Pendiente (en orden)
-1. Confirmar boton de video/grabar y una 2da pulsacion de camara (tools/capturar-teclas.ps1).
+1. (Hecho) Teclas: SOS=F11, camara=F10, microfono=F12. Falta confirmar que la larga de camara graba video y la de microfono guarda audio (CapRecord).
 2. Crear proyecto Supabase; pasar URL + anon key (NO service_role); ejecutar supabase/schema.sql.
 3. Crear usuarios casco (role=device) y supervisor (role=viewer).
 4. Instalar JDK 17 + Android SDK (cmdline-tools, platform 29, build-tools) y compilar `gradle assembleDebug`.
