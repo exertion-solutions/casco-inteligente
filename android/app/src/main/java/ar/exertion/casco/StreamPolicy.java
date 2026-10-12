@@ -44,4 +44,25 @@ final class StreamPolicy {
     static long retryDelayMs(int attempt) {
         return 2_000L << Math.max(0, Math.min(attempt - 1, 4));
     }
+
+    // ---- audio del casco en el video (docs/PROTOCOLO-CENTRO.md seccion 5) ----
+
+    /** Ruta RTMP: con audio activo el casco publica en ingest/<id> (el servidor lo pasa a Opus y republica en live/<id>). */
+    static String ingestPath(boolean audioActive, String configuredPath) {
+        String p = configuredPath == null || configuredPath.isEmpty() ? "live" : configuredPath;
+        return audioActive && p.equals("live") ? "ingest" : p;
+    }
+
+    /** Intentos fallidos consecutivos a partir de los cuales se abandona el audio para no perder el video. */
+    static final int AUDIO_GIVE_UP_ATTEMPT = 2;
+
+    /** Audio del stream: solo si esta configurado, hay permiso, no fallo antes y se pudo preparar. */
+    static boolean wantAudio(boolean cfgAudio, boolean permission, boolean failedBefore) {
+        return cfgAudio && permission && !failedBefore;
+    }
+
+    /** El microfono del stream se silencia mientras haya llamada de voz (el microfono es del WebRTC). */
+    static boolean audioMuted(boolean inCall) {
+        return inCall;
+    }
 }

@@ -42,7 +42,7 @@ create table if not exists public.events (
 -- Constraints (NOT VALID: no revalidan filas viejas, si validan toda fila nueva).
 alter table public.events drop constraint if exists events_type_check;
 alter table public.events add constraint events_type_check
-  check (type in ('sos','photo','video','heartbeat','fall')) not valid;
+  check (type in ('sos','photo','video','heartbeat','fall','location','geofence')) not valid;
 
 alter table public.events drop constraint if exists events_device_id_fmt;
 alter table public.events add constraint events_device_id_fmt

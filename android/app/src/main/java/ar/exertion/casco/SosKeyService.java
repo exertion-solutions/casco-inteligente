@@ -35,6 +35,15 @@ public class SosKeyService extends AccessibilityService {
 
     @Override
     protected boolean onKeyEvent(KeyEvent e) {
+        int kc = e.getKeyCode();
+        if ((kc == KeyEvent.KEYCODE_F10 || kc == KeyEvent.KEYCODE_F12) && e.getAction() == KeyEvent.ACTION_DOWN
+                && e.getRepeatCount() == 0) {
+            // cancelan la cuenta regresiva de hombre caido y (F12) atienden una llamada pendiente; no se consumen
+            MediaWatcherService.onCancelKey();
+            BroadcastAgent.silenceSiren(); // tambien silencian la sirena de evacuacion
+            if (kc == KeyEvent.KEYCODE_F12) VoiceCallManager.acceptPending();
+            return false;
+        }
         if (e.getKeyCode() == SOS_KEYCODE) {
             if (e.getAction() == KeyEvent.ACTION_DOWN) {
                 // repeatCount 0 = pulsacion nueva; evita que un UP perdido deje downAt colgado

@@ -4,7 +4,7 @@ Guia para instalar tu propio servidor de video (MediaMTX + HTTPS automatico con 
 No necesitas saber programar: solo copiar y pegar comandos.
 
 ```
-Casco --RTMP (1935)--> [ VPS: MediaMTX ] --WebRTC (443 + 8189)--> Visor web
+Casco --RTMP (1935)--> [ VPS: MediaMTX (+ffmpeg) ] --WebRTC (443 + 8189)--> Visor web
                               |
                               +--> pregunta a Supabase (media-auth) si cada conexion esta permitida
 ```
@@ -51,7 +51,7 @@ Tu IP publica: abri https://ifconfig.me desde tu PC. Si tu IP cambia seguido usa
 | `MEDIA_AUTH_URL` | URL de la Edge Function `media-auth` de Supabase (la da quien configura Supabase) |
 | `ALLOWED_ORIGIN` | Ya viene puesto: `https://exertion-solutions.github.io` |
 
-El script instala Docker, configura el firewall (22 solo desde tu IP, 80, 443, 1935, 8189), fail2ban, y levanta todo. Puedes correrlo de nuevo sin problema.
+El script instala Docker, configura el firewall (22 solo desde tu IP, 80, 443, 1935, 8189, 3478, 49160-49200), fail2ban, y levanta todo. Puedes correrlo de nuevo sin problema.
 
 ## 4. Verificar
 
@@ -106,7 +106,7 @@ docker compose ps                           # estado
 
 ## 6. Actualizar
 
-La version de MediaMTX esta fijada (`1.21.2`). Para actualizar: editar `image: bluenviron/mediamtx:...` en `docker-compose.yml` por la version nueva (ver https://github.com/bluenviron/mediamtx/releases), y:
+La version de MediaMTX esta fijada (`1.21.2-ffmpeg`; usar siempre la variante `-ffmpeg`, trae ffmpeg para el audio). Para actualizar: editar `image: bluenviron/mediamtx:...-ffmpeg` en `docker-compose.yml` por la version nueva (ver https://github.com/bluenviron/mediamtx/releases), y:
 
 ```bash
 docker compose pull && docker compose up -d
@@ -138,9 +138,149 @@ Actualizaciones del sistema: `sudo apt update && sudo apt -y upgrade`.
 
 ## 9. Seguridad (resumen)
 
-- Solo 22 (tu IP), 80, 443, 1935 y 8189 estan abiertos. API y metrics de MediaMTX estan apagados.
-- Solo existen streams `live/<id>`; cualquier otra ruta se rechaza.
+- Solo 22 (tu IP), 80, 443, 1935, 8189 y TURN (3478, 49160-49200/udp) estan abiertos. API y metrics de MediaMTX estan apagados.
+- Solo existen streams `ingest/<id>` (entrada con audio) y `live/<id>`; cualquier otra ruta se rechaza.
+- RTSP de MediaMTX escucha solo en `127.0.0.1` dentro del contenedor (relay de audio); no se publica ni es alcanzable desde fuera.
 - Cada conexion se valida contra Supabase (usuario autenticado y rol correcto).
 - RTMP en claro lleva el token en la URL (vence en 1 hora): aceptable para el piloto. Mejora futura: RTMPS.
 - El archivo `.env` no se sube al repo (esta en `.gitignore`). No lo compartas.
-- Nota: Docker publica sus puertos saltandose ufw; por eso el compose solo publica los puertos listados arriba.
+- Nota: Docker publica sus puertos saltandose ufw; por eso el compose solo publica los puertos listados arriba. coturn usa red host (si pasa por ufw).
+- TURN: credenciales temporales (1 h), sin acceso a redes privadas (`denied-peer-ip`) y con cuotas; ver seccion 10.
+
+## 10. Voz en vivo (TURN)
+
+**Para que sirve.** La voz supervisor <-> casco usa WebRTC. El casco va por 4G detras de CGNAT: la conexion directa
+casi nunca se logra y, sin un servidor TURN que retransmita el audio, **no hay audio**. `coturn` (contenedor `coturn`,
+imagen fijada `coturn/coturn:4.18.0-r0`) hace de STUN (descubrir IP) y TURN (relay). Las credenciales son temporales:
+la Edge Function `turn-credentials` las firma con `TURN_SECRET` y vencen en 1 hora.
+
+| Puerto | Protocolo | Uso |
+|---|---|---|
+| 3478 | UDP y TCP | STUN/TURN (señalizacion y relay hacia el cliente) |
+| 49160-49200 | UDP | Puertos de relay (un par por llamada; 41 alcanzan de sobra) |
+
+Sin TLS en esta etapa (no se abre 5349). Usa `network_mode: host` (recomendado por la imagen oficial para rangos de
+puertos) y no choca con MediaMTX (1935, 8189) ni Caddy (80, 443). `install.sh` abre todo en `ufw`.
+**Si tu proveedor tiene firewall en el panel, abre tambien 3478 UDP/TCP y 49160-49200 UDP alli.**
+
+### Cargar el secreto en la Edge Function (pasos para no tecnicos)
+1. Conectate: `ssh root@IP_DEL_VPS`
+2. `cd casco/server && grep TURN_SECRET .env` -> muestra `TURN_SECRET=<texto largo>`. Copia solo lo que va despues del `=`.
+3. En Supabase: *Edge Functions > Secrets* (o `supabase secrets set TURN_SECRET=<texto>`): crear `TURN_SECRET` con ese valor.
+   Opcional: `TURN_HOST` (por defecto la IP publica del VPS; el casco no resuelve sslip.io).
+4. No lo pegues en chats, mails ni en el repo. Si se filtra: borrar la linea `TURN_SECRET=` de `.env`, correr
+   `sudo bash install.sh --admin-ip ...` (genera uno nuevo) y volver a cargarlo en Supabase.
+
+### Probar
+Desde **otra** maquina (no el VPS):
+
+```bash
+# 1) STUN responde por UDP y TCP (no prueba el relay)
+bash test/test-turn.sh IP_DEL_VPS
+
+# 2) Credencial temporal (en el VPS, carpeta server/). Imprime JSON como la Edge Function:
+bash test/turn-creds.sh            # usuario "test", vence en 1 h
+# one-liner equivalente, sin script:
+U="$(( $(date +%s) + 3600 )):test"; echo "username=$U"; \
+  echo "credential=$(printf %s "$U" | openssl dgst -sha1 -hmac "$(sed -n 's/^TURN_SECRET=//p' .env)" -binary | openssl base64 -A)"
+```
+
+3) Relay real: abrir https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/ , borrar los servidores de
+la lista, agregar `turn:IP_DEL_VPS:3478?transport=udp` con el `username` y `credential` del paso 2, y pulsar
+*Gather candidates*. Debe aparecer al menos un candidato **`relay`** (tipo `relay`, IP = la del VPS, puerto 49160-49200).
+Si solo salen `host`/`srflx`, el relay NO funciona (ver fallos). Alternativa por consola:
+`turnutils_uclient -u "<username>" -w "<credential>" -p 3478 IP_DEL_VPS` (paquete `coturn-utils`/`coturn`).
+
+### Logs y fallos comunes
+`docker compose logs -f --tail 50 coturn`
+
+| Sintoma | Causa probable | Solucion |
+|---|---|---|
+| `test-turn.sh` falla en UDP pero TCP ok | UDP 3478 bloqueado por el proveedor o ufw | Abrir 3478/udp en panel y `ufw`; algunos proveedores filtran UDP: consultar |
+| STUN responde pero no hay candidato `relay` | Rango 49160-49200/udp cerrado, o `PUBLIC_IP` mal | Abrir el rango en ufw **y** en el panel; revisar `PUBLIC_IP` en `.env` y reiniciar: `docker compose up -d --force-recreate coturn` |
+| `relay` con IP privada / audio mudo | `external-ip` incorrecto (VPS con NAT 1:1 como Oracle/AWS/GCP: la IP publica no esta en la interfaz) | `PUBLIC_IP` debe ser la IP publica real; con NAT 1:1 coturn necesita `external-ip=<publica>/<privada>`: editar la linea en `docker-compose.yml` |
+| `401 Unauthorized` / `Cannot find credentials` en logs | `TURN_SECRET` distinto entre `.env` y Edge Function, o reloj desfasado | Recargar el mismo secreto; `timedatectl` en el VPS (NTP activo); el `username` debe ser `<exp>:<usuario>` con `exp` futuro |
+| Dos clientes en la misma red/VPS no se oyen | Hairpin NAT: el relay no puede enviar a la IP publica propia (esta en `denied-peer-ip` a proposito) | Probar desde redes distintas; entre dos equipos de la misma LAN la conexion es directa |
+| `403 Forbidden IP` en logs | El peer cae en un rango denegado (privado/loopback) | Esperado: el relay no debe alcanzar la red interna |
+| `Allocation Quota Reached` (486) | Mas de 4 allocations por usuario o 20 en total | Subir `user-quota` / `total-quota` en `turnserver.conf` y recrear coturn |
+| coturn no arranca | Opcion invalida para la version | `docker compose logs coturn`; en 4.18 `no-cli` y `no-dtls` ya no existen |
+
+### Costos de trafico
+El audio es Opus ~32 kbps por sentido (~40-50 kbps con cabeceras IP/UDP/RTP). Con relay, el servidor recibe y reenvia
+ambos sentidos: ~100 kbps de salida por llamada ~ **45 MB por hora de llamada** (~20 MB por sentido). Un VPS comun trae
+1-2 TB/mes: sobra. Solo se usa relay cuando no hay camino directo; el video (MediaMTX) es aparte. Topes:
+`max-bps=64000` B/s por sesion y `bps-capacity=500000` B/s total.
+
+### Actualizar coturn
+Cambiar la etiqueta en `docker-compose.yml` (`coturn/coturn:<version>-r<N>`, ver
+https://hub.docker.com/r/coturn/coturn/tags), revisar las notas de version por opciones eliminadas y:
+`docker compose pull coturn && docker compose up -d coturn`.
+
+## 11. Audio del casco
+
+**Problema.** El casco envia video H.264 + audio AAC por RTMP. El navegador (WebRTC/WHEP) solo reproduce Opus o G.711 y MediaMTX
+no transcodifica. Solucion: el casco publica en `ingest/<id>` y un `ffmpeg` dentro del contenedor lo republica en `live/<id>`
+con el **video copiado** (sin recodificar) y el **audio en Opus mono 24 kbps / 48 kHz**. El visor no cambia: sigue leyendo
+`https://<dominio>/live/<id>/whep`.
+
+```
+Casco --RTMP--> ingest/<id> (H.264+AAC) --ffmpeg (relay-audio.sh)--> live/<id> (H.264+Opus) --WHEP--> Visor
+Casco viejo (solo video) --RTMP--> live/<id> ------------------------------------------------^   (sigue funcionando)
+```
+
+| Pieza | Donde | Que hace |
+|---|---|---|
+| `mediamtx.yml` -> `paths` `~^ingest/<id>$` | servidor | `runOnAvailable: sh /relay-audio.sh` + `runOnAvailableRestart: yes` (arranca cuando el casco empieza a publicar, termina cuando corta, reintenta cada 5 s si falla) |
+| `relay-audio.sh` | montado en el contenedor | valida el `<id>`, toma el JWT del casco de la query y ejecuta ffmpeg con baja latencia (`-fflags +nobuffer`, `-flags +low_delay`, `-muxdelay 0`, `-flush_packets 1`) |
+| imagen `bluenviron/mediamtx:1.21.2-ffmpeg` | `docker-compose.yml` | Alpine + ffmpeg (con libopus) |
+| RTSP en `127.0.0.1:8554` | solo dentro del contenedor | canal interno entre MediaMTX y ffmpeg; no se publica |
+
+**Que ruta usa el casco.** `rtmp://<dominio>:1935/ingest/<id>?user=device&pass=<JWT>` (video+audio). El casco anterior, que
+publica solo video en `live/<id>`, sigue funcionando sin cambios.
+
+**Autorizacion (importante).** El relay NO tiene permisos propios: reusa el mismo JWT del casco (`pass=` / `token=` de la
+query de `ingest/<id>`), asi que **todo pasa por la Edge Function `media-auth`** y no hay ninguna ruta sin autenticar
+(`authHTTPExclude` solo filtra por accion y path, no por IP, por eso no se usa). La funcion debe permitir al rol `device`:
+
+| Accion | Path | Quien |
+|---|---|---|
+| `publish` | `ingest/<su device_id>` | el casco (nueva regla) |
+| `read` | `ingest/<su device_id>` | el mismo casco, porque ffmpeg lee con su JWT (nueva regla) |
+| `publish` | `live/<su device_id>` | el casco / su relay (regla actual) |
+| `read` | `live/<id>` | solo `viewer`/`admin` (regla actual); los visores NUNCA leen `ingest/` |
+
+Sin la regla de `read` en `ingest/`, ffmpeg recibe 401 y en los logs aparece `401`/`authentication failed` cada 5 s.
+El JWT dura 1 h pero solo se valida al conectar; la transmision del casco esta limitada a 10 min, asi que un reinicio
+del relay siempre ocurre con el token vigente.
+
+**Consumo estimado (1 vCPU / ~950 MB).** Video copiado: ~0 CPU. Audio mono 24 kbps: ~1-3 % de un vCPU y ~40-60 MB de RAM
+por casco transmitiendo (el contenedor tiene tope `mem_limit: 400m`, `cpus: 0.8`). Sin cascos: ~40 MB de MediaMTX.
+Con 1-3 cascos simultaneos sobra margen; coturn y Caddy no se ven afectados.
+
+**Ver los logs de ffmpeg.** Salen mezclados con los de MediaMTX (nivel `warning`):
+
+```bash
+cd casco/server
+docker compose logs -f --tail 80 mediamtx
+docker compose logs --tail 200 mediamtx | grep -i -E "runOnAvailable|ffmpeg|ingest/|live/|opus"
+docker compose exec mediamtx ps | grep ffmpeg     # ffmpeg vivo mientras el casco transmite
+```
+
+Un arranque sano muestra, para `ingest/<id>`, "stream is available" con las pistas (H264, MPEG-4 Audio) y despues para
+`live/<id>` "(H264, Opus)".
+
+**Probar sin casco.** Modo prueba + `bash test/test-audio.sh live.tudominio.com` (ver `test/`): publica testsrc + sine por
+RTMP a `ingest/test` y comprueba por WHEP que `live/test` ofrece H264 y Opus.
+
+### Problemas comunes (audio)
+
+| Sintoma | Causa probable | Solucion |
+|---|---|---|
+| El visor ve video pero sin audio | El casco publica en `live/<id>` (ruta vieja, solo video) o no manda audio | Confirmar que usa `ingest/<id>`; ver en logs si `ingest/<id>` trae pista de audio |
+| `ingest/<id>` esta online pero `live/<id>` no existe | ffmpeg no arranca o recibe 401 | Logs (arriba). 401 = falta la regla `read` de `ingest/` en `media-auth` o JWT vencido. `executable file not found` = no se esta usando la imagen `-ffmpeg` (`docker compose images`) |
+| ffmpeg se reinicia en bucle cada 5 s | Fallo repetido (auth, codec de audio no soportado, `relay-audio.sh` con finales de linea CRLF) | Leer el error de ffmpeg en los logs; el script debe tener LF (el repo lo fuerza con `.gitattributes`) |
+| `relay-audio: ... no envio pass= ni token=` | El casco publico sin credenciales en la query | Revisar la URL de ingest del casco |
+| Audio desfasado respecto al video | Reloj del audio del casco con deriva, o picos de red | Agregar `-af aresample=async=1:first_pts=0` antes de `-c:a` en `relay-audio.sh`; revisar que el casco manda AAC-LC 44.1/48 kHz |
+| Audio entrecortado / "robotico" | CPU saturada del VPS | `docker stats`; subir `-b:a` a 32k o liberar CPU; no usar `-ar` menor a 48000 |
+| Latencia de audio mayor que la del video | Buffer del navegador al sincronizar | Es normal ~100-300 ms; el relay agrega < 100 ms |
+| `unknown encoder 'libopus'` | Imagen no es la `-ffmpeg` oficial | Volver a `bluenviron/mediamtx:1.21.2-ffmpeg` y `docker compose pull && docker compose up -d` |

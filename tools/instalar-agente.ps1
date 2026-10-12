@@ -17,6 +17,9 @@ if (-not (Test-Path $Config)) { throw "No existe config: $Config" }
 & $Adb shell pm grant $pkg android.permission.READ_EXTERNAL_STORAGE
 # CAMERA es de runtime (targetSdk 28) y la app no tiene UI para pedirla: se concede aqui (video en vivo).
 & $Adb shell pm grant $pkg android.permission.CAMERA
+# Tanda 3 (salud, ordenes del supervisor, audio del video): sin permisos nuevos; ver android/config.example.json.
+# RECORD_AUDIO tambien es de runtime (targetSdk 28): llamada de voz bidireccional. MODIFY_AUDIO_SETTINGS es normal.
+& $Adb shell pm grant $pkg android.permission.RECORD_AUDIO
 & $Adb shell "mkdir -p /sdcard/Android/data/$pkg/files"
 & $Adb push $Config "/sdcard/Android/data/$pkg/files/config.json"
 # Habilitar accesibilidad (deteccion de SOS)

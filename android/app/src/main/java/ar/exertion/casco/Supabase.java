@@ -24,6 +24,7 @@ final class Supabase {
     private final Config cfg;
     private String token;
     private long tokenExpiresAt; // elapsedRealtime
+    private volatile long serverOffsetMs;  // servidor - casco (ms), de la cabecera Date
 
     Supabase(Config cfg) { this.cfg = cfg; }
 
@@ -94,6 +95,8 @@ final class Supabase {
                 }
             }
             int code = c.getResponseCode();
+            long date = c.getDate(); // reloj del servidor: el del casco puede estar corrido
+            if (date > 0) serverOffsetMs = date - System.currentTimeMillis();
             InputStream in = code < 400 ? c.getInputStream() : c.getErrorStream();
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             if (in != null) {
@@ -165,6 +168,12 @@ final class Supabase {
 
     /** Inserta un evento en public.events (un intento; el que llama decide reintentos). */
     boolean insertEvent(String type, String keyCode, Integer pressMs, String mediaPath, Integer battery) {
+        return insertEvent(type, keyCode, pressMs, mediaPath, battery, null);
+    }
+
+    /** Igual que arriba con payload jsonb (objeto, <= 2 KB: lo exige events_payload_ck). */
+    boolean insertEvent(String type, String keyCode, Integer pressMs, String mediaPath, Integer battery,
+                        JSONObject payload) {
         try {
             JSONObject ev = new JSONObject()
                     .put("device_id", cfg.deviceId)
@@ -173,10 +182,151 @@ final class Supabase {
             if (pressMs != null) ev.put("press_ms", pressMs);
             if (mediaPath != null) ev.put("media_path", mediaPath);
             if (battery != null) ev.put("battery", battery);
+            if (payload != null) {
+                if (payload.toString().getBytes("UTF-8").length > 2048) {
+                    Log.w(TAG, "insertEvent " + type + ": payload > 2 KB, se omite");
+                } else {
+                    ev.put("payload", payload);
+                }
+            }
             call("POST", "/rest/v1/events", "application/json", ev.toString().getBytes("UTF-8"), null);
             return true;
         } catch (Exception e) {
             Log.w(TAG, "insertEvent " + type + " fallo: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // ---- voz (rtc_signals + turn-credentials) ----
+
+    /** GET autenticado con timeouts cortos (4 s/6 s); ante 401 renueva el token y reintenta una vez. */
+    private String getShort(String path) throws Exception {
+        try {
+            return http("GET", path, null, null, null, true, 4_000, 6_000);
+        } catch (HttpError e) {
+            if (e.code != 401) throw e;
+            invalidateToken();
+            return http("GET", path, null, null, null, true, 4_000, 6_000);
+        }
+    }
+
+    /** Una senal de rtc_signals enviada por el visor. */
+    static final class Signal {
+        final String id, callId, kind;
+        final JSONObject payload;
+        Signal(String id, String callId, String kind, JSONObject payload) {
+            this.id = id; this.callId = callId; this.kind = kind; this.payload = payload;
+        }
+    }
+
+    private static final java.text.SimpleDateFormat ISO = isoFormat();
+    private static java.text.SimpleDateFormat isoFormat() {
+        java.text.SimpleDateFormat f = new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US);
+        f.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
+        return f;
+    }
+
+    /**
+     * Senales del visor para este casco de los ultimos {@code windowMs} (hora del servidor), en orden.
+     * Timeouts cortos. Lanza excepcion ante error de red/HTTP.
+     */
+    java.util.List<Signal> viewerSignals(long windowMs) throws Exception {
+        String since;
+        synchronized (ISO) {
+            since = ISO.format(new java.util.Date(System.currentTimeMillis() + serverOffsetMs - windowMs));
+        }
+        String path = "/rest/v1/rtc_signals?select=id,call_id,kind,payload&device_id=eq."
+                + java.net.URLEncoder.encode(cfg.deviceId, "UTF-8")
+                + "&from_role=eq.viewer&order=created_at.asc&created_at=gte." + since;
+        org.json.JSONArray a = new org.json.JSONArray(getShort(path));
+        java.util.ArrayList<Signal> out = new java.util.ArrayList<>();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.getJSONObject(i);
+            JSONObject p = o.optJSONObject("payload");
+            out.add(new Signal(o.optString("id"), o.optString("call_id"), o.optString("kind"),
+                    p != null ? p : new JSONObject()));
+        }
+        return out;
+    }
+
+    /** Publica una senal del casco (answer/ice/hangup/busy). El device no puede leerla: sin .select(). */
+    boolean postSignal(String callId, String kind, JSONObject payload) {
+        try {
+            JSONObject r = new JSONObject()
+                    .put("device_id", cfg.deviceId)
+                    .put("call_id", callId)
+                    .put("kind", kind)
+                    .put("payload", payload != null ? payload : new JSONObject());
+            call("POST", "/rest/v1/rtc_signals", "application/json", r.toString().getBytes("UTF-8"), null);
+            return true;
+        } catch (Exception e) {
+            Log.w(TAG, "rtc_signals " + kind + " fallo: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Credenciales TURN temporales ({urls, username, credential, ttl}) o null si falla. Nunca loguear el valor. */
+    JSONObject turnCredentials() {
+        try {
+            return new JSONObject(getShort("/functions/v1/turn-credentials"));
+        } catch (Exception e) {
+            Log.w(TAG, "turn-credentials fallo: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // ---- ordenes del supervisor (broadcasts + broadcast_acks, docs/PROTOCOLO-CENTRO.md seccion 4) ----
+
+    /** Una orden de public.broadcasts dirigida a este casco (ya filtrada por device_ids). */
+    static final class Broadcast {
+        final String id, kind, message;
+        final int repeat;
+        Broadcast(String id, String kind, String message, int repeat) {
+            this.id = id; this.kind = kind; this.message = message; this.repeat = repeat;
+        }
+    }
+
+    /**
+     * Ordenes de los ultimos 2 min (hora del servidor) en orden de creacion. Filtra device_ids (null o contiene
+     * este casco). Timeouts cortos. Lanza excepcion ante error de red/HTTP.
+     */
+    java.util.List<Broadcast> recentBroadcasts() throws Exception {
+        String since = BroadcastPolicy.isoUtc(System.currentTimeMillis() + serverOffsetMs - BroadcastPolicy.WINDOW_MS);
+        String path = "/rest/v1/broadcasts?select=id,kind,message,device_ids,repeat&created_at=gte." + since
+                + "&order=created_at.asc";
+        org.json.JSONArray a = new org.json.JSONArray(getShort(path));
+        java.util.ArrayList<Broadcast> out = new java.util.ArrayList<>();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.getJSONObject(i);
+            java.util.List<String> ids = null;
+            org.json.JSONArray d = o.optJSONArray("device_ids");
+            if (d != null) {
+                ids = new java.util.ArrayList<>();
+                for (int k = 0; k < d.length(); k++) ids.add(d.optString(k));
+            }
+            if (!BroadcastPolicy.targets(ids, cfg.deviceId)) continue;
+            out.add(new Broadcast(o.optString("id"), o.optString("kind"), o.optString("message", ""),
+                    BroadcastPolicy.clampRepeat(o.optInt("repeat", 3))));
+        }
+        return out;
+    }
+
+    /**
+     * Ack de recepcion AL INICIAR la reproduccion (la policy solo acepta acks de ordenes de < 2 min).
+     * Solo {broadcast_id, device_id}; Prefer: return=minimal ya va en toda llamada (el device no puede leer
+     * lo que inserta). 409 = ya registrado = exito.
+     */
+    boolean ackBroadcast(String broadcastId) {
+        try {
+            JSONObject r = new JSONObject().put("broadcast_id", broadcastId).put("device_id", cfg.deviceId);
+            call("POST", "/rest/v1/broadcast_acks", "application/json", r.toString().getBytes("UTF-8"), null);
+            return true;
+        } catch (HttpError e) {
+            if (e.code == 409) return true;
+            Log.w(TAG, "broadcast_acks fallo: " + e.getMessage());
+            return false;
+        } catch (Exception e) {
+            Log.w(TAG, "broadcast_acks fallo: " + e.getMessage());
             return false;
         }
     }

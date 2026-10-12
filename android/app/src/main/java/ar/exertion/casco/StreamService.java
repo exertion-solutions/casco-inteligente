@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
+import android.media.MediaRecorder;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
@@ -26,8 +27,9 @@ import com.pedro.library.rtmp.RtmpCamera2;
 import java.net.URLEncoder;
 
 /**
- * Servicio en primer plano que transmite la camara trasera por RTMP (RootEncoder, sin preview ni
- * audio) a rtmp://<stream_host>:1935/live/<device_id>?user=device&pass=<access_token>.
+ * Servicio en primer plano que transmite la camara trasera por RTMP (RootEncoder, sin preview) a
+ * rtmp://<stream_host>:1935/live/<device_id>?user=device&pass=<access_token>. Audio solo si stream_audio=true
+ * (AAC-LC mono 16 kHz ~24 kbps, ruta ingest/<device_id>; ver StreamPolicy.ingestPath).
  *
  * Todo el estado vive en el hilo "casco-stream" (sh). La camara se libera SIEMPRE en shutdown()/onDestroy().
  * Arranque: MediaWatcherService (comando 'start' remoto) o SOS/caida (local, 120 s).
@@ -52,6 +54,11 @@ public class StreamService extends Service {
     private RtmpCamera2 cam;       // acceso bajo synchronized(this)
     private int gen;               // invalida callbacks de intentos anteriores (solo hilo sh)
     private int attempt;           // reintentos consecutivos (solo hilo sh)
+    private boolean announced;     // "transmision iniciada" dicha en esta sesion (solo hilo sh)
+    private boolean audioOn;       // el intento actual lleva pista de audio (solo hilo sh)
+    private boolean audioFailed;   // el audio dio problemas en esta sesion: seguir solo con video (solo hilo sh)
+    private boolean audioMuted;    // silenciado por llamada WebRTC (solo hilo sh)
+    private boolean permWarned;
 
     static void start(Context c, int src) {
         try {
@@ -152,8 +159,14 @@ public class StreamService extends Service {
             releaseCamera();
             String token = sb.accessToken(); // red; renueva si quedan <5 min
             String host = cfg.streamHost.contains(":") ? cfg.streamHost : cfg.streamHost + ":1935";
-            String url = "rtmp://" + host + "/live/" + cfg.deviceId + "?user=device&pass="
-                    + URLEncoder.encode(token, "UTF-8"); // nunca loguear url: lleva el token
+            // el microfono SOLO se abre con stream_audio=true Y transmision activa (este intento)
+            boolean hasMic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+            if (cfg.streamAudio && !hasMic && !permWarned) {
+                permWarned = true;
+                Log.w(TAG, "stream: stream_audio=true pero falta RECORD_AUDIO: video sin audio "
+                        + "(adb shell pm grant ar.exertion.casco android.permission.RECORD_AUDIO)");
+            }
+            boolean wantAudio = StreamPolicy.wantAudio(cfg.streamAudio, hasMic, audioFailed);
 
             RtmpCamera2 c = new RtmpCamera2(this, new ConnectChecker() {
                 @Override public void onConnectionStarted(String u) { }
@@ -162,6 +175,10 @@ public class StreamService extends Service {
                         if (g != gen) return;
                         attempt = 0;
                         Log.i(TAG, "stream: RTMP conectado, transmitiendo");
+                        if (!announced) {
+                            announced = true;
+                            SpanishVoice.say(audioOn ? SpanishVoice.AUDIO_ON : SpanishVoice.STREAM_ON);
+                        }
                     });
                 }
                 @Override public void onConnectionFailed(String reason) {
@@ -209,22 +226,75 @@ public class StreamService extends Service {
                 shutdown();
                 return;
             }
+            audioOn = false;
+            audioMuted = false;
+            if (wantAudio) {
+                // AAC-LC mono 16 kHz 24 kbps (prepareAudio(fuente, bitrate, sampleRate, estereo, eco, ruido));
+                // RtmpClient de RootEncoder 2.5.5 tambien empaqueta G.711, pero el relay del servidor espera AAC.
+                try {
+                    audioOn = c.prepareAudio(MediaRecorder.AudioSource.MIC, 24_000, 16_000, false, false, true);
+                } catch (Throwable t) {
+                    Log.w(TAG, "stream: prepareAudio fallo (" + t.getClass().getSimpleName() + "), sigue solo video");
+                }
+                if (!audioOn) audioFailed = true;
+                else if (StreamPolicy.audioMuted(VoiceCallManager.inCall)) {
+                    c.disableAudio(); // arranca silenciado: hay llamada, el microfono es del WebRTC
+                    audioMuted = true;
+                }
+            }
+            String path = StreamPolicy.ingestPath(audioOn, cfg.streamIngestPath);
+            String url = "rtmp://" + host + "/" + path + "/" + cfg.deviceId + "?user=device&pass="
+                    + URLEncoder.encode(token, "UTF-8"); // nunca loguear url: lleva el token
+            Log.i(TAG, "stream: ruta " + path + "/<id> audio=" + (audioOn ? "AAC 16kHz mono 24kbps" : "no"));
             // en modo sin preview esto solo elige camara trasera; la camara se abre en startStream()
             c.startPreview(CameraHelper.Facing.BACK, cfg.streamWidth, cfg.streamHeight, cfg.streamFps,
                     cfg.streamRotation);
             c.startStream(url); // bloquea hasta abrir la camara; el resultado RTMP llega por ConnectChecker
+            if (audioOn) sh.postDelayed(audioTick, AUDIO_TICK_MS);
         } catch (Throwable e) {
             Log.e(TAG, "stream: excepcion al conectar: " + e.getClass().getSimpleName() + " " + e.getMessage());
             retry(g, "excepcion " + e.getClass().getSimpleName());
         }
     }
 
+    private static final long AUDIO_TICK_MS = 500L;
+
+    /**
+     * En sh: durante una llamada WebRTC el audio del stream se silencia (el microfono es del WebRTC) y se
+     * reanuda al colgar. El video no se toca. Se detiene solo cuando el intento termina (audioOn=false).
+     */
+    private final Runnable audioTick = new Runnable() {
+        @Override public void run() {
+            if (!audioOn || source == StreamPolicy.SRC_NONE) return;
+            boolean want = StreamPolicy.audioMuted(VoiceCallManager.inCall);
+            if (want != audioMuted) {
+                RtmpCamera2 c;
+                synchronized (StreamService.this) { c = cam; }
+                try {
+                    if (c != null) {
+                        if (want) c.disableAudio(); else c.enableAudio();
+                        audioMuted = want;
+                        Log.i(TAG, "stream: audio " + (want ? "silenciado (llamada de voz)" : "reanudado"));
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "stream: no se pudo " + (want ? "silenciar" : "reanudar") + " el audio: " + t);
+                }
+            }
+            sh.postDelayed(this, AUDIO_TICK_MS);
+        }
+    };
+
     /** Un solo reintento por intento fallido (varios callbacks pueden avisar lo mismo). */
     private void retry(int g, String why) {
         if (g != gen || source == StreamPolicy.SRC_NONE) return;
         gen++; // invalida los demas callbacks de este intento
+        sh.removeCallbacks(audioTick);
         releaseCamera();
         attempt++;
+        if (audioOn && attempt >= StreamPolicy.AUDIO_GIVE_UP_ATTEMPT && !audioFailed) {
+            audioFailed = true; // no perder el video por el microfono: reintentos siguientes sin audio, en live/
+            Log.w(TAG, "stream: el audio no se estabiliza, se continua solo con video");
+        }
         if (attempt > StreamPolicy.MAX_RETRIES) {
             Log.e(TAG, "stream: " + why + ". Sin mas reintentos (" + StreamPolicy.MAX_RETRIES + "), se detiene");
             shutdown();
@@ -254,6 +324,11 @@ public class StreamService extends Service {
     }
 
     private void shutdown() {
+        if (source != StreamPolicy.SRC_NONE) SpanishVoice.say(SpanishVoice.STREAM_OFF);
+        announced = false;
+        audioOn = false;
+        audioFailed = false;
+        audioMuted = false;
         gen++;
         sh.removeCallbacksAndMessages(null);
         try {

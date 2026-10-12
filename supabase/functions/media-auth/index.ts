@@ -14,7 +14,9 @@ export interface Deps {
   secret: string | undefined;
 }
 
-const PATH_RE = /^live\/([A-Za-z0-9_-]{1,64})$/;
+// live/<id>   : lo que ven viewer/admin (el casco tambien puede publicar aqui: compatibilidad).
+// ingest/<id> : el casco publica (audio) y su relay en el VPS lo lee con el JWT del casco; el visor no.
+const PATH_RE = /^(live|ingest)\/([A-Za-z0-9_-]{1,64})$/;
 const JWT_RE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 const MAX_BODY = 8192;
 
@@ -60,11 +62,18 @@ export function decide(user: AuthUser, action: string, rawPath: string): string 
   const role = str(meta.role);
   if (action === "publish") {
     if (role !== "device") return "role";
-    if (str(meta.device_id) !== m[1]) return "device";
-    return null;
+    if (str(meta.device_id) !== m[2]) return "device";
+    return null; // live/<id> o ingest/<id>
   }
   if (action === "read" || action === "playback") {
-    return role === "viewer" || role === "admin" ? null : "role";
+    // device: lee SOLO su propio ingest/<id> (lo consume el relay del VPS con el JWT del casco).
+    if (role === "device") {
+      if (action !== "read" || m[1] !== "ingest") return "path";
+      return str(meta.device_id) === m[2] ? null : "device";
+    }
+    // viewer/admin: SOLO live/<id>; ingest/ nunca se lee desde el visor.
+    if (role === "viewer" || role === "admin") return m[1] === "live" ? null : "path";
+    return "role";
   }
   return "action";
 }

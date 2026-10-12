@@ -78,3 +78,51 @@ Deno.test("sin MEDIA_AUTH_SECRET configurado: falla cerrada", async () => {
   }));
   assertEquals(r.status, 401);
 });
+
+// ---- audio del casco: ingest/<device_id> (docs/PROTOCOLO-GEO / audio) ----
+Deno.test("ingest: publish device correcto", async () =>
+  assertEquals(await call({ ...base, action: "publish", path: "ingest/4132", protocol: "rtmp", password: jwt("dev4132") }), 200));
+Deno.test("ingest: publish con barra inicial y pass en query", async () =>
+  assertEquals(await call({ ...base, action: "publish", path: "/ingest/4132", query: `user=device&pass=${jwt("dev4132")}` }), 200));
+Deno.test("ingest: publish device_id ajeno", async () =>
+  assertEquals(await call({ ...base, action: "publish", path: "ingest/9999", password: jwt("dev4132") }), 401));
+Deno.test("ingest: viewer/admin no publican", async () => {
+  assertEquals(await call({ ...base, action: "publish", path: "ingest/4132", password: jwt("viewer") }), 401);
+  assertEquals(await call({ ...base, action: "publish", path: "ingest/4132", password: jwt("admin") }), 401);
+});
+Deno.test("ingest: sin rol no publica", async () =>
+  assertEquals(await call({ ...base, action: "publish", path: "ingest/4132", password: jwt("norole") }), 401));
+Deno.test("ingest: viewer/admin NO leen (read y playback)", async () => {
+  for (const a of ["read", "playback"]) {
+    assertEquals(await call({ ...base, action: a, path: "ingest/4132", token: jwt("viewer") }), 401, a);
+    assertEquals(await call({ ...base, action: a, path: "ingest/4132", token: jwt("admin") }), 401, a);
+  }
+});
+Deno.test("ingest: device lee su propio ingest (relay del VPS)", async () =>
+  assertEquals(await call({ ...base, action: "read", path: "ingest/4132", protocol: "rtsp", password: jwt("dev4132") }), 200));
+Deno.test("ingest: device lee ingest ajeno", async () =>
+  assertEquals(await call({ ...base, action: "read", path: "ingest/9999", password: jwt("dev4132") }), 401));
+Deno.test("live: device NO lee live (ni propio ni ajeno)", async () => {
+  assertEquals(await call({ ...base, action: "read", path: "live/4132", password: jwt("dev4132") }), 401);
+  assertEquals(await call({ ...base, action: "read", path: "live/9999", password: jwt("dev4132") }), 401);
+});
+Deno.test("ingest: device no usa playback", async () =>
+  assertEquals(await call({ ...base, action: "playback", path: "ingest/4132", password: jwt("dev4132") }), 401));
+Deno.test("ingest: sin rol no lee", async () =>
+  assertEquals(await call({ ...base, action: "read", path: "ingest/4132", password: jwt("norole") }), 401));
+Deno.test("live: playback viewer permitido; device no lee", async () => {
+  assertEquals(await call({ ...base, action: "playback", path: "live/4132", token: jwt("viewer") }), 200);
+  assertEquals(await call({ ...base, action: "playback", path: "live/4132", token: jwt("dev4132") }), 401);
+});
+Deno.test("live: publish device sigue permitido (compatibilidad)", async () =>
+  assertEquals(await call({ ...base, action: "publish", path: "live/4132", password: jwt("dev4132") }), 200));
+Deno.test("ingest: paths invalidos", async () => {
+  for (const p of ["ingest/", "ingest/a/b", "ingest/../x", "ingest/4 1", "ingest/" + "a".repeat(65), "Ingest/4132", "ingest", "xingest/4132", "ingest/4132/"]) {
+    assertEquals(await call({ ...base, action: "publish", path: p, password: jwt("dev4132") }), 401, p);
+  }
+});
+Deno.test("ingest: acciones api/metrics/pprof", async () => {
+  for (const a of ["api", "metrics", "pprof", ""]) {
+    assertEquals(await call({ ...base, action: a, path: "ingest/4132", password: jwt("dev4132") }), 401, a);
+  }
+});

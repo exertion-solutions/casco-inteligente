@@ -5,6 +5,18 @@ MediaMTX la llama por HTTP en cada conexion (publicar o ver) y ella decide 200 (
 Requiere el secreto `MEDIA_AUTH_SECRET` (lo inventas vos: 32+ caracteres al azar). Sin el, rechaza todo.
 `SUPABASE_URL` y `SUPABASE_ANON_KEY` los inyecta Supabase solo. No se usa `service_role`.
 
+## Reglas de acceso
+| Accion | Ruta | Quien |
+|---|---|---|
+| publish | `ingest/<device_id>` (audio del casco) | rol `device`, solo con su propio `device_id` |
+| publish | `live/<device_id>` (compatibilidad) | rol `device`, solo con su propio `device_id` |
+| read | `ingest/<device_id>` | rol `device`, solo su propio `device_id` (el relay ffmpeg del VPS usa el JWT del casco) |
+| read / playback | `live/<device_id>` | `viewer` o `admin` |
+| read / playback | `ingest/<device_id>` | **nadie mas** (viewer/admin no leen el ingest) |
+| device en `live/` (read), device en `playback`, otra accion (api, metrics, pprof) u otra ruta | | denegado |
+
+Siempre 200 o 401, sin cuerpo.
+
 ## Importante: sin "Verify JWT"
 MediaMTX no manda el encabezado de Supabase, asi que la funcion se despliega SIN verificacion de JWT de Supabase. La proteccion es el secreto `?k=` (comparado en tiempo constante) mas la validacion del token del casco/visor adentro.
 

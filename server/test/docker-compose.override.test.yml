@@ -1,6 +1,9 @@
 # SOLO PRUEBAS: reemplaza la config por test/mediamtx.test.yml (auth interna, sin Edge Function).
+# Mantiene la imagen -ffmpeg y el relay-audio.sh del compose base, asi se prueba tambien
+# ingest/<id> -> live/<id> (ver test/test-audio.sh).
 # Uso (desde la carpeta server/):
 #   docker compose -f docker-compose.yml -f test/docker-compose.override.test.yml up -d
+# Volver a produccion:  docker compose up -d --force-recreate
 # NO usar en produccion.
 services:
   mediamtx:

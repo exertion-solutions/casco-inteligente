@@ -16,6 +16,11 @@ import java.io.FileInputStream;
  *  "device_password":"...","device_id":"4132"}
  * Video (opcionales salvo stream_host): stream_host, stream_width, stream_height, stream_fps,
  * stream_bitrate_kbps (+ stream_rotation 0/90/180/270, por defecto 0).
+ * Voz y hombre caido (docs/PROTOCOLO-VOZ.md, ver android/README-VOZ.md): voice_prompts (true),
+ * voice_auto_answer (true), mandown_enabled (true), mandown_still_seconds (15),
+ * mandown_confirm_seconds (10), mandown_inactivity_seconds (0 = desactivado).
+ * Centro (docs/PROTOCOLO-CENTRO.md): broadcast_enabled (true), broadcast_volume (0-100, 100),
+ * stream_audio (false), stream_ingest_path ("live").
  */
 final class Config {
     static final String RUNDE_FILES = "/sdcard/Android/data/com.tencent.liteav.demo/files";
@@ -25,6 +30,12 @@ final class Config {
     /** "host" o "host:puerto" validado; "" si falta o es invalido (no se transmite). */
     final String streamHost;
     final int streamWidth, streamHeight, streamFps, streamBitrateKbps, streamRotation;
+    final boolean voicePrompts, voiceAutoAnswer, mandownEnabled;
+    final int mandownStillSeconds, mandownConfirmSeconds, mandownInactivitySeconds;
+    final boolean broadcastEnabled, streamAudio;
+    final int broadcastVolume;
+    /** Prefijo de ruta RTMP validado ("live" por defecto). Con audio se publica en "ingest" (ver StreamPolicy). */
+    final String streamIngestPath;
 
     private Config(JSONObject j) {
         String u = j.optString("supabase_url").trim();
@@ -43,6 +54,18 @@ final class Config {
         streamBitrateKbps = clamp(j.optInt("stream_bitrate_kbps", 800), 100, 4000);
         int r = j.optInt("stream_rotation", 0);
         streamRotation = (r == 90 || r == 180 || r == 270) ? r : 0;
+        voicePrompts = j.optBoolean("voice_prompts", true);
+        voiceAutoAnswer = j.optBoolean("voice_auto_answer", true);
+        mandownEnabled = j.optBoolean("mandown_enabled", true);
+        mandownStillSeconds = clamp(j.optInt("mandown_still_seconds", 15), 5, 120);
+        mandownConfirmSeconds = clamp(j.optInt("mandown_confirm_seconds", 10), 5, 60);
+        int ina = j.optInt("mandown_inactivity_seconds", 0);
+        mandownInactivitySeconds = ina <= 0 ? 0 : clamp(ina, 30, 600);
+        broadcastEnabled = j.optBoolean("broadcast_enabled", true);
+        broadcastVolume = clamp(j.optInt("broadcast_volume", 100), 0, 100);
+        streamAudio = j.optBoolean("stream_audio", false);
+        String ip = j.optString("stream_ingest_path", "live").trim();
+        streamIngestPath = ip.matches("[A-Za-z0-9_-]{1,32}") ? ip : "live";
     }
 
     private static int clamp(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }

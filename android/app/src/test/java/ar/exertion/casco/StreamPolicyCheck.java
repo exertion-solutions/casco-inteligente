@@ -47,6 +47,18 @@ public class StreamPolicyCheck {
         eq(30_000L, StreamPolicy.pollDelayMs(99), "poll tope 30 s (muchos)");
         eq(2_000L, StreamPolicy.retryDelayMs(1), "retry 1");
         eq(32_000L, StreamPolicy.retryDelayMs(5), "retry 5");
+        // audio del casco: ruta y condiciones
+        eq("live", StreamPolicy.ingestPath(false, "live"), "sin audio -> live");
+        eq("ingest", StreamPolicy.ingestPath(true, "live"), "con audio -> ingest");
+        eq("ingest", StreamPolicy.ingestPath(true, null), "con audio, sin config -> ingest");
+        eq("otra", StreamPolicy.ingestPath(true, "otra"), "ruta configurada se respeta");
+        eq("otra", StreamPolicy.ingestPath(false, "otra"), "ruta configurada sin audio");
+        eq(true, StreamPolicy.wantAudio(true, true, false), "audio ok");
+        eq(false, StreamPolicy.wantAudio(false, true, false), "stream_audio=false: nunca mic");
+        eq(false, StreamPolicy.wantAudio(true, false, false), "sin RECORD_AUDIO: solo video");
+        eq(false, StreamPolicy.wantAudio(true, true, true), "audio fallo antes: solo video");
+        eq(true, StreamPolicy.audioMuted(true), "silencia en llamada");
+        eq(false, StreamPolicy.audioMuted(false), "reanuda al colgar");
         System.out.println("StreamPolicyCheck OK");
     }
 }

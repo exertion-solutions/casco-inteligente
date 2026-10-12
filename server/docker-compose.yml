@@ -4,10 +4,17 @@ name: casco-video
 
 services:
   mediamtx:
-    image: bluenviron/mediamtx:1.21.2   # version fijada; actualizar a proposito (ver README)
+    # Variante -ffmpeg (Alpine + ffmpeg): necesaria para convertir el audio AAC del casco a Opus
+    # (relay-audio.sh). Misma version de MediaMTX, fijada; actualizar a proposito (ver README).
+    image: bluenviron/mediamtx:1.21.2-ffmpeg
     restart: unless-stopped
+    # Limites para 1 vCPU / ~950 MB: MediaMTX ~40 MB + ~50 MB por casco (ffmpeg, audio mono 24 kbps).
+    mem_limit: 400m
+    cpus: 0.8
+    pids_limit: 256
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./relay-audio.sh:/relay-audio.sh:ro   # relay ingest/<id> -> live/<id> (audio a Opus)
       # La imagen no trae certificados raiz: sin esto MediaMTX no valida el HTTPS de la
       # Edge Function de Supabase ("x509: certificate signed by unknown authority").
       - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
@@ -20,6 +27,7 @@ services:
       - "8189:8189/udp"    # WebRTC ICE sobre UDP (medios hacia el visor)
       - "8189:8189/tcp"    # WebRTC ICE sobre TCP (respaldo si el UDP esta bloqueado)
     # El puerto 8889 (WHEP) NO se publica: solo Caddy lo alcanza por la red interna.
+    # RTSP (8554) tampoco: escucha solo en 127.0.0.1 dentro del contenedor (uso del relay).
     # API (9997), metrics (9998) y pprof estan desactivados en mediamtx.yml.
     logging:
       driver: json-file
@@ -40,6 +48,35 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data      # certificados: NO borrar (limite de emision de Let's Encrypt)
       - caddy_config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # TURN/STUN para la voz en vivo (4G con CGNAT: sin TURN no hay audio).
+  # network_mode host: coturn maneja ~40 puertos UDP de relay y Docker rinde mal con rangos
+  # (lo recomienda la documentacion de la imagen). Puertos: 3478 udp+tcp y 49160-49200/udp;
+  # no chocan con MediaMTX (1935, 8189) ni Caddy (80, 443). Abrirlos en ufw (install.sh).
+  coturn:
+    image: coturn/coturn:4.18.0-r0   # version fijada; actualizar a proposito (ver README)
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      TURN_SECRET: ${TURN_SECRET:?falta TURN_SECRET en .env (lo genera install.sh)}
+      PUBLIC_IP: ${PUBLIC_IP:?falta PUBLIC_IP en .env}
+    volumes:
+      - ./turnserver.conf:/etc/coturn/turnserver.base.conf:ro
+    # El secreto no va en la linea de comandos (se veria en `ps`): se anexa a una copia
+    # de la config en /tmp del contenedor. $$ = escapar $ para docker compose.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        { cat /etc/coturn/turnserver.base.conf
+          echo "static-auth-secret=$$TURN_SECRET"
+          echo "external-ip=$$PUBLIC_IP"
+          echo "denied-peer-ip=$$PUBLIC_IP"
+        } > /tmp/turnserver.conf
+        exec turnserver -c /tmp/turnserver.conf
     logging:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }

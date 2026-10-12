@@ -15,10 +15,18 @@ metrics: false
 pprof: false
 
 # --- Protocolos no usados: apagados ---
-rtsp: false
 hls: false
 srt: false
 playback: false
+
+# --- RTSP: SOLO loopback del contenedor, para el relay de audio (relay-audio.sh) ---
+# No se publica en docker-compose (ni 8554 ni UDP) y escucha en 127.0.0.1: ni otros
+# contenedores ni el exterior lo alcanzan. Solo TCP (sin listeners UDP/multicast).
+# Aun asi cada conexion pasa por authMethod http (el relay reusa el JWT del casco).
+rtsp: true
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+rtspEncryption: "no"
 
 # --- RTMP: entrada desde el casco (en claro; mejora futura: RTMPS) ---
 rtmp: true
@@ -43,7 +51,17 @@ webrtcTrackGatherTimeout: 2s
 writeQueueSize: 512           # valor por defecto; bajarlo provoca perdida de cuadros
 readTimeout: 10s
 
-# --- Paths: SOLO live/<id>. Todo lo demas se rechaza (no hay all_others) ---
+# --- Paths: SOLO ingest/<id> y live/<id>. Todo lo demas se rechaza (no hay all_others) ---
 paths:
+  # Entrada con audio: el casco publica H.264 + AAC aqui (rtmp://host:1935/ingest/<id>).
+  # ffmpeg (imagen -ffmpeg) copia el video y pasa el audio a Opus hacia live/<id>.
+  # runOnAvailable (antes runOnReady) arranca cuando el stream esta listo y se termina
+  # solo cuando el casco corta; Restart reintenta cada 5 s si ffmpeg falla.
+  "~^ingest/[A-Za-z0-9_-]{1,64}$":
+    maxReaders: 2             # solo el relay (2 por si el reinicio solapa)
+    runOnAvailable: sh /relay-audio.sh
+    runOnAvailableRestart: yes
+
+  # Salida para el visor (WHEP). Publican: el relay (con audio) o el casco directo (solo video, compatibilidad).
   "~^live/[A-Za-z0-9_-]{1,64}$":
     maxReaders: 10            # visores simultaneos maximos por casco

@@ -9,6 +9,9 @@
     <!-- Video: camara (runtime; se concede con pm grant, ver README-VIDEO.md) y wake lock durante la transmision. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Voz: RECORD_AUDIO es de runtime (targetSdk 28): se concede con pm grant (tools/instalar-agente.ps1). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
         android:label="Casco Agente"

@@ -1,18 +1,33 @@
 # SOLO PRUEBAS. Usuario/clave de prueba (publicos): no sirven para produccion.
+# Auth interna (sin Edge Function). Incluye el relay de audio ingest/<id> -> live/<id>.
 authMethod: internal
 authInternalUsers:
+  # Usuario de prueba: puede publicar y leer (desde fuera, para test-audio.sh y la prueba de video).
   - user: test
     pass: prueba-casco-1234
     permissions:
       - action: publish
       - action: read
+  # Relay de audio (ffmpeg dentro del contenedor): en produccion reusa el JWT del casco;
+  # en prueba el token es una clave falsa, asi que se permite SOLO desde loopback y SOLO
+  # leer ingest/* y publicar live/*. Equivale a la excepcion que NO existe en produccion.
+  - user: any
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: read
+        path: "~^ingest/[A-Za-z0-9_-]{1,64}$"
+      - action: publish
+        path: "~^live/[A-Za-z0-9_-]{1,64}$"
 api: false
 metrics: false
 pprof: false
-rtsp: false
 hls: false
 srt: false
 playback: false
+rtsp: true
+rtspAddress: 127.0.0.1:8554
+rtspTransports: [tcp]
+rtspEncryption: "no"
 rtmp: true
 rtmpEncryption: "no"
 webrtc: true
@@ -23,5 +38,9 @@ webrtcLocalUDPAddress: :8189
 webrtcLocalTCPAddress: :8189
 webrtcIPsFromInterfaces: false
 paths:
+  "~^ingest/[A-Za-z0-9_-]{1,64}$":
+    maxReaders: 2
+    runOnAvailable: sh /relay-audio.sh
+    runOnAvailableRestart: yes
   "~^live/[A-Za-z0-9_-]{1,64}$":
     maxReaders: 10

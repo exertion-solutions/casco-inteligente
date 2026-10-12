@@ -9,19 +9,24 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.hardware.SensorManager;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
+import android.os.SystemClock;
 import android.os.BatteryManager;
 import android.os.FileObserver;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.IBinder;
-import android.os.Looper;
 import android.util.Log;
+
+import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayDeque;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
@@ -49,6 +54,14 @@ public class MediaWatcherService extends Service {
     private Config cfg;
     private File spool;
     private FallDetector fall;
+    private OrientationTracker orient;
+    private ManDownPolicy mandown;
+    private VoiceCallManager voiceCall;
+    private BroadcastAgent bcast;
+    private HandlerThread sensorThread, teleThread;
+    private Handler tele;
+    private int sensorOrientation = 90;
+    private static volatile MediaWatcherService instance;
     private boolean started;
     private final FileObserver[] observers = new FileObserver[DIRS.length]; // referencia viva
     private final Set<String> seen = new HashSet<>();
@@ -65,6 +78,7 @@ public class MediaWatcherService extends Service {
         up = new Handler(upThread.getLooper());
         spool = new File(getFilesDir(), "spool");
         spool.mkdirs();
+        instance = this;
         Log.i(TAG, "MediaWatcherService onCreate");
     }
 
@@ -88,18 +102,47 @@ public class MediaWatcherService extends Service {
                 h.postDelayed(poll, POLL_MS);
                 if (cfg.streamHost.isEmpty()) {
                     Log.w(TAG, "sin stream_host valido en config.json: video deshabilitado");
-                } else {
-                    h.postDelayed(cmdPoll, 5_000L);
                 }
+                // el poll corre siempre: comandos de video (si hay stream_host) y ordenes del supervisor
+                h.postDelayed(cmdPoll, 5_000L);
                 scheduleHeartbeat();
-                fall = new FallDetector((SensorManager) getSystemService(SENSOR_SERVICE),
-                        () -> h.post(() -> {
+                SpanishVoice.promptsOn = cfg.voicePrompts;
+                // el TTS tambien hace falta para las ordenes del supervisor aunque voice_prompts sea false
+                if (cfg.voicePrompts || cfg.broadcastEnabled) SpanishVoice.instance = new SpanishVoice(this);
+                mandown = new ManDownPolicy(cfg.mandownEnabled, cfg.mandownStillSeconds,
+                        cfg.mandownConfirmSeconds, cfg.mandownInactivitySeconds);
+                SensorManager smgr = (SensorManager) getSystemService(SENSOR_SERVICE);
+                // sensores en su propio hilo: el callback solo hace matematica y despacha a h
+                sensorThread = new HandlerThread("casco-sensors");
+                sensorThread.start();
+                Handler sensH = new Handler(sensorThread.getLooper());
+                fall = new FallDetector(smgr, new FallDetector.Callback() {
+                    @Override public void onFall(float impact) {
+                        h.post(() -> {
                             startLocalStream(); // primero el video (sin red), luego el evento
                             sendEvent("fall", null, null, null, 0, 6);
-                        }));
-                // sensores en el hilo principal: callback solo hace matematica y despacha a h
-                if (!fall.start(new Handler(Looper.getMainLooper()))) {
+                            handleMandown(mandown.onImpact(SystemClock.elapsedRealtime(), impact));
+                        });
+                    }
+                    @Override public void onWindow(boolean still) {
+                        h.post(() -> handleMandown(mandown.update(SystemClock.elapsedRealtime(), still)));
+                    }
+                });
+                if (!fall.start(sensH)) {
                     Log.w(TAG, "sin acelerometro: deteccion de caida deshabilitada");
+                }
+                orient = new OrientationTracker(smgr);
+                if (!orient.start(sensH)) Log.w(TAG, "sin acelerometro: orientacion fija en 0");
+                teleThread = new HandlerThread("casco-tele");
+                teleThread.start();
+                tele = new Handler(teleThread.getLooper());
+                tele.post(() -> sensorOrientation = OrientationTracker.readSensorOrientation(this));
+                tele.postDelayed(oriTick, 5_000L);
+                voiceCall = new VoiceCallManager(this, sb, cfg);
+                voiceCall.start();
+                if (cfg.broadcastEnabled) {
+                    bcast = new BroadcastAgent(this, sb, cfg);
+                    bcast.start();
                 }
                 started = true;
                 Log.i(TAG, "agente iniciado device_id=" + cfg.deviceId);
@@ -112,7 +155,13 @@ public class MediaWatcherService extends Service {
             } else {
                 h.post(() -> {
                     startLocalStream();
-                    sendEvent("sos", "KEY_F11", ms, null, 0, 6);
+                    if (mandown != null && mandown.onManualSos(SystemClock.elapsedRealtime())
+                            == ManDownPolicy.Act.ALERT) {
+                        // F11 durante la cuenta regresiva: un solo SOS, con reason manual_en_caida
+                        sendEvent("sos", "KEY_F11", ms, null, mandownPayload(), 0, 6);
+                    } else {
+                        sendEvent("sos", "KEY_F11", ms, null, null, 0, 6);
+                    }
                 });
             }
         }
@@ -131,35 +180,145 @@ public class MediaWatcherService extends Service {
     /** Cada 3 s (en h): ultimo comando de stream -> StreamPolicy decide. Backoff hasta 30 s si falla la red. */
     private final Runnable cmdPoll = new Runnable() {
         @Override public void run() {
-            try {
-                String[] c = sb.latestStreamCommand();
-                String id = c == null ? null : c[0];
-                StreamPolicy.Act act = StreamPolicy.decide(id, c == null ? null : c[1], lastCmdId, StreamService.source);
-                if (act == StreamPolicy.Act.START) {
-                    Log.i(TAG, "comando start recibido");
-                    StreamService.start(MediaWatcherService.this, StreamPolicy.SRC_REMOTE);
-                } else if (act == StreamPolicy.Act.STOP) {
-                    Log.i(TAG, "comando stop/vencido: deteniendo transmision");
-                    StreamService.stop(MediaWatcherService.this);
+            if (!cfg.streamHost.isEmpty()) {
+                try {
+                    String[] c = sb.latestStreamCommand();
+                    String id = c == null ? null : c[0];
+                    StreamPolicy.Act act = StreamPolicy.decide(id, c == null ? null : c[1], lastCmdId, StreamService.source);
+                    if (act == StreamPolicy.Act.START) {
+                        Log.i(TAG, "comando start recibido");
+                        StreamService.start(MediaWatcherService.this, StreamPolicy.SRC_REMOTE);
+                    } else if (act == StreamPolicy.Act.STOP) {
+                        Log.i(TAG, "comando stop/vencido: deteniendo transmision");
+                        StreamService.stop(MediaWatcherService.this);
+                    }
+                    if (id != null) lastCmdId = id;
+                    if (cmdFails > 0) Log.i(TAG, "poll de comandos recuperado");
+                    cmdFails = 0;
+                } catch (Exception e) {
+                    if (cmdFails++ == 0) Log.w(TAG, "poll de comandos fallo (backoff hasta 30 s): " + e.getMessage());
                 }
-                if (id != null) lastCmdId = id;
-                if (cmdFails > 0) Log.i(TAG, "poll de comandos recuperado");
-                cmdFails = 0;
-            } catch (Exception e) {
-                if (cmdFails++ == 0) Log.w(TAG, "poll de comandos fallo (backoff hasta 30 s): " + e.getMessage());
             }
+            // ordenes del supervisor: la red corre en su propio hilo (no demora SOS en h); backoff propio
+            if (bcast != null) bcast.tick();
             h.postDelayed(this, StreamPolicy.pollDelayMs(cmdFails));
         }
     };
 
     /** Inserta un evento reintentando (en h, cada 10 s) hasta maxAttempts: SOS/caida no deben perderse. */
     private void sendEvent(String type, String key, Integer ms, String path, int attempt, int maxAttempts) {
-        if (sb.insertEvent(type, key, ms, path, battery())) {
+        sendEvent(type, key, ms, path, null, attempt, maxAttempts);
+    }
+
+    private void sendEvent(String type, String key, Integer ms, String path, JSONObject payload,
+                           int attempt, int maxAttempts) {
+        if (sb.insertEvent(type, key, ms, path, battery(), payload)) {
             Log.i(TAG, "evento " + type + " enviado");
+            if ("sos".equals(type)) SpanishVoice.say(SpanishVoice.EMERGENCIA);
         } else if (attempt + 1 < maxAttempts) {
-            h.postDelayed(() -> sendEvent(type, key, ms, path, attempt + 1, maxAttempts), 10_000L);
+            h.postDelayed(() -> sendEvent(type, key, ms, path, payload, attempt + 1, maxAttempts), 10_000L);
         } else {
             Log.e(TAG, "evento " + type + " descartado tras " + maxAttempts + " intentos");
+        }
+    }
+
+    // ---- hombre caido (docs/PROTOCOLO-VOZ.md seccion 6) ----
+
+    /** En h. Ejecuta lo que pide la politica. */
+    private void handleMandown(ManDownPolicy.Act act) {
+        switch (act) {
+            case CONFIRM:
+                Log.i(TAG, "hombre caido: CONFIRMANDO (" + mandown.trigger() + ")");
+                SpanishVoice.say(SpanishVoice.CAIDA);
+                beep();
+                break;
+            case BEEP:
+                beep();
+                break;
+            case ALERT:
+                Log.w(TAG, "hombre caido: ALERTA");
+                startLocalStream();
+                sendEvent("sos", null, null, null, mandownPayload(), 0, 6);
+                break;
+            case RECOVERED:
+                Log.i(TAG, "hombre caido: recuperado por movimiento");
+                break;
+            case CANCELLED:
+                Log.i(TAG, "hombre caido: cancelado");
+                break;
+            default:
+                break;
+        }
+    }
+
+    private JSONObject mandownPayload() {
+        try {
+            return new JSONObject().put("reason", mandown.reason())
+                    .put("still_s", mandown.stillSeconds())
+                    .put("impact", Math.round(mandown.impact() * 10) / 10.0)
+                    .put("confirm_s", mandown.confirmSeconds())
+                    .put("trigger", mandown.trigger());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void beep() {
+        try {
+            final ToneGenerator tg = new ToneGenerator(AudioManager.STREAM_ALARM, 100);
+            tg.startTone(ToneGenerator.TONE_PROP_BEEP, 250);
+            h.postDelayed(tg::release, 600);
+        } catch (RuntimeException e) {
+            Log.w(TAG, "beep: " + e);
+        }
+    }
+
+    /** F10/F12 (SosKeyService, sin consumir): cancelan la cuenta regresiva de hombre caido. */
+    static void onCancelKey() {
+        MediaWatcherService s = instance;
+        if (s == null || s.h == null) return;
+        s.h.post(() -> {
+            if (s.mandown != null) s.handleMandown(s.mandown.onCancelButton(SystemClock.elapsedRealtime()));
+        });
+    }
+
+    // ---- orientacion (docs/PROTOCOLO-VOZ.md seccion 1) ----
+
+    private final ArrayDeque<Long> oriPubs = new ArrayDeque<>();
+    private long lastOriPubAt;
+    private int lastOriPub = -1;
+
+    /** En tele (nunca en h ni en callbacks de sensores): cada 5 s, solo mientras transmite. */
+    private final Runnable oriTick = new Runnable() {
+        @Override public void run() {
+            try {
+                if (StreamService.source != StreamPolicy.SRC_NONE && orient != null && sb != null) {
+                    long now = SystemClock.elapsedRealtime();
+                    while (!oriPubs.isEmpty() && now - oriPubs.peekFirst() > 60_000L) oriPubs.pollFirst();
+                    int o = orient.orientation();
+                    if (OrientationMath.shouldPublish(o != lastOriPub, now, lastOriPubAt, oriPubs.size())) {
+                        oriPubs.addLast(now);
+                        lastOriPubAt = now;
+                        lastOriPub = o;
+                        sb.insertEvent("heartbeat", null, null, null, battery(), orientationPayload());
+                    }
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "orientacion: " + e);
+            }
+            tele.postDelayed(this, 5_000L);
+        }
+    };
+
+    private JSONObject orientationPayload() {
+        try {
+            int ori = orient != null ? orient.orientation() : 0;
+            JSONObject p = new JSONObject().put("rot", OrientationMath.rot(sensorOrientation, ori))
+                    .put("ori", ori).put("sens", sensorOrientation).put("enc", cfg.streamRotation);
+            DeviceHealth.addTo(this, p); // bat/chg/temp_c/sig/lvl/net/sim/app/free_mb/up_s (omite lo que falte)
+            return p;
+        } catch (Exception e) {
+            return null;
         }
     }
 
@@ -256,6 +415,7 @@ public class MediaWatcherService extends Service {
             h.post(() -> sendEvent(type, null, null, null, 0, 2));
             return;
         }
+        if (type.equals("photo")) SpanishVoice.say(SpanishVoice.FOTO);
         up.post(() -> upload(copy, type, origName, 0));
     }
 
@@ -295,7 +455,7 @@ public class MediaWatcherService extends Service {
     private void scheduleHeartbeat() {
         h.postDelayed(new Runnable() {
             @Override public void run() {
-                sb.insertEvent("heartbeat", null, null, null, battery());
+                sb.insertEvent("heartbeat", null, null, null, battery(), orientationPayload());
                 h.postDelayed(this, HEARTBEAT_MS);
             }
         }, 10_000L);
@@ -325,7 +485,16 @@ public class MediaWatcherService extends Service {
     @Override public void onDestroy() {
         Log.i(TAG, "MediaWatcherService onDestroy");
         StreamService.shared = null;
+        instance = null;
         if (fall != null) fall.stop();
+        if (orient != null) orient.stop();
+        if (voiceCall != null) voiceCall.stop();
+        if (bcast != null) bcast.stop();
+        if (sensorThread != null) sensorThread.quitSafely();
+        if (tele != null) tele.removeCallbacksAndMessages(null);
+        if (teleThread != null) teleThread.quitSafely();
+        SpanishVoice v = SpanishVoice.instance;
+        if (v != null) v.shutdown();
         for (FileObserver o : observers) if (o != null) o.stopWatching();
         if (h != null) h.removeCallbacksAndMessages(null);
         if (hThread != null) hThread.quitSafely();

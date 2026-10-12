@@ -1,0 +1,18 @@
+{
+  "_comentario": "Ejemplo SIN secretos. Copiar a config.local.json (ignorado por git) y completar. Las claves que empiezan con _ las ignora el agente.",
+  "supabase_url": "https://TU-PROYECTO.supabase.co",
+  "anon_key": "COMPLETAR-ANON-KEY",
+  "device_email": "casco-4132@ejemplo.invalid",
+  "device_password": "COMPLETAR",
+  "device_id": "4132",
+
+  "stream_host": "TU-DOMINIO-DEL-VPS",
+
+  "_comentario_broadcast": "Ordenes del supervisor (evacuacion / mensajes). true por defecto; false = el casco ignora las ordenes. Volumen 0-100 (def. 100): sube STREAM_ALARM y STREAM_MUSIC durante la orden y los restaura.",
+  "broadcast_enabled": true,
+  "broadcast_volume": 100,
+
+  "_comentario_stream_audio": "Audio del casco en el video en vivo. false por defecto (el microfono NO se abre). true = AAC 16 kHz mono ~24 kbps publicado en ingest/<device_id> (el servidor lo pasa a Opus y republica en live/<id>). Activar SOLO tras validar relay-audio en el VPS y avisar al personal (privacidad).",
+  "stream_audio": false,
+  "stream_ingest_path": "live"
+}
