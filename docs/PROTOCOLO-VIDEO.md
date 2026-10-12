@@ -50,3 +50,12 @@ MediaMTX envia `POST` JSON: `{ user, password, token, ip, action, path, protocol
 - Version fijada: MediaMTX v1.21.2 + Caddy 2.8. La Edge Function se despliega con `--no-verify-jwt` (MediaMTX no manda el header de Supabase) y se protege con `?k=<MEDIA_AUTH_SECRET>`.
 - El payload de auth de MediaMTX incluye ademas `userAgent`; el Bearer de WHEP llega en `token` y el `pass=` de RTMP en `password` (la funcion acepta ambos).
 - Nada de secretos en el repo (publico).
+
+
+## 6. Actualizacion: audio del casco (ruta de ingreso `ingest/`)
+- El casco con `stream_audio=true` publica H.264 + AAC en `rtmp://<host>:1935/ingest/<id>?user=device&pass=<jwt>`. MediaMTX (imagen `-ffmpeg`)
+  ejecuta `relay-audio.sh`: copia el video, convierte el audio a Opus y republica en `live/<id>`. El visor sigue leyendo `live/<id>/whep`.
+- El casco sin audio puede seguir publicando directo en `live/<id>` (compatibilidad).
+- Reglas de `media-auth` (accion x ruta): `device` publica en `live/<su id>` e `ingest/<su id>`; `device` lee SOLO `ingest/<su id>`
+  (lo usa el relay con el JWT del casco por RTSP loopback); `viewer/admin` leen/playback SOLO `live/<id>`; todo lo demas 401 sin cuerpo.
+- RTSP: ya no esta apagado; escucha solo en 127.0.0.1:8554 (TCP) dentro del contenedor, sin publicarse.
