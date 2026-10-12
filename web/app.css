@@ -568,3 +568,12 @@ button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
 .nav { overflow-x: auto; scrollbar-width: none; }
 .nav::-webkit-scrollbar { display: none; }
 @media (max-width: 1023px) { .nav [role="tab"] { flex: 1 0 60px; } }
+
+/* Eliminar imagenes */
+.thumbwrap { display: grid; gap: 2px; }
+.thumb-act { justify-content: space-between; gap: 4px; }
+.thumb-act label.chk { min-height: 44px; }
+button.trash { gap: 6px; }
+button.trash.icon-only { min-width: 44px; padding: 0; }
+.img-gone { font-style: italic; }
+.delfails { display: grid; gap: var(--sp-1); list-style: none; padding: 0; margin: 0; }

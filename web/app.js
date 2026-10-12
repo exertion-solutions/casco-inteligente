@@ -51,7 +51,8 @@
   const OWN_LIVE = !!LIVE_HOST;
   const DEV_RE = /^[A-Za-z0-9_-]{1,64}$/;
   const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
-  const RETRY_WINDOW_MS = 40000;   // el casco tarda hasta ~30 s en arrancar
+  const RETRY_WINDOW_MS = 120000;  // ante una alerta el casco tarda en publicar (RTMP, auth, relay de audio)
+  const RESTART_EVERY_MS = 20000, RESTART_MAX = 4;   // reenvia 'start' mientras espera (tope: 4 reenvios)
   const lives = new Map();         // device_id -> panel
   const devOf = new Map();         // event_id -> device_id
   const evAt = new Map();          // event_id -> created_at [UI: regla de estacion del historial]
@@ -141,9 +142,11 @@
     const bStop = mk('button', 'ghost', 'Detener'); bStop.type = 'button'; bStop.disabled = true;
     const state = mk('span', 'state', 'Detenido'); state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite');
     const stats = mk('span', 'mute');
+    const bRetry = mk('button', 'attend hidden', 'Reintentar'); bRetry.type = 'button';
+    bRetry.setAttribute('aria-label', 'Reintentar la conexión de video con el casco ' + id);
     const bTalk = mk('button', '', 'Hablar'); bTalk.type = 'button';
     bTalk.setAttribute('aria-label', 'Hablar con el casco ' + id + ' (llamada de voz en vivo)');
-    row.append(bStart, bStop, bTalk, state, stats);
+    row.append(bStart, bStop, bTalk, state, bRetry, stats);
     if (cfg.VOICE_ENABLED === false) bTalk.classList.add('hidden');   // voz en vivo apagada hasta desplegar TURN/senalizacion
     const video = mk('video'); video.autoplay = true; video.muted = true; video.playsInline = true;
     video.setAttribute('aria-label', 'Video en vivo del casco ' + id);
@@ -293,7 +296,7 @@
       const loc = L.loc; L.loc = null; if (!loc) return;
       try { await fetch(loc, { method: 'DELETE', headers: { Authorization: 'Bearer ' + await getToken() }, keepalive: true }); } catch (_) {}
     }
-    function fail(msg) { closePc(); setState('Error: ' + msg, true); bStart.disabled = false; bStop.disabled = true; }
+    function fail(msg) { closePc(); setState('Error: ' + msg, true); bStart.disabled = false; bStop.disabled = true; bRetry.classList.remove('hidden'); }
 
     async function whepOnce(gen) {
       const tok = await getToken();
@@ -316,7 +319,7 @@
       try {
         res = await fetch(base, { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
       } catch (e) { throw new Error('sin conexión con el servidor'); }
-      if (res.status === 401 || res.status === 403) throw Object.assign(new Error('no autorizado (' + res.status + ')'), { fatal: true });
+      if (res.status === 401 || res.status === 403) throw Object.assign(new Error('sin sesión o sin permiso para ver el video (' + res.status + ')'), { fatal: true });
       if (res.status !== 201 && !res.ok) throw new Error('el servidor respondió ' + res.status);
       const loc = res.headers.get('Location');
       if (loc) L.loc = new URL(loc, base).href;
@@ -350,23 +353,35 @@
     }
 
     async function run(gen) {
-      const deadline = Date.now() + RETRY_WINDOW_MS; let n = 0, last = '';
-      while (gen === L.gen) {
-        setState('Esperando al casco…');
-        try { await whepOnce(gen); if (gen !== L.gen) return; setState('En vivo'); watch(gen); return; }
-        catch (e) {
-          closePc();
-          if (gen !== L.gen) return;
-          if (e.fatal) { fail(e.message); return; }
-          last = e.message;
+      const t0 = Date.now(), deadline = t0 + RETRY_WINDOW_MS;
+      let n = 0, last = '', resent = 0, lastStart = t0;
+      const tick = () => { if (gen === L.gen) setState('Esperando al casco… ' + Math.floor((Date.now() - t0) / 1000) + ' s'); };
+      const timer = setInterval(tick, 1000);
+      try {
+        while (gen === L.gen) {
+          tick();
+          if (resent < RESTART_MAX && Date.now() - lastStart >= RESTART_EVERY_MS) {   // el casco pudo quedar colgado: se le pide arrancar de nuevo
+            lastStart = Date.now(); resent++;
+            try { sb.from('stream_commands').insert({ device_id: id, action: 'start' }).then(() => {}, () => {}); } catch (_) {}
+          }
+          try { await whepOnce(gen); if (gen !== L.gen) return; setState('En vivo'); watch(gen); return; }
+          catch (e) {
+            closePc();
+            if (gen !== L.gen) return;
+            if (e.fatal) { fail(e.message); return; }
+            last = e.message;
+          }
+          if (Date.now() > deadline) { fail('el casco no respondió en ' + Math.round(RETRY_WINDOW_MS / 1000) + ' s (' + last + '). Revisá que tenga señal y tocá Reintentar'); return; }
+          await sleep(Math.min(1000 * ++n, 3000));   // 404 "sin stream": el casco todavia no publico; reintento corto
         }
-        if (Date.now() > deadline) { fail('el casco no respondió (' + last + ')'); return; }
-        await sleep(Math.min(1000 * ++n, 5000));
-      }
+      } finally { clearInterval(timer); }
     }
 
+    L.isLive = () => !!(L.pc && L.ms && L.pc.connectionState === 'connected');
     L.start = async () => {
       const gen = ++L.gen;
+      closePc();   // reinicia el ciclo en un clic: se cierra cualquier intento anterior
+      bRetry.classList.add('hidden');
       bStart.disabled = true; bStop.disabled = false;
       setState('Solicitando…');
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'start' });
@@ -377,7 +392,7 @@
     L.stop = async () => {
       L.gen++;
       bStart.disabled = false; bStop.disabled = true;
-      closePc(); video.srcObject = null; wrap.classList.add('hidden');
+      closePc(); video.srcObject = null; wrap.classList.add('hidden'); bRetry.classList.add('hidden');
       setState('Deteniendo…');
       await deleteSession();
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'stop' });
@@ -1056,8 +1071,8 @@
   function openLive(devId, smooth) {
     const L = ensureLive(devId); if (!L) return;
     showTab('live');
-    L.sec.scrollIntoView(smooth ? { block: 'nearest', behavior: 'smooth' } : { block: 'nearest' });
-    if (!L.bStart.disabled) L.start();
+    L.sec.scrollIntoView(smooth ? { block: 'start', behavior: 'smooth' } : { block: 'start' });
+    if (!L.isLive()) L.start();   // reinicia el ciclo aunque ya este esperando; si ya esta en vivo solo se muestra
     L.bStop.focus({ preventScroll: true });
   }
   function liveAction(devId) {
@@ -1473,7 +1488,7 @@
     if (cards.has(ev.id)) return false;
     const li = document.createElement('li');
     li.className = 'card ev t-' + ev.type;
-    li.dataset.id = ev.id; li.dataset.att = needsAttention(ev) ? '1' : '';
+    li.dataset.id = ev.id; li.dataset.att = needsAttention(ev) ? '1' : ''; li.dataset.dev = ev.device_id; if (ev.media_path) li.dataset.media = ev.media_path;
     cards.set(ev.id, li);
     if (ev.type === 'equip') noteEquip(ev);
     if (ev.type === 'photo') notePhoto(ev);
@@ -1506,10 +1521,10 @@
       renderAction(ev);
       refreshBanner();
     }
-    if (ev.media_path) {   // en segundo plano: no frena la carga ni el resto de las alertas
+    if (ev.media_path && !IMG.has(String(ev.id))) {   // en segundo plano: no frena la carga ni el resto de las alertas
       const kind = ev.type === 'video' ? 'Video' : 'Foto';
       mediaEl(ev.media_path, ev.type, kind + ' del casco ' + ev.device_id + ', ' + fmt(ev.created_at)).then(el => {
-        if (el && li.isConnected !== false) li.insertBefore(el, li.querySelector('.action'));
+        if (el && li.isConnected !== false && !IMG.has(String(ev.id))) li.insertBefore(el, li.querySelector('.action'));
       }).catch(() => {});
     }
     return true;
@@ -2898,12 +2913,27 @@
       } catch (e) { err.textContent = 'No se pudo descargar: ' + ((e && e.message) || 'error') + '. Probá con clic derecho sobre la foto.'; }
       dl.disabled = false;
     });
-    openDlg('Foto del casco ' + dev, [img, meta, rowOf(dl), err]);
+    const acts = rowOf(dl);
+    if (isAdmin()) acts.append(trashBtn('Eliminar imagen', async () => { closeDlg(); await delFlow([{ id: p.id, path: p.media_path, dev }]); }));
+    openDlg('Foto del casco ' + dev, [img, meta, acts, err]);
   }
+  const delSel = new Set();   // ids de fotos marcadas para eliminar (admin)
+  const delMax = 20;
+  const TRASH = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>';
+  function trashBtn(text, fn, aria) {
+    const b = mk('button', 'ghost trash'); b.type = 'button';
+    b.setAttribute('aria-label', aria || text); b.title = text;
+    b.innerHTML = TRASH; b.append(document.createTextNode(' ' + text));
+    b.addEventListener('click', fn);
+    return b;
+  }
+  function imgUi() { for (const dev of photos.keys()) cmdRefresh(dev); }
   function fillThumbs(strip, dev) {
-    const arr = photos.get(dev) || [];
+    const arr = (photos.get(dev) || []).filter(p => !IMG.has(p.id));
+    const adm = isAdmin();
     if (!arr.length) { strip.replaceChildren(mk('span', 'mute', 'Sin fotos todavía. Tocá “Sacar foto”.')); return; }
-    strip.replaceChildren(...arr.slice(0, 6).map(p => {
+    const kids = arr.slice(0, 6).map(p => {
+      const w = mk('div', 'thumbwrap');
       const b = mk('button', 'thumb'); b.type = 'button';
       const desc = 'Foto del casco ' + dev + ', ' + fmt(p.created_at) + (p.cmd ? ' (pedida desde el panel)' : '');
       b.setAttribute('aria-label', 'Ampliar: ' + desc);
@@ -2913,8 +2943,88 @@
       if (u) img.src = u; else signed(p.media_path).then(x => { if (x) img.src = x; else b.classList.add('thumb-bad'); });
       b.append(img, mk('span', 'thumb-t mono', fmtAR(p.created_at).slice(11)));
       b.addEventListener('click', () => openPhoto(dev, p));
-      return b;
-    }));
+      w.append(b);
+      if (adm) {
+        const r = mk('div', 'row thumb-act');
+        const l = mk('label', 'chk'), c = mk('input'); c.type = 'checkbox'; c.checked = delSel.has(p.id);
+        c.setAttribute('aria-label', 'Seleccionar para eliminar la foto del ' + fmt(p.created_at));
+        c.dataset.fk = dev + '|sel|' + p.id;
+        c.addEventListener('change', () => {
+          if (c.checked && delSel.size >= delMax) { c.checked = false; announce('Se pueden elegir hasta ' + delMax + ' fotos a la vez.'); return; }
+          if (c.checked) delSel.add(p.id); else delSel.delete(p.id);
+          cmdRefresh(dev);
+        });
+        l.append(c);
+        const t = trashBtn('', () => delFlow([{ id: p.id, path: p.media_path, dev }]), 'Eliminar imagen');
+        t.textContent = ''; t.innerHTML = TRASH; t.classList.add('icon-only');
+        r.append(l, t); w.append(r);
+      }
+      return w;
+    });
+    strip.replaceChildren(...kids);
+    const nSel = arr.filter(p => delSel.has(p.id)).length;
+    if (adm && nSel) {
+      const b = mk('button', 'attend', 'Eliminar seleccionadas (' + nSel + ')'); b.type = 'button';
+      b.dataset.fk = dev + '|delsel';
+      b.addEventListener('click', () => delFlow(arr.filter(p => delSel.has(p.id)).slice(0, delMax).map(p => ({ id: p.id, path: p.media_path, dev }))));
+      strip.append(b);
+    }
+  }
+
+  // ---- Eliminar imagenes (admin): storage.remove + event_archive 'Imagen eliminada' ----
+  const DEL_PERM_TXT = 'Falta aplicar la actualización de permisos del servidor: todavía no se pueden eliminar imágenes.';
+  const delErrText = e => {
+    const m = String((e && (e.message || e.error)) || ''), c = String((e && (e.statusCode || e.status || e.code)) || '');
+    if (noPerm(e) || c === '403' || c === '401' || /row-level|not authorized|unauthorized|permission|forbidden|policy/i.test(m)) return DEL_PERM_TXT;
+    return 'No se pudo borrar el archivo (' + (m || 'error') + ').';
+  };
+  async function delOne(it, reason) {
+    let r;
+    try { r = await sb.storage.from('casco-media').remove([it.path]); } catch (e) { r = { error: e }; }
+    if (r.error) return { ok: false, msg: delErrText(r.error) };
+    if (Array.isArray(r.data) && r.data.length === 0) return { ok: false, msg: 'No se borró: el archivo no existe o ' + DEL_PERM_TXT.charAt(0).toLowerCase() + DEL_PERM_TXT.slice(1) };
+    const why = 'Imagen eliminada' + (reason ? ': ' + reason : '');
+    const email = $('who').dataset.email || '', at = new Date().toISOString();
+    let note = '';
+    const ins = async () => sb.from('event_archive').insert([{ event_id: it.id, reason: why }]);
+    let a;
+    try { a = await ins(); } catch (e) { a = asRes(e); }
+    if (a.error && (a.error.code === '23505' || a.status === 409)) {   // ya archivado: se reemplaza el registro para que diga "Imagen eliminada"
+      try { await sb.from('event_archive').delete().eq('event_id', it.id); a = await ins(); } catch (e) { a = asRes(e); }
+    }
+    if (tableMissing(a)) note = ' (no se pudo registrar en el historial: falta la actualización del servidor)';
+    else if (a.error) note = ' (el archivo se borró pero no se pudo registrar: ' + String(a.error.message || 'error').slice(0, 80) + ')';
+    const rec = { by: email, at, reason: why };
+    IMG.set(it.id, rec);
+    if (!a.error) ARC.ids.set(it.id, rec);
+    const arr = photos.get(it.dev); if (arr) { const i = arr.findIndex(x => x.id === it.id); if (i >= 0) arr.splice(i, 1); }
+    signedCache.delete(it.path); delSel.delete(it.id);
+    return { ok: true, msg: note };
+  }
+  async function delFlow(items) {
+    if (!isAdmin() || !items.length) return;
+    const reason = inp('text', '', { maxLength: 150, autocomplete: 'off' });
+    const ok = await askConfirm('¿Eliminar ' + (items.length === 1 ? 'la imagen' : items.length + ' imágenes') + '?',
+      [mk('p', '', 'Se borra el archivo definitivamente del servidor. El evento queda en el historial sin la imagen.'),
+        fld('Motivo (opcional, hasta 150 caracteres)', reason)], items.length === 1 ? 'Sí, eliminar la imagen' : 'Sí, eliminar ' + items.length + ' imágenes', true);
+    if (!ok) return;
+    const why = reason.value.trim().replace(/\s+/g, ' ');
+    const prog = mk('p', '', 'Eliminando 0 de ' + items.length + '…'); prog.setAttribute('role', 'status');
+    const fails = mk('ul', 'delfails');
+    const d = openDlg('Eliminando imágenes', [prog, fails]);
+    let done = 0, bad = 0;
+    for (const it of items) {
+      const r = await delOne(it, why);
+      if (r.ok) { done++; if (r.msg) fails.append(mk('li', 'mute', 'Foto ' + (done + bad) + r.msg)); }
+      else { bad++; fails.append(mk('li', 'bad', 'No se eliminó una imagen del casco ' + it.dev + ': ' + r.msg)); }
+      prog.textContent = 'Eliminando ' + (done + bad) + ' de ' + items.length + '…';
+      imgUi(); arcUi();
+      if (!d.isConnected) break;
+    }
+    prog.textContent = 'Listo: ' + done + (done === 1 ? ' imagen eliminada' : ' imágenes eliminadas') + (bad ? ' · ' + bad + ' con error' : '') + '.';
+    prog.classList.toggle('bad', bad > 0);
+    announce(prog.textContent);
+    imgUi(); arcUi();
   }
 
   // ---- Comandos a pedido: device_commands + device_command_acks (Realtime + poll corto de respaldo) ----
@@ -3138,7 +3248,7 @@
     ackAt: r.acked_at || null, ackBy: r.acked_by_email || '', note: r.note || '',
     tta: numOf(r.tta_s) != null ? numOf(r.tta_s) : (r.acked_at ? Math.max(0, (new Date(r.acked_at) - new Date(r.created_at)) / 1000) : null) });
   const normEvent = (e, a) => ({ id: String(e.id), at: e.created_at, dev: e.device_id, type: e.type, payload: e.payload, lat: numOf(e.lat), lng: numOf(e.lng), att: needsAttention(e),
-    ackAt: a ? a.acked_at : null, ackBy: a ? a.acked_by_email || '' : '', note: a ? a.note || '' : '',
+    ackAt: a ? a.acked_at : null, ackBy: a ? a.acked_by_email || '' : '', note: a ? a.note || '' : '', media: e.media_path || '',
     tta: a && a.acked_at ? Math.max(0, (new Date(a.acked_at) - new Date(e.created_at)) / 1000) : null });
   // -> { rows (<= n), more, src }. Vista incident_report si existe; si no, events + event_acks (mismo resultado).
   async function fetchPage(o, f, cur, n) {
@@ -3197,30 +3307,40 @@
   // Archivar no borra: oculta de listados, contadores, CSV e impresion salvo "Mostrar archivados". Solo atendidos o informativos.
   const ARC = { ids: new Map(), avail: 'unknown', show: false, ch: null };   // event_id -> { by, at, reason }
   const arcQueries = [];
+  // Imagenes eliminadas: event_id -> { by, at, reason }. Viene de event_archive (reason 'Imagen eliminada...') o de este navegador.
+  const IMG = new Map();
+  const IMG_RE = /^Imagen eliminada/;
+  const noteImg = (id, rec) => { if (rec && IMG_RE.test(rec.reason || '')) IMG.set(id, rec); else IMG.delete(id); };
   const arcOk = () => ARC.avail === 'ok';
-  const arcKeep = r => !arcOk() || ARC.show || !ARC.ids.has(r.id);
+  const arcKeep = r => !arcOk() || ARC.show || !ARC.ids.has(r.id) || IMG.has(r.id);   // 'imagen eliminada' no oculta el evento
+  const imgWho = rec => 'Imagen eliminada por ' + (rec.by || 'un administrador') + (rec.at ? ' el ' + fmtAR(rec.at) : '') + (rec.reason && rec.reason.length > 16 ? ' · ' + rec.reason.replace(/^Imagen eliminada:?\s*/, '') : '');
   const arcWho = rec => 'Archivado por ' + (rec.by || 'un administrador') + (rec.at ? ' el ' + fmtAR(rec.at) : '');
   const PEND_TIP = 'Atendé la alerta primero';
   function arcCard(li, done) {
-    const rec = arcOk() ? ARC.ids.get(li.dataset.id) : null;
+    const id = li.dataset.id, img = IMG.get(id);
+    const rec = arcOk() && !img ? ARC.ids.get(id) : null;
     li.classList.toggle('arc-hidden', !!rec && !ARC.show);
     li.classList.toggle('archived', !!rec && ARC.show);
     const old = li.querySelector(':scope > .arc-row'); if (old) old.remove();
-    if (!arcOk()) return;
+    if (img) li.querySelectorAll(':scope > .media').forEach(n => n.remove());
     const row = mk('div', 'row arc-row');
-    if (rec) {
-      if (!ARC.show) return;
-      row.append(mk('span', 'mute', arcWho(rec)));
-      if (isAdmin()) row.append(btn('Desarchivar', 'ghost', () => arcRun(() => unarchiveEvent(li.dataset.id)), 'Desarchivar el evento'));
-    } else if (isAdmin()) {
-      const pend = !done && li.dataset.att === '1';
-      const b = mk('button', 'ghost', 'Archivar'); b.type = 'button';
-      b.setAttribute('aria-label', 'Archivar el evento');
-      if (pend) { b.setAttribute('aria-disabled', 'true'); b.title = PEND_TIP; }
-      else b.addEventListener('click', () => arcRun(() => askArchive([li.dataset.id])));
-      row.append(b);
-    } else return;
-    li.append(row);
+    if (img) row.append(mk('span', 'mute img-gone', imgWho(img)));
+    else if (li.dataset.media && isAdmin()) {
+      row.append(trashBtn('Eliminar imagen', () => delFlow([{ id, path: li.dataset.media, dev: li.dataset.dev }])));
+    }
+    if (arcOk() && !img) {
+      if (rec) {
+        if (ARC.show) { row.append(mk('span', 'mute', arcWho(rec))); if (isAdmin()) row.append(btn('Desarchivar', 'ghost', () => arcRun(() => unarchiveEvent(id)), 'Desarchivar el evento')); }
+      } else if (isAdmin()) {
+        const pend = !done && li.dataset.att === '1';
+        const b = mk('button', 'ghost', 'Archivar'); b.type = 'button';
+        b.setAttribute('aria-label', 'Archivar el evento');
+        if (pend) { b.setAttribute('aria-disabled', 'true'); b.title = PEND_TIP; }
+        else b.addEventListener('click', () => arcRun(() => askArchive([id])));
+        row.append(b);
+      }
+    }
+    if (row.children.length) li.append(row);
   }
   function arcCards() {
     for (const ul of [$('feed'), $('feedDone')]) for (const li of ul.children) if (li.dataset && li.dataset.id) arcCard(li, ul.id === 'feedDone');
@@ -3228,7 +3348,7 @@
   function arcUi() {
     document.querySelectorAll('.arc-toggle-l').forEach(l => l.classList.toggle('hidden', !arcOk()));
     document.querySelectorAll('.arc-toggle').forEach(c => { c.checked = ARC.show; });
-    arcCards(); syncEmpty();
+    arcCards(); imgUi(); syncEmpty();
     if (lastEv && arcOk() && !ARC.show && ARC.ids.has(String(lastEv.id))) { lastEv = null; $('kpiLast').textContent = '—'; $('kpiLastWhen').textContent = ''; }
     arcQueries.forEach(q => q.repaint());
   }
@@ -3274,7 +3394,7 @@
         const r = await sb.from('event_archive').select('event_id,archived_by_email,archived_at,reason').order('archived_at', { ascending: false }).range(from, from + 999);
         if (tableMissing(r)) { ARC.avail = 'missing'; ARC.ids.clear(); arcUi(); return; }
         if (r.error || !Array.isArray(r.data)) { if (isAuthErr(r.error)) sessionExpired(); return; }
-        r.data.forEach(a => m.set(String(a.event_id), { by: a.archived_by_email || '', at: a.archived_at, reason: a.reason || '' }));
+        r.data.forEach(a => { const rec = { by: a.archived_by_email || '', at: a.archived_at, reason: a.reason || '' }; m.set(String(a.event_id), rec); noteImg(String(a.event_id), rec); });
         if (r.data.length < 1000) break;
       }
       ARC.ids = m; ARC.avail = 'ok'; ensureArcChannel();
@@ -3286,11 +3406,12 @@
     ARC.ch = sb.channel('archive-feed')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_archive' }, p => {
         const a = p.new; if (!a || !a.event_id) return;
-        ARC.ids.set(String(a.event_id), { by: a.archived_by_email || '', at: a.archived_at, reason: a.reason || '' }); arcUi();
+        const rec = { by: a.archived_by_email || '', at: a.archived_at, reason: a.reason || '' };
+        ARC.ids.set(String(a.event_id), rec); noteImg(String(a.event_id), rec); imgUi(); arcUi();
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'event_archive' }, p => {
         const a = p.old; if (!a || !a.event_id) return;
-        ARC.ids.delete(String(a.event_id)); arcUi();
+        ARC.ids.delete(String(a.event_id)); IMG.delete(String(a.event_id)); imgUi(); arcUi();
       })
       .subscribe(resubscribed(() => loadArchive()));
   }
@@ -3361,7 +3482,7 @@
       if (adm) { const th = mk('th', 'noprint', 'Archivo'); th.scope = 'col'; ths.push(th); }
       hr.replaceChildren(...ths);
       const rows = st.rows.map(r => {
-        const rec = arcOk() ? ARC.ids.get(r.id) : null;
+        const rec = arcOk() && !IMG.has(r.id) ? ARC.ids.get(r.id) : null;
         const tr = mk('tr', (r.att && !r.ackAt ? 'pend' : '') + (rec ? ' archived' : ''));
         const c = (t, cls) => { const td = mk('td', cls || '', t); tr.append(td); return td; };
         if (adm) {
@@ -3374,12 +3495,15 @@
         c(fmtAR(r.at), 'mono'); c(label(r.dev)); c(typeLbl(r.type)); c(detailOf(r) || '—');
         c(llOk(r.lat, r.lng) ? coordTxt(r.lat, r.lng) : '—', 'mono');
         const sc = c(stateOf(r), r.att && !r.ackAt ? 'bad' : '');
-        if (rec) sc.append(mk('div', 'mute arc-note', arcWho(rec)));
+        if (rec && !IMG.has(r.id)) sc.append(mk('div', 'mute arc-note', arcWho(rec)));
+        if (IMG.has(r.id)) sc.append(mk('div', 'mute arc-note', imgWho(IMG.get(r.id))));
         c(r.ackBy ? r.ackBy + (r.ackAt ? ' · ' + fmtAR(r.ackAt) : '') : '—'); c(r.note || '—');
         c(r.tta != null ? clock(r.tta) : '—', 'mono');
         if (adm) {
           const td = mk('td', 'noprint');
-          if (rec) td.append(btn('Desarchivar', 'ghost', async () => { const m = await unarchiveEvent(r.id); if (m) setStat(m, true); }, 'Desarchivar la fila del ' + fmtAR(r.at) + ' del casco ' + r.dev));
+          if (r.media && !IMG.has(r.id)) td.append(trashBtn('Eliminar imagen', () => delFlow([{ id: r.id, path: r.media, dev: r.dev }])));
+          if (IMG.has(r.id)) { /* ya sin imagen: nada mas que hacer */ }
+          else if (rec) td.append(btn('Desarchivar', 'ghost', async () => { const m = await unarchiveEvent(r.id); if (m) setStat(m, true); }, 'Desarchivar la fila del ' + fmtAR(r.at) + ' del casco ' + r.dev));
           else {
             const b = mk('button', 'ghost', 'Archivar'); b.type = 'button';
             b.setAttribute('aria-label', 'Archivar la fila del ' + fmtAR(r.at) + ' del casco ' + r.dev);
@@ -3536,7 +3660,7 @@
     CMD.items.clear(); CMD.last.clear(); CMD.torch.clear(); CMD.avail = 'unknown';
     clearInterval(CMD.timer); CMD.timer = null; CMD.polling = false;
     if (CMD.ch) { try { sb.removeChannel(CMD.ch); } catch (_) {} CMD.ch = null; }
-    photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear();
+    photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear(); IMG.clear(); delSel.clear();
     QR.view = 'unknown'; repQ.reset(); histQ.reset();
     ARC.ids.clear(); ARC.avail = 'unknown'; ARC.show = false;
     if (ARC.ch) { try { sb.removeChannel(ARC.ch); } catch (_) {} ARC.ch = null; }

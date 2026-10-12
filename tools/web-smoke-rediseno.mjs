@@ -47,6 +47,8 @@ const T4_EVENTS = [
   { id: 'e-eq', device_id: '4132', type: 'equip', created_at: iso(120000), lat: null, lng: null, battery: 15, payload: { kind: 'bat_low', level: 18 }, media_path: null },
   { id: 'e-fc', device_id: '4133', type: 'fall_cancel', created_at: iso(130000), lat: null, lng: null, battery: 70, payload: {}, media_path: null },
   { id: 'e-ph2', device_id: '4132', type: 'photo', created_at: iso(5000), lat: null, lng: null, battery: 15, payload: { cmd: 'cmd-1' }, media_path: '4132/1.jpg' },
+  { id: 'e-ph3', device_id: '4132', type: 'photo', created_at: iso(6000), lat: null, lng: null, battery: 15, payload: {}, media_path: '4132/2.jpg' },
+  { id: 'e-ph4', device_id: '4132', type: 'photo', created_at: iso(7000), lat: null, lng: null, battery: 15, payload: {}, media_path: '4132/3.jpg' },
 ];
 const T4_HB = { device_id: '4160', created_at: iso(15000), battery: 80, type: 'heartbeat', payload: { bat: 80 } };
 const REP = Array.from({ length: 120 }, (_, i) => ({ event_id: 'r' + String(i).padStart(3, '0'), created_at: iso((i + 1) * 3600000), device_id: i % 2 ? '4132' : '4133',
@@ -74,6 +76,11 @@ async function mock(ctx, opts = {}) {
     if (!opts.whep) return r.fulfill({ status: 503, headers: H, body: 'no' });
     const m = r.request().method();
     if (m === 'OPTIONS') return r.fulfill({ status: 204, headers: H });
+    if (m === 'POST' && opts.whepFailMs) {
+      const SS = opts.state || (opts.state = {});
+      SS.whepT0 = SS.whepT0 || Date.now(); SS.whepHits = (SS.whepHits || 0) + 1;
+      if (Date.now() - SS.whepT0 < opts.whepFailMs) return r.fulfill({ status: 404, headers: H, body: 'no stream' });
+    }
     if (m === 'POST') return r.fulfill({ status: 201, headers: { ...H, location: '/live/4132/whep/s1', 'content-type': 'application/sdp' }, body: 'v=0\r\n' });
     return r.fulfill({ status: 200, headers: H, body: '' });
   });
@@ -85,6 +92,14 @@ async function mock(ctx, opts = {}) {
     if (u.pathname.includes('/auth/v1/token')) return json({ access_token: jwtOf(role), token_type: 'bearer', expires_in: 3600, refresh_token: 'r', user: { id: 'u1', email: 'supervisor@demo.test', app_metadata: { role }, aud: 'authenticated', created_at: iso(0) } });
     if (u.pathname.includes('/auth/v1/user')) return json({ id: 'u1', email: 'supervisor@demo.test', app_metadata: { role } });
     if (u.pathname.includes('/storage/')) {
+      if (req.method() === 'DELETE') {
+        let b = {}; try { b = JSON.parse(req.postData() || '{}'); } catch {}
+        (S.deleted = S.deleted || []);
+        if (S.delMode === 'err') return json({ statusCode: '403', error: 'Unauthorized', message: 'new row violates row-level security policy' }, 403);
+        if (S.delMode === 'rls') return json([]);
+        S.deleted.push(...(b.prefixes || []));
+        return json((b.prefixes || []).map(n => ({ name: n })));
+      }
       if (req.method() === 'GET') return route.fulfill({ status: 200, headers: { ...CORS, 'content-type': 'image/png' }, body: PNG });
       return json({ signedURL: '/object/sign/casco-media/x.jpg?token=t' });
     }
@@ -96,6 +111,8 @@ async function mock(ctx, opts = {}) {
       if (t === 'event_archive') {
         S.arch = S.arch || [];
         if (req.method() === 'DELETE') { const id = (u.searchParams.get('event_id') || '').replace('eq.', ''); S.arch = S.arch.filter(x => x.event_id !== id); return route.fulfill({ status: 204, headers: CORS }); }
+        const dup = (Array.isArray(body) ? body : []).some(b => S.arch.some(x => x.event_id === b.event_id));
+        if (dup && !/resolution=/.test(req.headers()['prefer'] || '')) return json({ code: '23505', message: 'duplicate key' }, 409);
         for (const b of (Array.isArray(body) ? body : [])) if (!S.arch.some(x => x.event_id === b.event_id)) S.arch.push({ event_id: b.event_id, archived_by_email: 'supervisor@demo.test', archived_at: new Date().toISOString(), reason: b.reason });
         return route.fulfill({ status: 201, headers: CORS });
       }
@@ -755,6 +772,85 @@ if (!process.env.ONLY4) {
   await page.focus('#tabCmd'); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight');
   check((await page.evaluate(() => document.activeElement.id)) === 'tabCmd', 'cmd: teclado llega a la pestaña Comandos');
   check(perr.length === 0, 'cmd: sin errores de pagina');
+  await ctx.close();
+}
+
+// ---- 9) Eliminar imagenes (admin) ----
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, state });
+  await closeOv(page);
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  check((await sec.locator('.thumbwrap').count()) === 3 && (await sec.locator('button[aria-label="Eliminar imagen"]').count()) === 3, 'img: admin ve papelera y casilla en cada miniatura');
+  // permiso: el servidor no deja borrar (RLS silenciosa) -> mensaje claro y la miniatura sigue
+  state.delMode = 'rls';
+  await sec.locator('button[aria-label="Eliminar imagen"]').first().click();
+  check(/definitivamente del servidor/.test(await page.locator('dialog[open]').innerText()), 'img: confirmacion fuerte');
+  await page.locator('dialog[open] button', { hasText: 'Sí, eliminar la imagen' }).click();
+  check(await waitFor(async () => /actualización de permisos/.test(await page.locator('dialog[open]').innerText())), 'img: sin politicas explica "Falta aplicar la actualización de permisos"');
+  await page.keyboard.press('Escape');
+  check((await sec.locator('.thumbwrap').count()) === 3, 'img: tras el error de permiso la miniatura sigue');
+  state.delMode = 'err';
+  await sec.locator('button[aria-label="Eliminar imagen"]').first().click();
+  await page.locator('dialog[open] button', { hasText: 'Sí, eliminar la imagen' }).click();
+  check(await waitFor(async () => /actualización de permisos/.test(await page.locator('dialog[open]').innerText())), 'img: error 403 del storage tambien se explica');
+  await page.keyboard.press('Escape');
+  // borrado simple con motivo
+  state.delMode = '';
+  await sec.locator('.thumb').first().click();
+  await page.locator('dialog[open] button', { hasText: 'Eliminar imagen' }).click();
+  await page.locator('dialog[open] input[type=text]').fill('foto borrosa');
+  await page.locator('dialog[open] button', { hasText: 'Sí, eliminar la imagen' }).click();
+  check(await waitFor(() => (state.deleted || []).length === 1), 'img: storage.remove con la ruta de la imagen: ' + JSON.stringify(state.deleted));
+  check(await waitFor(() => (state.arch || []).some(a => /^Imagen eliminada: foto borrosa/.test(a.reason || ''))), 'img: event_archive con motivo "Imagen eliminada: ..."');
+  await page.locator('dialog[open] button', { hasText: 'Cerrar' }).last().click().catch(() => {});
+  check(await waitFor(async () => (await sec.locator('.thumbwrap').count()) === 2), 'img: la miniatura desaparece en el acto');
+  // multiple
+  const cbs = sec.locator('.thumb-act input[type=checkbox]');
+  await cbs.nth(0).check(); await cbs.nth(1).check();
+  await sec.locator('button', { hasText: 'Eliminar seleccionadas (2)' }).click();
+  await page.locator('dialog[open] button', { hasText: 'Sí, eliminar 2 imágenes' }).click();
+  check(await waitFor(async () => /2 imágenes eliminadas/.test(await page.locator('dialog[open]').innerText())), 'img: borrado multiple con resumen');
+  check((state.deleted || []).length === 3, 'img: tres archivos borrados en total');
+  await page.keyboard.press('Escape');
+  await page.click('#tabDone');
+  check(await waitFor(async () => /Imagen eliminada por supervisor@demo.test/.test(await page.locator('#feed').innerText())), 'img: la tarjeta del Historial dice "Imagen eliminada por <email> el <fecha>"');
+  check((await page.locator('#feed img.media').count()) === 0, 'img: la tarjeta ya no muestra imagen');
+  await ctx.close();
+}
+if (!process.env.ONLY4) {
+  const state = { arch: [{ event_id: 'e-ph3', archived_by_email: 'adm@demo.test', archived_at: iso(60000), reason: 'Imagen eliminada: duplicada' }] };
+  const [ctx, page] = await newPage({ t4: true, role: 'viewer', state });
+  await closeOv(page);
+  await page.click('#tabLive');
+  const sec = page.locator('#lives .live', { hasText: '4132' });
+  check(await waitFor(async () => (await sec.locator('.thumb').count()) === 2), 'img viewer: la imagen eliminada por otro admin no se muestra');
+  check((await page.locator('button[aria-label="Eliminar imagen"]:visible').count()) === 0 && (await sec.locator('.thumb-act').count()) === 0, 'img viewer: sin papelera ni seleccion');
+  await page.click('#tabDone');
+  check(/Imagen eliminada por adm@demo.test/.test(await page.locator('#feed').innerText()), 'img viewer: ve la nota "Imagen eliminada por"');
+  await ctx.close();
+}
+
+// ---- 10) Ver en vivo ante una alerta: el casco tarda en publicar (WHEP 404 un rato) ----
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ whep: true, whepFailMs: 5000, state });
+  check(await page.locator('#sosOverlay').isVisible(), 'live: cartel SOS visible');
+  await page.locator('.sos-ov-btns button', { hasText: 'Ver en vivo' }).click();
+  check(!(await page.locator('#sosOverlay').isVisible()), 'live: el cartel se cierra');
+  check(await page.locator('#panelMain').getAttribute('data-view') === 'live' && await page.locator('#lives .live').first().isVisible(), 'live: el panel de video queda visible con alertas pendientes');
+  check(await waitFor(() => posts(state, 'stream_commands').some(x => x.body && x.body.action === 'start')), 'live: se envia stream_commands start');
+  const sec = page.locator('#lives .live', { hasText: '4133' });
+  check(await waitFor(async () => /Esperando al casco… \d+ s/.test(await sec.locator('.state').first().innerText()), 4000), 'live: estado con segundos transcurridos');
+  check(await waitFor(async () => /En vivo/.test(await sec.locator('.state').first().innerText()), 20000), 'live: reintenta ante 404 hasta que WHEP responde y conecta (' + state.whepHits + ' intentos)');
+  check((state.whepHits || 0) >= 2, 'live: hubo reintentos (' + state.whepHits + ')');
+  // desde la tarjeta de otro casco: tambien reinicia el ciclo y muestra el panel
+  await page.click('#tabMain');
+  const n0 = posts(state, 'stream_commands').length;
+  await page.locator('#pendList .pitem', { hasText: '4132' }).first().locator('button', { hasText: 'Ver en vivo' }).click();
+  check(await waitFor(() => posts(state, 'stream_commands').length > n0), 'live: "Ver en vivo" de la tarjeta envia start');
+  check(await page.locator('#lives .live', { hasText: '4132' }).isVisible(), 'live: panel del casco 4132 visible');
   await ctx.close();
 }
 
