@@ -12,7 +12,7 @@ window.CASCO_CONFIG = {
   OVERLAY_CROP: { left: 0, top: 0, right: 0.38, bottom: 0 },
   // Llamada de voz en vivo (boton Hablar). false = el boton queda oculto.
   // Poner true SOLO cuando esten desplegados turn-credentials, rtc_signals y coturn (ver docs/PROTOCOLO-VOZ.md).
-  VOICE_ENABLED: false,
+  VOICE_ENABLED: true,
   // Grabacion a la PC (boton Grabar) y Captura: true = estampa casco, fecha y hora en la imagen. false = sin marca.
   REC_WATERMARK: true,
   // Grabacion automatica ante SOS / caida (mezcla audio del casco + microfono de la PC). false = solo manual.
