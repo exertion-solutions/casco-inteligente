@@ -9,7 +9,15 @@ window.CASCO_CONFIG = {
   // Giro inicial de la imagen en grados (0/90/180/270) para el casco PUESTO (camara al frente).
   // Calibrado con el casco boca arriba en la mesa (270); puesto equivale a +180 = 90.
   // El boton Girar del visor lo recuerda por casco y navegador.
+  // Recorte (fracciones del cuadro original) para ocultar el texto TM/ID/BT/TP/SS que la camara del casco graba en la imagen.
+  // Con rotacion 0 el texto cae en la franja izquierda (~33 % del ancho). Quitar (poner todo en 0) si se desactiva en el casco.
+  OVERLAY_CROP: { left: 0.34, top: 0, right: 0, bottom: 0 },
+  // Llamada de voz en vivo (boton Hablar): poner true cuando esten desplegados turn-credentials, rtc_signals y coturn.
+  VOICE_ENABLED: false,
   LIVE_ROTATION: 90,
+  // Auto-orientacion (docs/PROTOCOLO-VOZ.md seccion 1): giro = (payload.rot del ultimo heartbeat + AUTO_ROT_OFFSET) % 360.
+  // 0 por defecto. CALIBRAR con una pose conocida: si con el casco puesto la imagen sale girada N grados, poner N aqui.
+  AUTO_ROT_OFFSET: 0,
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpnZnZoanBkemtvaG91a3Rha3Z0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE3NTMyMTYsImV4cCI6MjEwNzMyOTIxNn0.tAg9V2xzmcAwGoBG4LdUBnEdHgPXbrIclUVW-iKCF2s"
 };
 

@@ -64,10 +64,10 @@
   #lives { display:grid; gap:12px; margin-bottom:12px; }
   .live { display:grid; gap:8px; }
   .live h2 { font-size:16px; margin:0; overflow-wrap:anywhere; }
-  .vwrap { position:relative; width:100%; aspect-ratio:4/3; max-height:70vh; background:#000; border-radius:8px; overflow:hidden; container-type:size; margin-inline:auto; }
-  .vwrap[data-rot="90"], .vwrap[data-rot="270"] { aspect-ratio:3/4; width:auto; height:70vh; max-width:100%; }
+  .vwrap { position:relative; width:100%; aspect-ratio:var(--ar,4/3); max-height:70vh; background:#000; border-radius:8px; overflow:hidden; container-type:size; margin-inline:auto; }
+  .vwrap[data-rot="90"], .vwrap[data-rot="270"] { aspect-ratio:var(--arr,3/4); width:auto; height:70vh; max-width:100%; }
   .vwrap video { position:absolute; top:50%; left:50%; width:100cqw; height:100cqh; object-fit:contain; background:#000;
-    transform:translate(-50%,-50%) rotate(var(--r,0deg)); }
+    transform:translate(-50%,-50%) rotate(var(--r,0deg)); object-view-box:var(--ovb,none); }
   .vwrap[data-rot="90"] video, .vwrap[data-rot="270"] video { width:100cqh; height:100cqw; }
   .vwrap .fsexit { display:none; position:absolute; top:12px; right:12px; z-index:2; background:rgba(0,0,0,.65); color:#fff; border:1px solid rgba(255,255,255,.5); }
   .vwrap:fullscreen, .vwrap:-webkit-full-screen { width:100vw; height:100vh; max-height:none; max-width:none; aspect-ratio:auto; border-radius:0; }
@@ -76,6 +76,10 @@
   .vwrap[data-rot="90"]:-webkit-full-screen, .vwrap[data-rot="270"]:-webkit-full-screen { width:100vw; height:100vh; aspect-ratio:auto; }
   .live .state { font-weight:600; }
   .state.bad { color:var(--sos); font-weight:600; }
+  .voice { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
+  .voice meter { width:96px; height:12px; vertical-align:middle; }
+  .vline { display:inline-flex; gap:6px; flex-wrap:wrap; }
+  button[aria-pressed="true"] { outline:2px solid var(--acc); outline-offset:-2px; }
 </style>
 </head>
 <body>
@@ -123,7 +127,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120028"></script>
+<script src="config.js?v=202610120044"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -175,6 +179,27 @@
     if (data && data.session) token = data.session.access_token;
     return token;
   }
+  // ---- Auto-orientacion: ultimo payload.rot de heartbeat por casco (docs/PROTOCOLO-VOZ.md seccion 1) ----
+  const AUTO_OFF = Number(cfg.AUTO_ROT_OFFSET) || 0;
+  const norm90 = d => ((Math.round(d / 90) * 90) % 360 + 360) % 360;
+  const rotOf = new Map();         // device_id -> { at, rot }
+  function noteRot(id, at, payload) {
+    if (!payload || typeof payload !== 'object' || typeof payload.rot !== 'number' || !isFinite(payload.rot)) return;
+    const cur = rotOf.get(id);
+    if (cur && new Date(at) < new Date(cur.at)) return;
+    rotOf.set(id, { at, rot: norm90(payload.rot) });
+    const L = lives.get(id); if (L && L.applyRot) L.applyRot();
+  }
+  async function loadRot(id) {
+    try {
+      const { data } = await sb.from('events').select('created_at,payload').eq('device_id', id).eq('type', 'heartbeat')
+        .order('created_at', { ascending: false }).limit(10);
+      if (data) for (const e of data) noteRot(id, e.created_at, e.payload);
+    } catch (_) {}
+  }
+  const hangupAll = () => lives.forEach(L => L.leave && L.leave());
+  window.addEventListener('pagehide', hangupAll);
+  window.addEventListener('beforeunload', hangupAll);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const mk = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text) e.textContent = text; return e; };
 
@@ -199,7 +224,10 @@
     const bStop = mk('button', 'ghost', 'Detener'); bStop.type = 'button'; bStop.disabled = true;
     const state = mk('span', 'state', 'Detenido'); state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite');
     const stats = mk('span', 'mute');
-    row.append(bStart, bStop, state, stats);
+    const bTalk = mk('button', '', 'Hablar'); bTalk.type = 'button';
+    bTalk.setAttribute('aria-label', 'Hablar con el casco ' + id + ' (llamada de voz en vivo)');
+    row.append(bStart, bStop, bTalk, state, stats);
+    if (cfg.VOICE_ENABLED === false) bTalk.classList.add('hidden');   // voz en vivo apagada hasta desplegar TURN/senalizacion
     const video = mk('video'); video.autoplay = true; video.muted = true; video.playsInline = true;
     video.setAttribute('aria-label', 'Video en vivo del casco ' + id);
     // Contenedor que rota la imagen (la camara del casco esta montada a 90/180 grados).
@@ -208,11 +236,47 @@
     let rot = 0;
     try { const s = localStorage.getItem(ROT_KEY); rot = s !== null ? Number(s) : Number(cfg.LIVE_ROTATION || 0); } catch (_) { rot = Number(cfg.LIVE_ROTATION || 0); }
     if (![0, 90, 180, 270].includes(rot)) rot = 0;
-    const applyRot = () => { wrap.dataset.rot = String(rot); wrap.style.setProperty('--r', rot + 'deg'); bRot.textContent = 'Girar (' + rot + '°)'; };
+    // Modo Auto (por defecto): giro = rot del ultimo heartbeat + AUTO_ROT_OFFSET. Manual: `rot` (boton Girar), por casco.
+    const MODE_KEY = 'casco-mode-' + id;
+    let auto = true;
+    try { auto = localStorage.getItem(MODE_KEY) !== 'manual'; } catch (_) {}
+    const curRot = () => { const k = rotOf.get(id); return auto && k ? norm90(k.rot + AUTO_OFF) : rot; };
+    const applyRot = () => {
+      const r = curRot();
+      wrap.dataset.rot = String(r); wrap.style.setProperty('--r', r + 'deg');
+      bRot.textContent = 'Girar (' + (auto ? 'Auto' : 'Manual') + ' ' + r + '°)';
+      bAuto.textContent = auto ? 'Auto (activo)' : 'Auto';
+      bAuto.setAttribute('aria-pressed', String(auto));
+    };
+    const saveRot = () => { try { localStorage.setItem(ROT_KEY, String(rot)); localStorage.setItem(MODE_KEY, auto ? 'auto' : 'manual'); } catch (_) {} };
     const bRot = mk('button', 'ghost', 'Girar'); bRot.type = 'button';
-    bRot.setAttribute('aria-label', 'Girar la imagen del casco ' + id + ' 90 grados');
-    bRot.addEventListener('click', () => { rot = (rot + 90) % 360; applyRot(); try { localStorage.setItem(ROT_KEY, String(rot)); } catch (_) {} });
-    row.append(bRot);
+    bRot.setAttribute('aria-label', 'Girar la imagen del casco ' + id + ' 90 grados (pasa a modo manual)');
+    bRot.addEventListener('click', () => { rot = (curRot() + 90) % 360; auto = false; applyRot(); saveRot(); });
+    const bAuto = mk('button', 'ghost', 'Auto'); bAuto.type = 'button';
+    bAuto.setAttribute('aria-label', 'Orientación automática de la imagen del casco ' + id);
+    bAuto.addEventListener('click', () => { auto = true; applyRot(); saveRot(); });
+    row.append(bRot, bAuto);
+    // Recorte opcional para ocultar el texto que el procesador de camara del casco graba en la imagen (TM/ID/BT/TP/SS).
+    // Fracciones del cuadro original; funciona con object-view-box (Chrome/Edge). Por casco, se recuerda.
+    const CROP = Object.assign({ left: 0, top: 0, right: 0, bottom: 0 }, cfg.OVERLAY_CROP || {});
+    const hasCrop = !!(CROP.left || CROP.top || CROP.right || CROP.bottom);
+    const CROP_KEY = 'casco-crop-' + id;
+    let cropOn = hasCrop;
+    try { const s = localStorage.getItem(CROP_KEY); if (s !== null) cropOn = s === '1'; } catch (_) {}
+    const bCrop = mk('button', 'ghost', ''); bCrop.type = 'button';
+    const applyCrop = () => {
+      const f = v => Math.max(0, Math.min(0.6, Number(v) || 0));
+      const c = cropOn && hasCrop ? { l: f(CROP.left), t: f(CROP.top), r: f(CROP.right), b: f(CROP.bottom) } : { l: 0, t: 0, r: 0, b: 0 };
+      const pct = v => (v * 100).toFixed(1) + '%';
+      wrap.style.setProperty('--ovb', (c.l || c.t || c.r || c.b) ? 'inset(' + pct(c.t) + ' ' + pct(c.r) + ' ' + pct(c.b) + ' ' + pct(c.l) + ')' : 'none');
+      const w = (1 - c.l - c.r) * 640, hh = (1 - c.t - c.b) * 480;
+      wrap.style.setProperty('--ar', w.toFixed(1) + ' / ' + hh.toFixed(1));
+      wrap.style.setProperty('--arr', hh.toFixed(1) + ' / ' + w.toFixed(1));
+      bCrop.textContent = 'Ocultar datos de la imagen: ' + (cropOn ? 'sí' : 'no');
+      bCrop.setAttribute('aria-pressed', String(cropOn));
+    };
+    bCrop.addEventListener('click', () => { cropOn = !cropOn; try { localStorage.setItem(CROP_KEY, cropOn ? '1' : '0'); } catch (_) {} applyCrop(); });
+    if (hasCrop) { row.append(bCrop); applyCrop(); }
     // Pantalla completa: se pone el contenedor (no el <video>) para conservar el giro de la imagen.
     const bFull = mk('button', 'ghost', 'Pantalla completa'); bFull.type = 'button';
     bFull.setAttribute('aria-label', 'Ver el video del casco ' + id + ' en pantalla completa');
@@ -230,7 +294,22 @@
     wrap.addEventListener('dblclick', () => { try { fsEl() === wrap ? exitFs() : enterFs(); } catch (_) {} });
     row.append(bFull);
     applyRot();
-    sec.append(row, wrap);
+    // Fila de voz: se muestra solo durante una llamada (ver bloque "Voz en vivo" mas abajo).
+    const vrow = mk('div', 'voice hidden');
+    const vstate = mk('span', 'state', ''); vstate.setAttribute('role', 'status'); vstate.setAttribute('aria-live', 'polite');
+    const vtime = mk('span', 'mute');
+    const vline = mk('span', 'vline'); vline.append(vstate, ' ', vtime);
+    const bMute = mk('button', 'ghost', 'Silenciar'); bMute.type = 'button'; bMute.setAttribute('aria-pressed', 'false');
+    bMute.setAttribute('aria-label', 'Silenciar mi micrófono en la llamada con el casco ' + id);
+    const bHang = mk('button', 'attend', 'Colgar'); bHang.type = 'button';
+    bHang.setAttribute('aria-label', 'Colgar la llamada con el casco ' + id);
+    const meter = lbl => { const m = mk('meter'); m.min = 0; m.max = 1; m.value = 0; m.setAttribute('aria-label', lbl); return m; };
+    const mMic = meter('Nivel de mi micrófono'), mIn = meter('Nivel del audio del casco');
+    const lMic = mk('span', 'mute', 'Mi voz'), lIn = mk('span', 'mute', 'Casco');
+    const remote = mk('audio'); remote.autoplay = true; remote.hidden = true;
+    remote.setAttribute('aria-label', 'Audio del casco ' + id);
+    vrow.append(vline, bMute, bHang, lMic, mMic, lIn, mIn, remote);
+    sec.append(row, vrow, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
@@ -330,11 +409,194 @@
     };
     bStart.addEventListener('click', L.start);
     bStop.addEventListener('click', L.stop);
+    L.applyRot = applyRot;
+
+    // ---- Voz en vivo (WebRTC solo audio; senalizacion por public.rtc_signals, docs/PROTOCOLO-VOZ.md seccion 2) ----
+    const vctl = [bMute, bHang, lMic, mMic, lIn, mIn];
+    const setCtl = on => vctl.forEach(e => e.classList.toggle('hidden', !on));
+    const setV = (t, bad) => { vstate.textContent = t; vstate.classList.toggle('bad', !!bad); };
+    const mmss = s => String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+    const soft = m => Object.assign(new Error(m), { soft: true });
+    L.call = null;
+
+    async function sendSignal(callId, kind, payload) {
+      try {
+        const { error } = await sb.from('rtc_signals').insert({ device_id: id, call_id: callId, kind, payload: payload || {} });
+        return error || null;
+      } catch (e) { return e; }
+    }
+    function endCall(c, text, bad, notify) {
+      if (!c || c.ended) return;
+      c.ended = true;
+      if (L.call === c) L.call = null;
+      clearTimeout(c.tAns); clearTimeout(c.tMax); clearInterval(c.tTick); clearInterval(c.tPoll); clearInterval(c.tLvl);
+      if (c.ch) { try { sb.removeChannel(c.ch); } catch (_) {} }
+      if (notify && c.offerSent) sendSignal(c.callId, 'hangup', {});
+      if (c.pc) { c.pc.onconnectionstatechange = null; c.pc.oniceconnectionstatechange = null; c.pc.ontrack = null; c.pc.onicecandidate = null; try { c.pc.close(); } catch (_) {} }
+      if (c.stream) c.stream.getTracks().forEach(t => { try { t.stop(); } catch (_) {} });
+      if (c.actx) { try { c.actx.close(); } catch (_) {} }
+      remote.srcObject = null;
+      mMic.value = 0; mIn.value = 0; vtime.textContent = '';
+      setCtl(false);
+      setV(text, bad);
+      bTalk.disabled = false;
+    }
+    async function turnServers(tok) {
+      const url = cfg.SUPABASE_URL + '/functions/v1/turn-credentials';
+      const h = { Authorization: 'Bearer ' + tok, apikey: cfg.SUPABASE_ANON_KEY };
+      let r;
+      try {
+        r = await fetch(url, { method: 'POST', headers: { ...h, 'Content-Type': 'application/json' }, body: '{}' });
+        if (r.status === 405) r = await fetch(url, { headers: h });
+      } catch (_) { throw soft('sin conexión con el servidor de voz'); }
+      if (!r.ok) throw soft('no se pudieron obtener las credenciales de voz (' + r.status + ')');
+      let j; try { j = await r.json(); } catch (_) { j = null; }
+      if (!j || !j.urls || !j.username || !j.credential) throw soft('credenciales de voz inválidas');
+      return [{ urls: j.urls, username: j.username, credential: j.credential }];
+    }
+    function level(an, buf) {
+      an.getByteTimeDomainData(buf);
+      let s = 0; for (const v of buf) { const d = (v - 128) / 128; s += d * d; }
+      return Math.min(1, Math.sqrt(s / buf.length) * 4);
+    }
+    function meterOf(c, stream, meterEl) {
+      try {
+        c.actx = c.actx || new (window.AudioContext || window.webkitAudioContext)();
+        const an = c.actx.createAnalyser(); an.fftSize = 256;
+        c.actx.createMediaStreamSource(stream).connect(an);   // sin conectar al destino: no duplica el audio
+        c.meters.push([an, new Uint8Array(an.fftSize), meterEl]);
+      } catch (_) {}
+    }
+    function onSignal(c, r) {
+      if (c.ended || !r || r.call_id !== c.callId || r.from_role !== 'device' || c.seen.has(r.id)) return;
+      c.seen.add(r.id);
+      const p = r.payload && typeof r.payload === 'object' ? r.payload : {};
+      if (r.kind === 'answer') {
+        if (c.gotAnswer || typeof p.sdp !== 'string') return;
+        c.gotAnswer = true; clearTimeout(c.tAns);
+        c.tAns = setTimeout(() => endCall(c, 'Error: no se pudo establecer el audio', true, true), 20000);
+        c.pc.setRemoteDescription({ type: 'answer', sdp: p.sdp }).then(() => {
+          c.remoteSet = true; c.iceIn.splice(0).forEach(addIce(c));
+        }).catch(() => endCall(c, 'Error: respuesta inválida del casco', true, true));
+      } else if (r.kind === 'ice') {
+        if (typeof p.candidate !== 'string') return;
+        if (c.remoteSet) addIce(c)(p); else c.iceIn.push(p);
+      } else if (r.kind === 'hangup') endCall(c, 'Colgada por el casco', false, false);
+      else if (r.kind === 'busy') endCall(c, 'Error: el casco está ocupado en otra llamada', true, false);
+    }
+    const addIce = c => p => { try { c.pc.addIceCandidate({ candidate: p.candidate, sdpMid: p.sdpMid, sdpMLineIndex: p.sdpMLineIndex }).catch(() => {}); } catch (_) {} };
+    function onConn(c) {
+      if (c.ended || !c.pc) return;
+      const s = c.pc.connectionState || c.pc.iceConnectionState;
+      if (s === 'connected' || s === 'completed') {
+        c.conn = true;
+        if (!c.t0) {
+          c.t0 = Date.now(); clearTimeout(c.tAns);
+          const tick = () => { vtime.textContent = mmss(Math.floor((Date.now() - c.t0) / 1000)); };
+          setV('En llamada'); tick(); c.tTick = setInterval(tick, 1000);
+        } else setV('En llamada');
+      } else if (s === 'disconnected') { c.conn = false; setV('Reconectando…'); }
+      else if (s === 'failed') endCall(c, 'Error: se perdió la conexión de audio', true, true);
+    }
+    async function startCall() {
+      if (L.call) return;
+      const c = L.call = { callId: crypto.randomUUID(), seen: new Set(), sentIce: new Set(), iceIn: [], icePend: [], meters: [], offerSent: false, remoteSet: false, muted: false, ended: false };
+      bTalk.disabled = true; vrow.classList.remove('hidden'); setCtl(true); vtime.textContent = '';
+      bMute.textContent = 'Silenciar'; bMute.setAttribute('aria-pressed', 'false');
+      setV('Conectando…');
+      try {
+        if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !window.RTCPeerConnection)
+          throw soft('este navegador no permite llamadas de voz (hace falta HTTPS)');
+        try {
+          c.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        } catch (e) {
+          const n = e && e.name;
+          throw soft(n === 'NotAllowedError' || n === 'SecurityError' ? 'permiso de micrófono denegado: habilitalo en el navegador para hablar'
+            : n === 'NotFoundError' || n === 'OverconstrainedError' ? 'no se encontró un micrófono' : 'no se pudo usar el micrófono (' + (n || 'error') + ')');
+        }
+        if (c.ended) { c.stream.getTracks().forEach(t => t.stop()); return; }
+        const tok = await getToken();
+        if (!tok) throw soft('sin sesión');
+        const iceServers = await turnServers(tok);
+        if (c.ended) return;
+        const pc = c.pc = new RTCPeerConnection({ iceServers });
+        c.stream.getAudioTracks().forEach(t => pc.addTrack(t, c.stream));
+        pc.ontrack = e => {
+          const s = (e.streams && e.streams[0]) || new MediaStream([e.track]);
+          remote.srcObject = s;
+          try { const pl = remote.play(); if (pl && pl.catch) pl.catch(() => {}); } catch (_) {}
+          if (!c.remoteMeter) { c.remoteMeter = true; meterOf(c, s, mIn); }
+        };
+        pc.onicecandidate = e => {
+          if (!e.candidate) return;
+          const cand = { candidate: e.candidate.candidate, sdpMid: e.candidate.sdpMid, sdpMLineIndex: e.candidate.sdpMLineIndex };
+          if (c.sentIce.has(cand.candidate)) return;   // sin duplicados (limite 60 filas/min por llamada)
+          c.sentIce.add(cand.candidate);
+          if (c.offerSent) sendSignal(c.callId, 'ice', cand); else c.icePend.push(cand);
+        };
+        pc.onconnectionstatechange = () => onConn(c);
+        pc.oniceconnectionstatechange = () => onConn(c);
+        meterOf(c, c.stream, mMic);
+        c.tLvl = setInterval(() => { for (const [an, buf, el] of c.meters) el.value = c.muted && el === mMic ? 0 : level(an, buf); }, 100);
+        await pc.setLocalDescription(await pc.createOffer());
+        await gathered(pc, 1500);
+        if (c.ended) return;
+        const sdp = pc.localDescription.sdp; c.icePend = [];   // lo ya juntado viaja dentro de la oferta
+        c.ch = sb.channel('rtc-' + id + '-' + c.callId)
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'rtc_signals', filter: 'device_id=eq.' + id }, p => onSignal(c, p.new))
+          .subscribe();
+        const err = await sendSignal(c.callId, 'offer', { sdp });
+        if (c.ended) { sendSignal(c.callId, 'hangup', {}); return; }   // colgaron mientras se enviaba la oferta
+        if (err) throw soft('no se pudo enviar la llamada: ' + (err.message || 'error'));
+        c.offerSent = true;
+        c.icePend.splice(0).forEach(k => sendSignal(c.callId, 'ice', k));
+        c.tAns = setTimeout(() => endCall(c, 'Error: el casco no respondió (25 s)', true, true), 25000);
+        c.tMax = setTimeout(() => endCall(c, 'Colgada (límite de 30 min)', false, true), 30 * 60 * 1000);
+        c.tPoll = setInterval(async () => {   // respaldo del Realtime mientras la llamada esta en curso
+          if (c.polling || c.ended) return;
+          c.polling = true;
+          try {
+            const { data } = await sb.from('rtc_signals').select('*').eq('device_id', id).eq('call_id', c.callId)
+              .eq('from_role', 'device').order('created_at', { ascending: true });
+            (data || []).forEach(r => onSignal(c, r));
+          } catch (_) {}
+          c.polling = false;
+        }, 1500);
+      } catch (e) {
+        endCall(c, 'Error: ' + (e && e.soft ? e.message : 'no se pudo iniciar la llamada' + (e && e.message ? ' (' + e.message + ')' : '')), true, c.offerSent);
+      }
+    }
+    bTalk.addEventListener('click', startCall);
+    bHang.addEventListener('click', () => { const c = L.call; if (c) endCall(c, 'Colgada', false, true); });
+    bMute.addEventListener('click', () => {
+      const c = L.call; if (!c) return;
+      c.muted = !c.muted;
+      if (c.stream) c.stream.getAudioTracks().forEach(t => { t.enabled = !c.muted; });
+      bMute.textContent = c.muted ? 'Activar micrófono' : 'Silenciar';
+      bMute.setAttribute('aria-pressed', String(c.muted));
+    });
+    // Al salir de la pagina: hangup con fetch keepalive (el insert de supabase-js podria cancelarse).
+    L.leave = () => {
+      const c = L.call; if (!c || c.ended) return;
+      if (c.offerSent && token) {
+        try {
+          fetch(cfg.SUPABASE_URL + '/rest/v1/rtc_signals', { method: 'POST', keepalive: true,
+            headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + token, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+            body: JSON.stringify({ device_id: id, call_id: c.callId, kind: 'hangup', payload: {} }) });
+        } catch (_) {}
+      }
+      endCall(c, 'Colgada', false, false);
+    };
+
     lives.set(id, L);
+    loadRot(id);
     return L;
   }
 
   const needsAttention = ev => ev.type === 'sos' || ev.type === 'fall';
+  // Hombre caido (docs/PROTOCOLO-VOZ.md seccion 6): el SOS automatico trae payload.reason. Solo se compara; nunca se vuelca el texto.
+  const isManDown = ev => !!ev.payload && typeof ev.payload === 'object' &&
+    (ev.payload.reason === 'hombre_caido' || ev.payload.reason === 'manual_en_caida');
 
   function refreshBanner() {
     const b = $('sos');
@@ -343,7 +605,7 @@
     const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
     const txt = document.createElement('span');
     txt.textContent = pending.size + ' alerta(s) sin atender — última: ' +
-      (last.type === 'fall' ? 'CAÍDA' : 'SOS') + ' · Casco ' + last.device_id + ' · ' + fmt(last.created_at);
+      (last.type === 'fall' ? 'CAÍDA' : 'SOS') + (isManDown(last) ? ' · HOMBRE CAÍDO' : '') + ' · Casco ' + last.device_id + ' · ' + fmt(last.created_at);
     const go = document.createElement('button'); go.type = 'button'; go.textContent = 'Ver alerta';
     go.addEventListener('click', () => {
       const li = cards.get(last.id);
@@ -502,9 +764,14 @@
     const tag = document.createElement('span'); tag.className = 'tag ' + ev.type; tag.textContent = ev.type.toUpperCase();
     const dev = document.createElement('strong'); dev.textContent = 'Casco ' + ev.device_id;
     const when = document.createElement('span'); when.className = 'mute'; when.textContent = fmt(ev.created_at);
-    row.append(tag, dev, when);
+    row.append(tag);
+    if (isManDown(ev)) row.append(mk('span', 'tag sos', 'HOMBRE CAÍDO'));
+    row.append(dev, when);
     li.append(row);
     const bits = [];
+    const pl = ev.payload && typeof ev.payload === 'object' ? ev.payload : null;
+    if (pl && typeof pl.still_s === 'number') bits.push('inmóvil ' + pl.still_s + ' s');
+    if (pl && typeof pl.reason === 'string' && pl.reason && !isManDown(ev)) bits.push('motivo: ' + pl.reason.slice(0, 60));
     if (ev.press_ms != null) bits.push('pulsación ' + ev.press_ms + ' ms');
     if (ev.battery != null) bits.push('batería ' + ev.battery + '%');
     if (ev.lat != null && ev.lng != null) bits.push(Number(ev.lat).toFixed(5) + ', ' + Number(ev.lng).toFixed(5));
@@ -553,7 +820,7 @@
         const ev = p.new;
         noteDevice(ev.device_id, ev.created_at, ev.battery);
         renderDevices();
-        if (ev.type === 'heartbeat') return;
+        if (ev.type === 'heartbeat') { noteRot(ev.device_id, ev.created_at, ev.payload); return; }
         if (needsAttention(ev)) alertSos(ev);
         render(ev, true);
       })
