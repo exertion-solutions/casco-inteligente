@@ -10,13 +10,15 @@ window.CASCO_CONFIG = {
   // Calibrado con el casco boca arriba en la mesa (270); puesto equivale a +180 = 90.
   // El boton Girar del visor lo recuerda por casco y navegador.
   // Recorte (fracciones del cuadro original) para ocultar el texto TM/ID/BT/TP/SS que la camara del casco graba en la imagen.
-  // Con rotacion 0 el texto cae en la franja izquierda (~33 % del ancho). Quitar (poner todo en 0) si se desactiva en el casco.
-  OVERLAY_CROP: { left: 0.34, top: 0, right: 0, bottom: 0 },
+  // Con stream_rotation 0 en el casco el texto cae en la franja DERECHA (x 0,64-0,90 del cuadro); con 180 cae a la izquierda (poner left 0.34). Quitar (poner todo en 0) si se desactiva en el casco.
+  OVERLAY_CROP: { left: 0, top: 0, right: 0.38, bottom: 0 },
   // Llamada de voz en vivo (boton Hablar). false = el boton queda oculto.
   // Poner true SOLO cuando esten desplegados turn-credentials, rtc_signals y coturn (ver docs/PROTOCOLO-VOZ.md).
   VOICE_ENABLED: false,
   // Grabacion a la PC (boton Grabar) y Captura: true = estampa casco, fecha y hora en la imagen. false = sin marca.
   REC_WATERMARK: true,
+  // Grabacion automatica ante SOS / caida (mezcla audio del casco + microfono de la PC). false = solo manual.
+  REC_AUTO_ON_ALERT: true,
   LIVE_ROTATION: 90,
   // Auto-orientacion (docs/PROTOCOLO-VOZ.md seccion 1): giro = (payload.rot del ultimo heartbeat + AUTO_ROT_OFFSET) % 360.
   // 0 por defecto. CALIBRAR con una pose conocida: si con el casco puesto la imagen sale girada N grados, poner N aqui.
