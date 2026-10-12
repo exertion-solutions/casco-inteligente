@@ -1,6 +1,7 @@
 package ar.exertion.casco;
 
 import android.content.Context;
+import android.util.Log;
 
 import org.json.JSONObject;
 
@@ -21,28 +22,40 @@ final class Config {
     final String url, anonKey, email, password, deviceId;
 
     private Config(JSONObject j) {
-        url = j.optString("supabase_url");
-        anonKey = j.optString("anon_key");
-        email = j.optString("device_email");
-        password = j.optString("device_password");
-        deviceId = j.optString("device_id", "unknown");
+        String u = j.optString("supabase_url").trim();
+        while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        url = u;
+        anonKey = j.optString("anon_key").trim();
+        email = j.optString("device_email").trim();
+        password = j.optString("device_password"); // sin trim: puede tener espacios
+        String id = j.optString("device_id").trim();
+        deviceId = id.isEmpty() ? "unknown" : id;
     }
 
     boolean valid() {
-        return !url.isEmpty() && !anonKey.isEmpty() && !email.isEmpty() && !password.isEmpty();
+        return url.startsWith("https://") && !anonKey.isEmpty() && !email.isEmpty() && !password.isEmpty();
     }
 
+    /** null si falta el archivo, no se puede leer o no es JSON. Nunca loguea el contenido. */
     static Config load(Context c) {
         try {
-            File f = new File(c.getExternalFilesDir(null), "config.json");
+            File dir = c.getExternalFilesDir(null);
+            if (dir == null) {
+                Log.e("CascoAgente", "almacenamiento externo no disponible");
+                return null;
+            }
+            File f = new File(dir, "config.json");
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             try (FileInputStream in = new FileInputStream(f)) {
                 byte[] buf = new byte[4096];
                 int n;
-                while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
             }
-            return new Config(new JSONObject(out.toString("UTF-8")));
+            String s = out.toString("UTF-8");
+            if (s.startsWith("﻿")) s = s.substring(1); // BOM de editores Windows
+            return new Config(new JSONObject(s));
         } catch (Exception e) {
+            Log.e("CascoAgente", "config.json no se pudo leer: " + e.getClass().getSimpleName());
             return null;
         }
     }

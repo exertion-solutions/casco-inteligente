@@ -1,98 +1,250 @@
 package ar.exertion.casco;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.hardware.SensorManager;
 import android.os.BatteryManager;
-import android.os.Build;
+import android.os.FileObserver;
 import android.os.Handler;
 import android.os.HandlerThread;
-import android.hardware.SensorManager;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Log;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 
 /**
- * Servicio en primer plano: observa CapPicture/CapCamera de RundeCap, sube los archivos nuevos y
- * publica eventos (photo/video/sos/heartbeat) en Supabase.
+ * Servicio en primer plano: observa CapPicture/CapCamera de RundeCap, copia cada archivo nuevo a
+ * almacenamiento propio (RundeCap lo borra tras subirlo), lo sube y publica eventos
+ * (photo/video/sos/fall/heartbeat) en Supabase.
+ *
+ * Hilos: observer = FileObserver (solo copia rapida), h = eventos, up = subidas (lentas),
+ * main = sensores (callback liviano que despacha a h).
  */
 public class MediaWatcherService extends Service {
     static final String ACTION_SOS = "ar.exertion.casco.SOS";
     private static final String TAG = "CascoAgente";
     private static final long HEARTBEAT_MS = 5 * 60_000L;
+    private static final long POLL_MS = 5_000L;
+    private static final long UPLOAD_RETRY_MS = 30_000L;
+    private static final int UPLOAD_ATTEMPTS = 3;
+    private static final String[][] DIRS = {{"CapPicture", "photo"}, {"CapCamera", "video"}};
 
-    private HandlerThread thread;
-    private Handler h;
+    private HandlerThread hThread, upThread;
+    private Handler h, up;
     private Supabase sb;
     private Config cfg;
-    private final List<android.os.FileObserver> observers = new ArrayList<>();
+    private File spool;
     private FallDetector fall;
     private boolean started;
+    private final FileObserver[] observers = new FileObserver[DIRS.length]; // referencia viva
+    private final Set<String> seen = new HashSet<>();
 
     @Override
     public void onCreate() {
         super.onCreate();
-        thread = new HandlerThread("casco-io");
-        thread.start();
-        h = new Handler(thread.getLooper());
-        goForeground();
+        goForeground(); // primero: si algo falla despues, igual se cumple startForeground()
+        hThread = new HandlerThread("casco-events");
+        hThread.start();
+        h = new Handler(hThread.getLooper());
+        upThread = new HandlerThread("casco-upload");
+        upThread.start();
+        up = new Handler(upThread.getLooper());
+        spool = new File(getFilesDir(), "spool");
+        spool.mkdirs();
+        Log.i(TAG, "MediaWatcherService onCreate");
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        String action = intent != null ? intent.getAction() : null;
+        Log.i(TAG, "MediaWatcherService onStartCommand action=" + action + " started=" + started);
         if (!started) {
             cfg = Config.load(this);
             if (cfg == null || !cfg.valid()) {
                 Log.e(TAG, "config.json ausente o incompleto en getExternalFilesDir");
             } else {
                 sb = new Supabase(cfg);
-                watch("CapPicture", "photo");
-                watch("CapCamera", "video");
+                if (checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE)
+                        != PackageManager.PERMISSION_GRANTED) {
+                    Log.w(TAG, "falta READ_EXTERNAL_STORAGE: otorgar con 'pm grant'; no se veran fotos");
+                }
+                recoverSpool();
+                armObservers(true);
+                h.postDelayed(poll, POLL_MS);
                 scheduleHeartbeat();
                 fall = new FallDetector((SensorManager) getSystemService(SENSOR_SERVICE),
-                        () -> sb.insertEvent("fall", null, null, null, battery()));
-                if (!fall.start(h)) Log.w(TAG, "sin acelerometro: deteccion de caida deshabilitada");
+                        () -> h.post(() -> sendEvent("fall", null, null, null, 0, 6)));
+                // sensores en el hilo principal: callback solo hace matematica y despacha a h
+                if (!fall.start(new Handler(Looper.getMainLooper()))) {
+                    Log.w(TAG, "sin acelerometro: deteccion de caida deshabilitada");
+                }
                 started = true;
+                Log.i(TAG, "agente iniciado device_id=" + cfg.deviceId);
             }
         }
-        if (intent != null && ACTION_SOS.equals(intent.getAction()) && sb != null) {
+        if (ACTION_SOS.equals(action)) {
             final int ms = intent.getIntExtra("press_ms", 0);
-            h.post(() -> sb.insertEvent("sos", "KEY_F11", ms, null, battery()));
+            if (sb == null) {
+                Log.e(TAG, "SOS recibido pero sin config valida: evento perdido");
+            } else {
+                h.post(() -> sendEvent("sos", "KEY_F11", ms, null, 0, 6));
+            }
         }
         return START_STICKY;
     }
 
-    private void watch(String dir, final String type) {
-        final File d = new File(Config.RUNDE_FILES, dir);
-        android.os.FileObserver o = new android.os.FileObserver(d.getAbsolutePath(), android.os.FileObserver.CLOSE_WRITE) {
-            @Override public void onEvent(int event, String name) {
-                if (name == null) return;
-                final File f = new File(d, name);
-                if (type.equals("photo") && !isImage(name)) return;
-                if (type.equals("video") && !name.endsWith(".mp4")) return;
-                h.post(() -> handleFile(f, type));
+    /** Inserta un evento reintentando (en h, cada 10 s) hasta maxAttempts: SOS/caida no deben perderse. */
+    private void sendEvent(String type, String key, Integer ms, String path, int attempt, int maxAttempts) {
+        if (sb.insertEvent(type, key, ms, path, battery())) {
+            Log.i(TAG, "evento " + type + " enviado");
+        } else if (attempt + 1 < maxAttempts) {
+            h.postDelayed(() -> sendEvent(type, key, ms, path, attempt + 1, maxAttempts), 10_000L);
+        } else {
+            Log.e(TAG, "evento " + type + " descartado tras " + maxAttempts + " intentos");
+        }
+    }
+
+    // ---- observacion de carpetas de RundeCap ----
+
+    /** Arma (o re-arma si la carpeta recien aparecio) los FileObserver. */
+    private void armObservers(boolean firstRun) {
+        long now = System.currentTimeMillis();
+        for (int i = 0; i < DIRS.length; i++) {
+            if (observers[i] != null) continue;
+            final File d = new File(Config.RUNDE_FILES, DIRS[i][0]);
+            final String type = DIRS[i][1];
+            if (!d.isDirectory()) {
+                if (firstRun) Log.w(TAG, "carpeta inexistente por ahora: " + d);
+                continue;
             }
-        };
-        o.startWatching();
-        observers.add(o); // mantener referencia: si se recolecta, deja de observar
+            // FileObserver(String) esta deprecado en API 29 pero es el unico disponible en minSdk 26
+            FileObserver o = new FileObserver(d.getAbsolutePath(), FileObserver.CLOSE_WRITE | FileObserver.MOVED_TO) {
+                @Override public void onEvent(int event, String name) {
+                    if (name != null) ingest(new File(d, name), type);
+                }
+            };
+            o.startWatching();
+            observers[i] = o;
+            // lo que ya estaba (hace mas de 60 s) es historico: no se sube
+            File[] old = d.listFiles();
+            if (old != null) {
+                for (File f : old) if (now - f.lastModified() > 60_000L) claim(f);
+            }
+            Log.i(TAG, "observando " + d);
+        }
     }
 
-    private static boolean isImage(String n) {
-        String s = n.toLowerCase();
-        return s.endsWith(".jpg") || s.endsWith(".jpeg") || s.endsWith(".png");
+    /** Red de seguridad: re-arma carpetas que aparecen tarde y detecta archivos que inotify no avise. */
+    private final Runnable poll = new Runnable() {
+        @Override public void run() {
+            try {
+                armObservers(false);
+                long now = System.currentTimeMillis();
+                for (String[] dt : DIRS) {
+                    File[] fs = new File(Config.RUNDE_FILES, dt[0]).listFiles();
+                    if (fs == null) continue;
+                    long quiet = dt[1].equals("video") ? 10_000L : 3_000L; // no tocar videos en escritura
+                    for (File f : fs) if (now - f.lastModified() > quiet) ingest(f, dt[1]);
+                }
+            } catch (RuntimeException e) {
+                Log.w(TAG, "poll: " + e);
+            }
+            h.postDelayed(this, POLL_MS);
+        }
+    };
+
+    private static String ext(String n) {
+        n = n.toLowerCase(Locale.ROOT);
+        return n.substring(n.lastIndexOf('.') + 1);
     }
 
-    private void handleFile(File f, String type) {
-        if (!f.exists() || f.length() == 0) return;
-        String path = null;
-        if (f.length() <= Config.MAX_UPLOAD_BYTES) path = sb.uploadMedia(f, type);
-        sb.insertEvent(type, null, null, path, battery());
+    private static boolean wanted(String name, String type) {
+        if (name.startsWith(".")) return false; // temporales
+        String e = ext(name);
+        return type.equals("photo")
+                ? (e.equals("jpg") || e.equals("jpeg") || e.equals("png"))
+                : (e.equals("mp4") || e.equals("3gp") || e.equals("mkv"));
+    }
+
+    /** true la primera vez que se ve este archivo (nombre+tamano). Hilo-seguro. */
+    private boolean claim(File f) {
+        synchronized (seen) {
+            if (seen.size() > 5000) seen.clear(); // ponytail: tope simple, solo duplicaria subidas viejas
+            return seen.add(f.getName() + ":" + f.length());
+        }
+    }
+
+    /**
+     * Corre en el hilo del FileObserver (o en h por poll). Copia de inmediato al spool propio porque
+     * RundeCap borra el original tras subirlo a su plataforma; la subida va por el hilo up.
+     */
+    private void ingest(File f, String type) {
+        if (!wanted(f.getName(), type) || !f.isFile() || f.length() == 0 || !claim(f)) return;
+        final String origName = f.getName();
+        Log.i(TAG, "archivo nuevo " + type + ": " + origName + " (" + f.length() + " bytes)");
+        if (f.length() > Config.MAX_UPLOAD_BYTES) {
+            h.post(() -> sendEvent(type, null, null, null, 0, 2));
+            return;
+        }
+        final File copy = new File(spool, type + "_" + System.currentTimeMillis() + "_"
+                + origName.replaceAll("[^A-Za-z0-9._-]", "_"));
+        try {
+            copyFile(f, copy);
+        } catch (Exception e) {
+            // el original ya no esta (RundeCap lo borro antes de poder copiarlo): queda al menos el evento
+            Log.w(TAG, "no se pudo copiar " + origName + ": " + e);
+            copy.delete();
+            h.post(() -> sendEvent(type, null, null, null, 0, 2));
+            return;
+        }
+        up.post(() -> upload(copy, type, origName, 0));
+    }
+
+    private static void copyFile(File src, File dst) throws Exception {
+        try (InputStream in = new FileInputStream(src); OutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[16 * 1024];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+        }
+    }
+
+    /** En hilo up. Reintenta la subida 3 veces (30 s); al final registra el evento con o sin media_path. */
+    private void upload(File copy, String type, String origName, int attempt) {
+        String path = sb.uploadMedia(copy, type, origName);
+        if (path == null && attempt + 1 < UPLOAD_ATTEMPTS) {
+            up.postDelayed(() -> upload(copy, type, origName, attempt + 1), UPLOAD_RETRY_MS);
+            return;
+        }
+        copy.delete();
+        Log.i(TAG, "subida " + origName + " -> " + path);
+        h.post(() -> sendEvent(type, null, null, path, 0, 3));
+    }
+
+    /** Archivos copiados que quedaron sin subir (reinicio/crash del servicio). Nombre: type_ts_orig. */
+    private void recoverSpool() {
+        File[] left = spool.listFiles();
+        if (left == null) return;
+        for (File f : left) {
+            String[] p = f.getName().split("_", 3);
+            if (p.length < 3 || f.length() == 0) { f.delete(); continue; }
+            final String type = p[0], orig = p[2];
+            Log.i(TAG, "recuperando del spool: " + f.getName());
+            up.post(() -> upload(f, type, orig, 0));
+        }
     }
 
     private void scheduleHeartbeat() {
@@ -115,9 +267,7 @@ public class MediaWatcherService extends Service {
     private void goForeground() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         String ch = "casco";
-        if (Build.VERSION.SDK_INT >= 26) {
-            nm.createNotificationChannel(new NotificationChannel(ch, "Casco Agente", NotificationManager.IMPORTANCE_MIN));
-        }
+        nm.createNotificationChannel(new NotificationChannel(ch, "Casco Agente", NotificationManager.IMPORTANCE_MIN));
         Notification n = new Notification.Builder(this, ch)
                 .setContentTitle("Casco Agente activo")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
@@ -128,9 +278,12 @@ public class MediaWatcherService extends Service {
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public void onDestroy() {
+        Log.i(TAG, "MediaWatcherService onDestroy");
         if (fall != null) fall.stop();
-        for (android.os.FileObserver o : observers) o.stopWatching();
-        thread.quitSafely();
+        for (FileObserver o : observers) if (o != null) o.stopWatching();
+        if (h != null) h.removeCallbacksAndMessages(null);
+        if (hThread != null) hThread.quitSafely();
+        if (upThread != null) upThread.quitSafely();
         super.onDestroy();
     }
 }

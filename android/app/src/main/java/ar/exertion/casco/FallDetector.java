@@ -5,6 +5,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.os.Handler;
+import android.os.SystemClock;
 
 /**
  * Deteccion de caida por acelerometro: caida libre (|a| baja) seguida de impacto (|a| alta).
@@ -29,6 +30,7 @@ final class FallDetector implements SensorEventListener {
         this.cb = cb;
     }
 
+    /** onFall() corre en el hilo del Handler: debe ser liviano (nada de red aqui). */
     boolean start(Handler h) {
         Sensor acc = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
         if (acc == null) return false;
@@ -41,7 +43,7 @@ final class FallDetector implements SensorEventListener {
     public void onSensorChanged(SensorEvent e) {
         float x = e.values[0], y = e.values[1], z = e.values[2];
         float mag = (float) Math.sqrt(x * x + y * y + z * z);
-        long now = System.currentTimeMillis();
+        long now = SystemClock.elapsedRealtime(); // monotono: inmune a cambios de hora (NTP)
 
         if (mag < FREE_FALL_MS2) {
             if (freeFallSince == 0) freeFallSince = now;
