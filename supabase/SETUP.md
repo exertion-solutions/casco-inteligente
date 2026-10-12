@@ -306,6 +306,20 @@ El **admin** puede **archivar** una alerta ya resuelta para que deje de verse en
 
 **15.3** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`. Si hay filas en `false` y no se ve por que, corre `supabase/tests/ver_fallos.sql`: devuelve **una sola fila** con la cantidad de fallos y, por cada uno, que esperaba, que dio y el error de la base.
 
+## 16. Borrar imagenes desde el visor (opcional, despues del paso 15)
+
+Permite que el **admin** borre una foto o video del almacenamiento desde el visor. El visor borra el archivo y deja el evento **archivado** con el motivo "Imagen eliminada" (el evento en si no se modifica ni se borra).
+
+**16.1 Crear el permiso.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/012_borrar_imagenes.sql`, **Run**. Debe decir `Success`.
+(Si usaste `ejecutar-todo.sql` actualizado, ya esta incluido.) Se puede repetir sin problema.
+
+**16.2 Reglas.**
+- Solo `admin` borra, y solo archivos del bucket `casco-media` con la ruta `<numero de casco>/photo/...` o `<numero de casco>/video/...`. `viewer` y casco no borran; ver y subir siguen igual.
+- El borrado es **definitivo** (no hay papelera): el archivo no se puede recuperar desde el visor.
+- Los eventos viejos que se borran solos (limpieza diaria) **no** borran sus archivos: quedan en Storage ocupando espacio. Revisarlos de vez en cuando en **Storage** > `casco-media` (ver la nota del reporte para la limpieza automatica propuesta).
+
+**16.3** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
+
 ## Si algo falla
 
 | Sintoma | Causa probable |
@@ -337,3 +351,4 @@ El **admin** puede **archivar** una alerta ya resuelta para que deje de verse en
 | El visor no muestra alertas `not_worn` / `inactive` | falta correr 010 (el tipo no estaba permitido) o el casco no tiene activada la deteccion (`not_worn_s`, `inactivity_s` en 0) |
 | "event_archive: la alerta esta pendiente de atender" | se intento archivar una alerta sin "Atender": atenderla primero |
 | "event_archive: solo un admin puede archivar" | el usuario es `viewer`: solo el admin archiva y desarchiva |
+| El visor no puede borrar una imagen ("new row violates row-level security" / sin permiso) | el usuario no es `admin`, falta correr 012, o la ruta no es `<casco>/photo|video/<archivo>` |

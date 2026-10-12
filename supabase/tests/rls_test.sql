@@ -2,7 +2,7 @@
 -- USO: Supabase > SQL Editor > pegar TODO > Run. Es solo lectura neta: cada caso corre
 -- en una subtransaccion que se revierte (no deja filas ni objetos).
 -- Resultado: una tabla con columnas test | expected | got | ok. TODAS deben ser ok = true.
--- Requiere haber ejecutado antes supabase/schema.sql y migrations/002 a 011 (o ejecutar-todo.sql).
+-- Requiere haber ejecutado antes supabase/schema.sql y migrations/002 a 012 (o ejecutar-todo.sql).
 -- Desde la migracion 010 solo role='admin' escribe devices/people/groups/assignments/geofences/geo_points/device_config
 -- y manda evacuacion; los casos 'viewer' de esas tablas esperan DENIED.
 --
@@ -219,6 +219,27 @@ with c as (select
        perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","email":"seed@test.local","app_metadata":{"role":"admin"}}',true);
        insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000011','resuelto');
      end $d$$s$ as seed_arch
+  ,
+  -- Tanda 5b (migracion 012). seed_st: objetos del bucket (el GUC permite el DELETE directo por SQL: Supabase tiene un
+  -- trigger storage.protect_delete que lo bloquea salvo que este seteado). seed_st_other: objeto en otro bucket.
+  -- seed_ph: eventos photo y video SIN atender.
+  $s$do $d$ begin
+       perform set_config('storage.allow_delete_query','true',true);
+       insert into storage.objects(bucket_id,name) values
+         ('casco-media','4132/photo/seed.jpg'),
+         ('casco-media','4132/video/seed.mp4'),
+         ('casco-media','4132/docs/seed.jpg');
+     end $d$$s$ as seed_st,
+  $s$do $d$ begin
+       perform set_config('storage.allow_delete_query','true',true);
+       insert into storage.buckets(id,name,public) values ('otro-bucket','otro-bucket',false) on conflict (id) do nothing;
+       insert into storage.objects(bucket_id,name) values ('otro-bucket','4132/photo/seed.jpg');
+     end $d$$s$ as seed_st_other,
+  $s$do $d$ begin
+       insert into public.events(id,device_id,type,media_path) values
+         ('eeeeeeee-0000-0000-0000-000000000021','4132','photo','4132/photo/seed.jpg'),
+         ('eeeeeeee-0000-0000-0000-000000000022','4132','video','4132/video/seed.mp4');
+     end $d$$s$ as seed_ph
 )
 select r.* from c, lateral (
   -- ===================== anon (solo anon key) =====================
@@ -1146,6 +1167,26 @@ select r.* from c, lateral (
   union all select 'event_archive en publicacion realtime', 'OK', case when exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='event_archive') then 'OK' else 'BAD' end, (exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='event_archive'))
   union all select 'incident_report expone archived_at', 'OK', case when exists (select 1 from information_schema.columns where table_schema='public' and table_name='incident_report' and column_name='archived_at') then 'OK' else 'BAD' end, (exists (select 1 from information_schema.columns where table_schema='public' and table_name='incident_report' and column_name='archived_at'))
   union all select 'device_ids: validador por elemento en broadcasts y geofences', 'OK', case when (select count(*) from pg_constraint where conname in ('broadcasts_device_ids_elems_ck','geofences_device_ids_elems_ck')) = 2 then 'OK' else 'BAD' end, ((select count(*) from pg_constraint where conname in ('broadcasts_device_ids_elems_ck','geofences_device_ids_elems_ck')) = 2)
+  -- ======================= Tanda 5b: borrar imagenes (migracion 012) =======================
+  union all select * from pg_temp.t('img admin: DELETE objeto photo del bucket', 'ALLOWED', 'authenticated', c.admin, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img admin: DELETE objeto video del bucket', 'ALLOWED', 'authenticated', c.admin, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/video/seed.mp4'$q$, c.seed_st)
+  union all select * from pg_temp.t('img viewer: DELETE objeto', 'DENIED', 'authenticated', c.viewer, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img device: DELETE objeto propio', 'DENIED', 'authenticated', c.dev, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img anon: DELETE objeto', 'DENIED', 'anon', c.anon, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img sin rol: DELETE objeto', 'DENIED', 'authenticated', c.norole, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img user_metadata falso: DELETE objeto', 'DENIED', 'authenticated', c.usermeta, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img admin: DELETE objeto de otro bucket', 'DENIED', 'authenticated', c.admin, $q$delete from storage.objects where bucket_id='otro-bucket' and name='4132/photo/seed.jpg'$q$, c.seed_st_other)
+  union all select * from pg_temp.t('img admin: DELETE ruta fuera de photo/video', 'DENIED', 'authenticated', c.admin, $q$delete from storage.objects where bucket_id='casco-media' and name='4132/docs/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img admin: UPDATE objeto (sin policy)', 'DENIED', 'authenticated', c.admin, $q$update storage.objects set name='4132/photo/otro.jpg' where name='4132/photo/seed.jpg'$q$, c.seed_st)
+  union all select * from pg_temp.t('img viewer: SELECT objetos (sin cambios)', 'ALLOWED', 'authenticated', c.viewer, 'select * from storage.objects', c.seed_st)
+  union all select * from pg_temp.t('img device: INSERT en su carpeta (sin cambios)', 'ALLOWED', 'authenticated', c.dev, $q$insert into storage.objects(bucket_id,name) values ('casco-media','4132/photo/nueva.jpg')$q$)
+  union all select * from pg_temp.t('img admin: archivar photo sin atender (informativo)', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000021','Imagen eliminada')$q$, c.seed_ph)
+  union all select * from pg_temp.t('img admin: archivar video sin atender (informativo)', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000022','Imagen eliminada')$q$, c.seed_ph)
+  union all select * from pg_temp.t('img viewer: archivar photo (solo admin)', 'DENIED', 'authenticated', c.viewer, $q$insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000021','Imagen eliminada')$q$, c.seed_ph)
+  union all select * from pg_temp.t('img admin: el evento photo sigue intacto tras archivar', 'ALLOWED', 'authenticated', c.admin, $q$do $b$ declare m text; begin insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000021','Imagen eliminada'); select media_path into m from public.events where id = 'eeeeeeee-0000-0000-0000-000000000021'; if m is distinct from '4132/photo/seed.jpg' then raise exception 'media_path=%', m; end if; end $b$$q$, c.seed_ph)
+  union all select 'storage: policy DELETE solo admin en casco-media', 'OK', case when (select count(*) from pg_policies where schemaname='storage' and tablename='objects' and cmd='DELETE' and policyname='media_delete_admin' and qual ~ 'admin' and qual !~ 'viewer' and qual !~ 'device') = 1 then 'OK' else 'BAD' end, ((select count(*) from pg_policies where schemaname='storage' and tablename='objects' and cmd='DELETE' and policyname='media_delete_admin' and qual ~ 'admin' and qual !~ 'viewer' and qual !~ 'device') = 1)
+  union all select 'storage: unica policy de DELETE para casco-media', 'OK', case when (select count(*) from pg_policies where schemaname='storage' and tablename='objects' and cmd in ('DELETE','ALL') and qual ~ 'casco-media') = 1 then 'OK' else 'BAD' end, ((select count(*) from pg_policies where schemaname='storage' and tablename='objects' and cmd in ('DELETE','ALL') and qual ~ 'casco-media') = 1)
+  union all select 'storage: SELECT viewer e INSERT device conservados, sin UPDATE', 'OK', case when exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='media_select_viewer') and exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='media_insert_device') and not exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and cmd in ('UPDATE','ALL') and (coalesce(qual,'') || coalesce(with_check,'')) ~ 'casco-media') then 'OK' else 'BAD' end, (exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='media_select_viewer') and exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='media_insert_device') and not exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and cmd in ('UPDATE','ALL') and (coalesce(qual,'') || coalesce(with_check,'')) ~ 'casco-media'))
   -- ============================ configuracion ============================
   union all select 'bucket privado, con limite de tamano y mime', 'OK',
             (select case when not public and file_size_limit is not null and allowed_mime_types is not null
