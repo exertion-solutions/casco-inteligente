@@ -7,7 +7,9 @@ Segunda ola de desarrollo. Fuente de verdad para Android, Web y Supabase. Comple
 - Permiso `ACCESS_FINE_LOCATION` (runtime con targetSdk 28: `pm grant`, actualizar `tools/instalar-agente.ps1`).
 - Evento `type='location'` con las columnas `lat`, `lng`, `battery` y `payload={"acc":<m>,"spd":<m/s>,"brg":<grados>,"alt":<m>,"src":"gps","n":<satelites>}`.
 - Filtros: descartar fixes con `acc > 50 m`; no enviar si no se movio > max(10 m, acc) y paso < intervalo maximo.
-- Cadencia adaptativa: **moviendose (> 1 m/s) cada 30 s**, **quieto cada 5 min**, **durante SOS, hombre caido o transmision cada 10 s**.
+- **Seguimiento SIEMPRE activo** (decision del usuario): el servicio de ubicacion corre mientras el agente corre, no solo en alertas.
+- Cadencia adaptativa: **moviendose (> 1 m/s) cada 30 s**, **quieto cada 5 min**, **durante SOS, hombre caido o transmision cada 10 s**;
+  **dentro de 100 m de una zona de peligro cada 5 s** (evaluacion mas fina).
   Maximo 6/min (el limite del servidor es 30/min por tipo).
 - Cola offline: hasta 200 puntos en memoria/archivo; se envian en orden al volver la red (con `payload.t` = epoch ms original,
   porque `created_at` lo fija el servidor).
@@ -23,6 +25,8 @@ Tabla `public.geofences`:
 | kind | text | `'permitida'` (alerta al SALIR), `'restringida'` (alerta al ENTRAR), `'informativa'` (aviso sin alarma) |
 | shape | text | `'circle'` o `'polygon'` |
 | geometry | jsonb | circle: `{"center":[lat,lng],"radius_m":150}` (10..50000); polygon: `{"points":[[lat,lng],...]}` (3..100 puntos) |
+| message | text null | frase que dice el casco al entrar/salir (<= 140; si es null se usa la frase por defecto) |
+| alarm | text | `'voz'`, `'sirena'` o `'voz_y_sirena'` (default `'voz_y_sirena'` para `restringida`) |
 | device_ids | text[] null | `null` = todos los cascos |
 | active | boolean | default true |
 | created_by / created_at / updated_at | | fijados por el servidor |
@@ -34,14 +38,22 @@ Tabla `public.geofences`:
   evalua en cada fix. Histeresis: **3 fixes consecutivos** dentro/fuera o 10 s de permanencia; margen = max(acc, 10 m).
 - Evento al cruzar: `type='geofence'`, `lat/lng`, `payload={"zone_id","zone_name","kind","action":"enter"|"exit","dist_m"}`.
   Solo se envia en cambio de estado (no repite).
-- Voz (TTS es-AR): restringida/enter: "Atencion. Esta ingresando a una zona restringida: <nombre>";
+- **Alarma local en el casco (lo central del pedido)**: al ENTRAR a una zona `restringida` (o salir de una `permitida`) el casco
+  suena en el momento, sin esperar a la nube: sirena (`ToneGenerator`/`MediaPlayer` en `STREAM_ALARM`, volumen alto) y/o voz con
+  `message`. **Se repite cada 10 s mientras la persona siga dentro**, hasta que salga o la silencie con un boton (F10/F12;
+  silenciar NO cancela el aviso al supervisor). Una sola notificacion al visor por entrada (evento `geofence`).
+- Voz (TTS es-AR), frase por defecto: restringida/enter: "Atencion. Esta ingresando a una zona restringida: <nombre>";
   permitida/exit: "Atencion. Esta saliendo de la zona de trabajo: <nombre>"; informativa: "Zona <nombre>".
 - El visor trata como **alerta que requiere Atender**: `restringida/enter` y `permitida/exit`. El resto es informativo.
 
 ## 3. Georreferencias (puntos de interes)
 Tabla `public.geo_points`: `id`, `name`, `category` (`'punto_reunion'`,`'extintor'`,`'botiquin'`,`'acceso'`,`'peligro'`,`'otro'`),
-`lat`, `lng`, `notes` (<= 500), `active`, `created_by`, `created_at`, `deleted_at`. Mismas reglas RLS que geocercas
-(el casco no necesita leerlos en esta etapa).
+`lat`, `lng`, `notes` (<= 500), `alert_radius_m` (solo `peligro`: 5..500, default 30), `message`, `alarm`, `active`, `created_by`,
+`created_at`, `deleted_at`. Mismas reglas RLS que geocercas.
+- **Un punto `peligro` actua como una geocerca circular `restringida`** de radio `alert_radius_m` centrada en el punto: el casco
+  lo descarga junto con las geocercas y dispara la misma alarma local y el mismo evento `geofence` (`kind='peligro'`).
+  Asi el supervisor marca un solo punto en el mapa ("valvula con fuga", "pozo abierto") sin dibujar una zona.
+- Las demas categorias son informativas (el casco no las descarga en esta etapa).
 - En el visor: capa de puntos con icono por categoria; al abrir un SOS se muestra el **punto de reunion mas cercano**
   y la distancia (haversine) respecto de la ultima posicion del casco.
 
