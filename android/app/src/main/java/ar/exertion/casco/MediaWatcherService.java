@@ -82,12 +82,21 @@ public class MediaWatcherService extends Service {
                         != PackageManager.PERMISSION_GRANTED) {
                     Log.w(TAG, "falta READ_EXTERNAL_STORAGE: otorgar con 'pm grant'; no se veran fotos");
                 }
+                StreamService.shared = sb;
                 recoverSpool();
                 armObservers(true);
                 h.postDelayed(poll, POLL_MS);
+                if (cfg.streamHost.isEmpty()) {
+                    Log.w(TAG, "sin stream_host valido en config.json: video deshabilitado");
+                } else {
+                    h.postDelayed(cmdPoll, 5_000L);
+                }
                 scheduleHeartbeat();
                 fall = new FallDetector((SensorManager) getSystemService(SENSOR_SERVICE),
-                        () -> h.post(() -> sendEvent("fall", null, null, null, 0, 6)));
+                        () -> h.post(() -> {
+                            startLocalStream(); // primero el video (sin red), luego el evento
+                            sendEvent("fall", null, null, null, 0, 6);
+                        }));
                 // sensores en el hilo principal: callback solo hace matematica y despacha a h
                 if (!fall.start(new Handler(Looper.getMainLooper()))) {
                     Log.w(TAG, "sin acelerometro: deteccion de caida deshabilitada");
@@ -101,11 +110,47 @@ public class MediaWatcherService extends Service {
             if (sb == null) {
                 Log.e(TAG, "SOS recibido pero sin config valida: evento perdido");
             } else {
-                h.post(() -> sendEvent("sos", "KEY_F11", ms, null, 0, 6));
+                h.post(() -> {
+                    startLocalStream();
+                    sendEvent("sos", "KEY_F11", ms, null, 0, 6);
+                });
             }
         }
         return START_STICKY;
     }
+
+    /** SOS/caida: transmite 120 s sin esperar comando (si hay stream_host y no hay ya una transmision). */
+    private void startLocalStream() {
+        if (cfg == null || cfg.streamHost.isEmpty() || StreamService.source != StreamPolicy.SRC_NONE) return;
+        StreamService.start(this, StreamPolicy.SRC_LOCAL);
+    }
+
+    private String lastCmdId;
+    private int cmdFails;
+
+    /** Cada 3 s (en h): ultimo comando de stream -> StreamPolicy decide. Backoff hasta 30 s si falla la red. */
+    private final Runnable cmdPoll = new Runnable() {
+        @Override public void run() {
+            try {
+                String[] c = sb.latestStreamCommand();
+                String id = c == null ? null : c[0];
+                StreamPolicy.Act act = StreamPolicy.decide(id, c == null ? null : c[1], lastCmdId, StreamService.source);
+                if (act == StreamPolicy.Act.START) {
+                    Log.i(TAG, "comando start recibido");
+                    StreamService.start(MediaWatcherService.this, StreamPolicy.SRC_REMOTE);
+                } else if (act == StreamPolicy.Act.STOP) {
+                    Log.i(TAG, "comando stop/vencido: deteniendo transmision");
+                    StreamService.stop(MediaWatcherService.this);
+                }
+                if (id != null) lastCmdId = id;
+                if (cmdFails > 0) Log.i(TAG, "poll de comandos recuperado");
+                cmdFails = 0;
+            } catch (Exception e) {
+                if (cmdFails++ == 0) Log.w(TAG, "poll de comandos fallo (backoff hasta 30 s): " + e.getMessage());
+            }
+            h.postDelayed(this, StreamPolicy.pollDelayMs(cmdFails));
+        }
+    };
 
     /** Inserta un evento reintentando (en h, cada 10 s) hasta maxAttempts: SOS/caida no deben perderse. */
     private void sendEvent(String type, String key, Integer ms, String path, int attempt, int maxAttempts) {
@@ -279,6 +324,7 @@ public class MediaWatcherService extends Service {
 
     @Override public void onDestroy() {
         Log.i(TAG, "MediaWatcherService onDestroy");
+        StreamService.shared = null;
         if (fall != null) fall.stop();
         for (FileObserver o : observers) if (o != null) o.stopWatching();
         if (h != null) h.removeCallbacksAndMessages(null);

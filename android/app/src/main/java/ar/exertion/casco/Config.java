@@ -14,12 +14,17 @@ import java.io.FileInputStream;
  * /sdcard/Android/data/ar.exertion.casco/files/config.json
  * {"supabase_url":"https://xxx.supabase.co","anon_key":"...","device_email":"...",
  *  "device_password":"...","device_id":"4132"}
+ * Video (opcionales salvo stream_host): stream_host, stream_width, stream_height, stream_fps,
+ * stream_bitrate_kbps (+ stream_rotation 0/90/180/270, por defecto 0).
  */
 final class Config {
     static final String RUNDE_FILES = "/sdcard/Android/data/com.tencent.liteav.demo/files";
     static final long MAX_UPLOAD_BYTES = 25L * 1024 * 1024; // videos mas grandes: solo evento
 
     final String url, anonKey, email, password, deviceId;
+    /** "host" o "host:puerto" validado; "" si falta o es invalido (no se transmite). */
+    final String streamHost;
+    final int streamWidth, streamHeight, streamFps, streamBitrateKbps, streamRotation;
 
     private Config(JSONObject j) {
         String u = j.optString("supabase_url").trim();
@@ -30,7 +35,17 @@ final class Config {
         password = j.optString("device_password"); // sin trim: puede tener espacios
         String id = j.optString("device_id").trim();
         deviceId = id.isEmpty() ? "unknown" : id;
+        String host = j.optString("stream_host").trim();
+        streamHost = host.matches("[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?") ? host : "";
+        streamWidth = clamp(j.optInt("stream_width", 640), 160, 1920);
+        streamHeight = clamp(j.optInt("stream_height", 480), 120, 1080);
+        streamFps = clamp(j.optInt("stream_fps", 15), 5, 30);
+        streamBitrateKbps = clamp(j.optInt("stream_bitrate_kbps", 800), 100, 4000);
+        int r = j.optInt("stream_rotation", 0);
+        streamRotation = (r == 90 || r == 180 || r == 270) ? r : 0;
     }
+
+    private static int clamp(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
 
     boolean valid() {
         return url.startsWith("https://") && !anonKey.isEmpty() && !email.isEmpty() && !password.isEmpty();

@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Video: camara (runtime; se concede con pm grant, ver README-VIDEO.md) y wake lock durante la transmision. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
         android:label="Casco Agente"
@@ -38,6 +41,12 @@
 
         <!-- Observa fotos/videos nuevos y los sube. -->
         <service android:name=".MediaWatcherService" android:exported="false" />
+
+        <!-- Transmite la camara trasera por RTMP (comando remoto o SOS/caida). -->
+        <service
+            android:name=".StreamService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
 
         <receiver android:name=".BootReceiver" android:exported="true">
             <intent-filter>

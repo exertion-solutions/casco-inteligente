@@ -32,8 +32,10 @@ final class Supabase {
         HttpError(int code, String msg) { super(msg); this.code = code; }
     }
 
-    private synchronized String token() throws Exception {
-        if (token != null && SystemClock.elapsedRealtime() < tokenExpiresAt - 60_000) return token;
+    private synchronized String token() throws Exception { return token(60_000); }
+
+    private synchronized String token(long minRemainingMs) throws Exception {
+        if (token != null && SystemClock.elapsedRealtime() < tokenExpiresAt - minRemainingMs) return token;
         JSONObject body = new JSONObject().put("email", cfg.email).put("password", cfg.password);
         String res = http("POST", "/auth/v1/token?grant_type=password", "application/json",
                 body.toString().getBytes("UTF-8"), null, false);
@@ -42,6 +44,9 @@ final class Supabase {
         tokenExpiresAt = SystemClock.elapsedRealtime() + j.optLong("expires_in", 3600) * 1000;
         return token;
     }
+
+    /** Access token vigente (para RTMP pass=); se renueva si le quedan menos de 5 min. Bloqueante. */
+    String accessToken() throws Exception { return token(5 * 60_000L); }
 
     private synchronized void invalidateToken() { token = null; }
 
@@ -58,12 +63,17 @@ final class Supabase {
 
     private String http(String method, String path, String contentType, byte[] body, File file, boolean auth)
             throws Exception {
+        return http(method, path, contentType, body, file, auth, 10_000, file != null ? 120_000 : 20_000);
+    }
+
+    private String http(String method, String path, String contentType, byte[] body, File file, boolean auth,
+                        int connectMs, int readMs) throws Exception {
         String bearer = auth ? token() : cfg.anonKey;
         HttpURLConnection c = (HttpURLConnection) new URL(cfg.url + path).openConnection();
         try {
             c.setRequestMethod(method);
-            c.setConnectTimeout(10_000);
-            c.setReadTimeout(file != null ? 120_000 : 20_000);
+            c.setConnectTimeout(connectMs);
+            c.setReadTimeout(readMs);
             c.setRequestProperty("apikey", cfg.anonKey);
             c.setRequestProperty("Authorization", "Bearer " + bearer);
             c.setRequestProperty("Prefer", "return=minimal");
@@ -129,6 +139,28 @@ final class Supabase {
             Log.w(TAG, "upload fallo: " + e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * Ultimo comando de stream de este dispositivo (RLS ya filtra a los ultimos 2 min).
+     * Devuelve {id, action}, o null si no hay ninguno vigente. Lanza excepcion ante error de red/HTTP.
+     * Timeouts cortos: corre en el hilo de eventos cada 3 s y no debe demorar un SOS.
+     */
+    String[] latestStreamCommand() throws Exception {
+        String path = "/rest/v1/stream_commands?select=id,action&device_id=eq."
+                + java.net.URLEncoder.encode(cfg.deviceId, "UTF-8") + "&order=created_at.desc&limit=1";
+        String res;
+        try {
+            res = http("GET", path, null, null, null, true, 4_000, 6_000);
+        } catch (HttpError e) {
+            if (e.code != 401) throw e;
+            invalidateToken();
+            res = http("GET", path, null, null, null, true, 4_000, 6_000);
+        }
+        org.json.JSONArray a = new org.json.JSONArray(res);
+        if (a.length() == 0) return null;
+        JSONObject o = a.getJSONObject(0);
+        return new String[]{o.optString("id"), o.optString("action")};
     }
 
     /** Inserta un evento en public.events (un intento; el que llama decide reintentos). */

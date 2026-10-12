@@ -4,7 +4,8 @@ plugins {
 
 android {
     namespace 'ar.exertion.casco'
-    compileSdk 29
+    // compileSdk 34: lo exige RootEncoder 2.5.x; targetSdk NO cambia (28).
+    compileSdk 34
 
     defaultConfig {
         applicationId 'ar.exertion.casco'
@@ -23,4 +24,9 @@ android {
     buildTypes {
         release { minifyEnabled false }
     }
+}
+
+dependencies {
+    // RTMP + camara (Apache-2.0). Fijada: no usar rangos en un repo que se compila para produccion.
+    implementation 'com.github.pedroSG94.RootEncoder:library:2.5.5'
 }

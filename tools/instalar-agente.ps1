@@ -15,6 +15,8 @@ if (-not (Test-Path $Config)) { throw "No existe config: $Config" }
 
 & $Adb install -r $Apk
 & $Adb shell pm grant $pkg android.permission.READ_EXTERNAL_STORAGE
+# CAMERA es de runtime (targetSdk 28) y la app no tiene UI para pedirla: se concede aqui (video en vivo).
+& $Adb shell pm grant $pkg android.permission.CAMERA
 & $Adb shell "mkdir -p /sdcard/Android/data/$pkg/files"
 & $Adb push $Config "/sdcard/Android/data/$pkg/files/config.json"
 # Habilitar accesibilidad (deteccion de SOS)
