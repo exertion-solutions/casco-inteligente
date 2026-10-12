@@ -49,3 +49,13 @@
 - Fixes de servidor: CA raiz montada en MediaMTX; webrtcAllowOrigins con el origen del visor (lista vacia = 403 a todo navegador).
 - Visor: LIVE_MODE "own"; config.js versionado (?v=) contra cache.
 - Pendiente: probar SOS fisico (auto 120 s), medir latencia real, RTMPS, rotar MEDIA_AUTH_SECRET, revocar llave SSH del asistente.
+
+## Estado 2026-10-12 (tarde-noche): tanda 3 + rediseño
+- Repo: Android tanda 3 (salud, ordenes, audio AAC en ingest/), Supabase 004-007, servidor (coturn, relay), visor con Centro/Equipos/Mapa/Grabacion (333e97b).
+- Supabase REAL: migraciones 004 (rtc_signals), 005 (centro), 006 (geo), 007 (equipos) APLICADAS; 15 tablas en public, RLS activo.
+- Rediseño "Plano de levantamiento" (impeccable): contrato en .impeccable/surfaces/web-index-html.md; split index.html/app.css/app.js en curso (agente), luego DESIGN.md.
+- SIN desplegar: Edge Functions turn-credentials y escalate (escalate queda apagada), coturn y relay ffmpeg en el VPS, TURN_SECRET.
+- APK v0.3.0 compilado (android/app/build/outputs/apk/debug/app-debug.apk), NO instalado en el casco: instalar sin force-stop, re-habilitar accesibilidad, stream_audio=false hasta probar el relay.
+- Siguiente comando: `tools/instalar-agente.ps1 -Config config.local.json` (con el casco por USB) y luego VOICE_ENABLED=true en web/config.js tras desplegar turn-credentials + coturn.
+- Cargar a mano en Supabase IMEI/ICCID reales del 4132 (no al repo).
+- Al final: /ponytail:ponytail-review y /ponytail:ponytail; revocar llave SSH claude-casco-vps; rotar MEDIA_AUTH_SECRET.
