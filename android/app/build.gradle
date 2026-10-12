@@ -1,0 +1,26 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'ar.exertion.casco'
+    compileSdk 29
+
+    defaultConfig {
+        applicationId 'ar.exertion.casco'
+        minSdk 26
+        // targetSdk 28: acceso legacy al almacenamiento compartido (el casco es Android 10).
+        targetSdk 28
+        versionCode 1
+        versionName '0.1.0'
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    buildTypes {
+        release { minifyEnabled false }
+    }
+}

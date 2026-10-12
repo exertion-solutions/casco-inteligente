@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casco Inteligente</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --ink:#14202b; --mute:#5b6b7a; --line:#d9e0e6; --acc:#0b6bcb; --sos:#c62828; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#0e1419; --card:#16202a; --ink:#e8eef3; --mute:#93a3b3; --line:#27333f; --acc:#5aa9ff; --sos:#ff5252; }
+  }
+  :root[data-theme="dark"] { --bg:#0e1419; --card:#16202a; --ink:#e8eef3; --mute:#93a3b3; --line:#27333f; --acc:#5aa9ff; --sos:#ff5252; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 system-ui, "Segoe UI", sans-serif; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:18px; margin:0; }
+  main { max-width:880px; margin:0 auto; padding:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  form.login { max-width:360px; margin:48px auto; display:grid; gap:12px; }
+  label { display:grid; gap:4px; font-size:14px; color:var(--mute); }
+  input { padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); font:inherit; }
+  button { padding:10px 14px; border:0; border-radius:8px; background:var(--acc); color:#fff; font:inherit; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .err { color:var(--sos); min-height:1.2em; font-size:14px; }
+  #sos { display:none; background:var(--sos); color:#fff; padding:14px 16px; border-radius:10px; margin-bottom:12px; font-weight:600; }
+  ul { list-style:none; margin:0; padding:0; display:grid; gap:12px; }
+  li.ev { display:grid; gap:8px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
+  .tag { font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--line); color:var(--mute); }
+  .tag.sos { background:var(--sos); color:#fff; border-color:var(--sos); }
+  .mute { color:var(--mute); font-size:14px; }
+  img.media, video.media { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
+  .hidden { display:none !important; }
+  @media (max-width:520px) { main { padding:12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Casco Inteligente</h1>
+  <div class="row">
+    <span id="who" class="mute"></span>
+    <button id="logout" class="ghost hidden">Salir</button>
+  </div>
+</header>
+<main>
+  <form id="login" class="card login">
+    <label>Correo <input id="email" type="email" autocomplete="username" required></label>
+    <label>Contraseña <input id="password" type="password" autocomplete="current-password" required></label>
+    <button type="submit">Ingresar</button>
+    <div id="loginErr" class="err" role="alert"></div>
+  </form>
+
+  <section id="app" class="hidden">
+    <div id="sos" role="alert"></div>
+    <div class="row" style="margin-bottom:12px">
+      <button id="enableSound" class="ghost">Activar sonido de alerta</button>
+      <span id="status" class="mute">Conectando…</span>
+    </div>
+    <ul id="feed"></ul>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="config.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cfg = window.CASCO_CONFIG || {};
+  const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  let audioCtx = null, channel = null;
+  const TZ = 'America/Argentina/Buenos_Aires';
+  const fmt = iso => new Date(iso).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' });
+
+  function beep() {
+    if (!audioCtx) return;
+    for (let i = 0; i < 3; i++) {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'square'; o.frequency.value = 880; g.gain.value = 0.15;
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(audioCtx.currentTime + i * 0.35); o.stop(audioCtx.currentTime + i * 0.35 + 0.2);
+    }
+  }
+
+  async function mediaEl(path, type) {
+    const { data, error } = await sb.storage.from('casco-media').createSignedUrl(path, 600);
+    if (error || !data) return null;
+    const el = document.createElement(type === 'video' ? 'video' : 'img');
+    el.className = 'media'; el.src = data.signedUrl;
+    if (type === 'video') el.controls = true;
+    return el;
+  }
+
+  async function render(ev, prepend) {
+    const li = document.createElement('li');
+    li.className = 'card ev';
+    const row = document.createElement('div'); row.className = 'row';
+    const tag = document.createElement('span'); tag.className = 'tag ' + ev.type; tag.textContent = ev.type.toUpperCase();
+    const dev = document.createElement('strong'); dev.textContent = 'Casco ' + ev.device_id;
+    const when = document.createElement('span'); when.className = 'mute'; when.textContent = fmt(ev.created_at);
+    row.append(tag, dev, when);
+    li.append(row);
+    const bits = [];
+    if (ev.press_ms != null) bits.push('pulsación ' + ev.press_ms + ' ms');
+    if (ev.battery != null) bits.push('batería ' + ev.battery + '%');
+    if (ev.lat != null && ev.lng != null) bits.push(ev.lat.toFixed(5) + ', ' + ev.lng.toFixed(5));
+    if (bits.length) { const m = document.createElement('div'); m.className = 'mute'; m.textContent = bits.join(' · '); li.append(m); }
+    if (ev.media_path) { const el = await mediaEl(ev.media_path, ev.type); if (el) li.append(el); }
+    const feed = $('feed');
+    prepend ? feed.prepend(li) : feed.append(li);
+  }
+
+  function alertSos(ev) {
+    const b = $('sos');
+    b.textContent = 'SOS — Casco ' + ev.device_id + ' — ' + fmt(ev.created_at);
+    b.style.display = 'block';
+    beep();
+    if (navigator.vibrate) navigator.vibrate([300, 150, 300]);
+  }
+
+  async function start(session) {
+    $('login').classList.add('hidden');
+    $('app').classList.remove('hidden');
+    $('logout').classList.remove('hidden');
+    $('who').textContent = session.user.email;
+    $('feed').replaceChildren();
+
+    const { data, error } = await sb.from('events').select('*')
+      .neq('type', 'heartbeat').order('created_at', { ascending: false }).limit(50);
+    if (error) { $('status').textContent = 'Sin permiso o error: ' + error.message; return; }
+    for (const ev of data) await render(ev, false);
+
+    if (channel) sb.removeChannel(channel);
+    channel = sb.channel('events-feed')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, p => {
+        const ev = p.new;
+        if (ev.type === 'heartbeat') return;
+        if (ev.type === 'sos') alertSos(ev);
+        render(ev, true);
+      })
+      .subscribe(s => { $('status').textContent = s === 'SUBSCRIBED' ? 'En vivo' : s; });
+  }
+
+  $('login').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('loginErr').textContent = '';
+    const { data, error } = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
+    if (error) { $('loginErr').textContent = 'No se pudo ingresar: ' + error.message; return; }
+    start(data.session);
+  });
+  $('logout').addEventListener('click', async () => { await sb.auth.signOut(); location.reload(); });
+  $('enableSound').addEventListener('click', () => {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    beep();
+  });
+
+  sb.auth.getSession().then(({ data }) => { if (data.session) start(data.session); });
+})();
+</script>
+</body>
+</html>

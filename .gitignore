@@ -1,0 +1,22 @@
+# Secretos y configuracion local: NUNCA al repo (es publico)
+config.local.json
+config.json
+.env
+.env.*
+*.keystore
+*.jks
+local.properties
+
+# Android / Gradle
+android/.gradle/
+android/build/
+android/app/build/
+android/.idea/
+*.apk
+*.aab
+
+# Varios
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
