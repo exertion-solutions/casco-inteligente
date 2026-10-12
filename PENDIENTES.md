@@ -65,3 +65,11 @@
 - Review ponytail: out/ponytail-review.md (20 hallazgos, ~-500 lineas). Descartados a proposito: regla de estacion (movimiento firma), confirmacion doble de evacuacion (seguridad), canvas de recorte (object-view-box fallo en prueba real).
 - Deuda aceptada para despues (sin riesgo): helper saveRow/patch en app.js, Files.copy en Android, unificar safeEqual en funciones, borrar group_members (fase 2) en 007, PS1 Leaflet por <script defer>.
 - Proximo: instalar APK 0.3.0 con casco por USB, desplegar turn-credentials + coturn, activar VOICE_ENABLED, probar de punta a punta con el casco.
+
+## Estado 2026-10-12 (noche): Vigia v0.7.0
+- Marca "Vigia · Casco Inteligente" con logo (web/img, launcher Android). Visor: foto/linterna/ping a pedido, config remota (admin), Reportes CSV/PDF, Historial con Archivar (admin), pestaña Comandos, roles admin/viewer.
+- Supabase aplicado: 004-011. Cuenta del propietario = admin (re-loguear). Secreto MEDIA_AUTH_SECRET rotado; llave SSH del asistente revocada y borrada.
+- Casco 4132 (APK 0.7.0): voz por comandos activa (Vosk es, palabra "casco"), comandos a pedido, config remota, alertas casco sin usar/inmovil, audio en el video (relay ffmpeg +22 dB), geocercas con histeresis, GPS (ultima posicion conocida).
+- Pruebas RLS contra la base real: 774 casos, 32 "fallos" = artefactos (el casco 4132 real ya existe en devices -> fixtures duplican pkey; limite de 30 heartbeats/min). Sin fallos de seguridad reales.
+- Pendiente del usuario: ejecutar server/activar-voz.sh en la consola del VPS (voz bidireccional) y poner VOICE_ENABLED=true; probar a viva voz los comandos; calibrar umbrales de caida/inmovilidad; evaluar cierre de SSH (instalar llave propia antes).
+- Pendiente tecnico: aplicar recortes ponytail (out/ponytail-audit.md); borrar archivos huerfanos de Storage en la purga; reemplazar bootaudio del casco (ingles) solo con OK explicito (riesgo dm-verity).
