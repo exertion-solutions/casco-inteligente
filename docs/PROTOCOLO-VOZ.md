@@ -59,6 +59,15 @@ TURN: coturn en el VPS (3478 udp/tcp), credenciales temporales por Edge Function
   `HOST` = IP publica del VPS (el casco no resuelve sslip.io) - configurable por secreto `TURN_HOST`.
 - Puertos VPS: 3478/udp+tcp y rango de relay 49160-49200/udp abiertos.
 
+### Puesta en marcha en el VPS (resumen)
+Procedimiento clic a clic: `server/README.md`, seccion 10 ("Activar la voz en un VPS que ya corre el video").
+Resumen: consola de Vultr (View Console, root) > `sh activar-voz.sh --descargar` > copiar la ultima linea `TURN_SECRET=...` >
+Supabase > Edge Functions > Secrets: `TURN_SECRET` y `TURN_HOST` (IP del VPS) > Edge Functions > `turn-credentials` (desplegar
+con "Verify JWT" desactivado; CLI: `supabase functions deploy turn-credentials --no-verify-jwt --project-ref zgfvhjpdzkohouktakvt`)
+> recien entonces `VOICE_ENABLED: true` en `web/config.js` (paso manual: mientras coturn o la funcion no existan, el boton Hablar
+debe seguir oculto). Revertir: `server/desactivar-voz.sh` + `VOICE_ENABLED: false`.
+Orden obligatorio: coturn arriba -> secreto igual en VPS y Supabase -> funcion desplegada -> `VOICE_ENABLED`.
+
 ## 3. Voz del casco en espanol (TTS)
 - El agente usa `android.speech.tts.TextToSpeech` (motor Google, idioma `es-AR`, fallback `es-ES` / `es`). Si no hay voz es,
   loguear y no hablar. Frases (config `voice_prompts`, por defecto true): "Emergencia enviada", "Foto tomada",

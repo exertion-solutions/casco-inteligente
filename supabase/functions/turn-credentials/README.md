@@ -21,6 +21,10 @@ El visor y el casco la llaman con su token de Supabase y reciben credenciales TU
 ## Importante: sin "Verify JWT"
 Se despliega SIN verificacion de JWT de la plataforma (igual que `media-auth`): la funcion valida el token adentro y asi puede contestar con CORS y estados claros.
 
+## Flujo recomendado
+El `TURN_SECRET` lo genera `server/activar-voz.sh` en el VPS (ver `server/README.md`); copiarlo de la ultima linea que imprime.
+Ese mismo valor va como secreto aca. Despues desplegar la funcion (A o B) y, solo entonces, `VOICE_ENABLED: true` en `web/config.js`.
+
 ## Opcion A: CLI
 ```
 supabase secrets set TURN_SECRET=<secreto-largo> TURN_HOST=<ip-del-vps> --project-ref zgfvhjpdzkohouktakvt

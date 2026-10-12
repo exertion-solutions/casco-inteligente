@@ -1,4 +1,4 @@
--- Casco Inteligente: TODO en uno (schema + 002 event_acks + 003 stream_commands + 004 rtc_signals + 005 centro + 006 geo + 007 equipos + 008 retencion + 009 sos siempre + 010 comandos/config/roles).
+-- Casco Inteligente: TODO en uno (schema + 002 event_acks + 003 stream_commands + 004 rtc_signals + 005 centro + 006 geo + 007 equipos + 008 retencion + 009 sos siempre + 010 comandos/config/roles + 011 archivar eventos).
 -- Pegar completo en Supabase > SQL Editor > Run. Idempotente.
 -- NO incluye cron_escalate.sql (necesita extensiones y un secreto): ver SETUP.md paso 11.
 
@@ -1636,9 +1636,11 @@ create policy events_insert_device on public.events
 --                         (migracion 009); el resto de los tipos (incluidos los nuevos) exige device_is_active.
 --
 -- Defensa en profundidad del cambio de roles: ademas de reescribir las policies, un trigger BEFORE INSERT OR UPDATE
--- (aa_admin_only_trg, se dispara antes que los guards 006/007 por orden alfabetico) rechaza a todo el que no sea admin
--- (o una sesion sin JWT = SQL Editor/service_role). Si alguien vuelve a ejecutar 005/006/007 sueltas, las policies
--- viejas de viewer reaparecen pero el trigger sigue bloqueando; volve a correr esta migracion para limpiarlas.
+-- (aa_admin_only_trg, se dispara antes que los guards 006/007 por orden alfabetico) rechaza a todo el que no sea admin.
+-- Excepcion deliberada: una sesion directa de base de datos SIN JWT (SQL Editor, migraciones, fixtures de prueba) y
+-- service_role pasan; PostgREST siempre setea request.jwt.claims, asi que ninguna peticion de la API cae en ese caso.
+-- Si alguien vuelve a ejecutar 005/006/007 sueltas, las policies viejas de viewer reaparecen pero el trigger sigue
+-- bloqueando; volve a correr esta migracion para limpiarlas.
 
 -- ===========================================================================
 -- 0. events.type: lista completa (existentes + nuevos). NOT VALID: no revalida filas viejas.
@@ -1668,12 +1670,16 @@ create policy events_insert_device on public.events
 -- ===========================================================================
 -- 1. Roles: solo admin escribe el registro, el mapa y la configuracion
 -- ===========================================================================
--- Trigger generico. Permite admin o sesion sin JWT (SQL Editor / service_role, igual que los guards 006/007).
+-- Trigger generico. Permite: (a) role admin con usuario; (b) sesion directa de base de datos SIN JWT
+-- (auth.jwt() null y auth.uid() null); (c) service_role. Bloquea viewer, device, anon y authenticated sin rol
+-- (claims presentes sin admin).
 create or replace function public.admin_only_guard() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare r text := public.jwt_role(); u uuid := auth.uid();
 begin
-  if r = 'admin' or (r is null and u is null) then
+  if (r = 'admin' and u is not null)
+     or (auth.jwt() is null and u is null)
+     or coalesce(auth.jwt() ->> 'role', '') = 'service_role' then
     return new;
   end if;
   raise exception '%: solo un admin puede modificar', tg_table_name using errcode = '42501';
@@ -1769,6 +1775,22 @@ create policy geo_points_update_admin on public.geo_points
   using (public.jwt_role() = 'admin' and deleted_at is null)
   with check (public.jwt_role() = 'admin');
 
+-- device_ids: el CHECK de 005/006 valida la lista unida con comas, asi que UN elemento '4132,9999' pasaba.
+-- Validador por elemento (inmutable; un CHECK no admite subconsultas, por eso va en funcion). NOT VALID: solo filas nuevas.
+create or replace function public.device_ids_valid(p text[]) returns boolean
+language sql immutable set search_path = '' as $$
+  select p is null
+      or (cardinality(p) between 1 and 100
+          and array_position(p, null::text) is null
+          and not exists (select 1 from unnest(p) d where d !~ '^[A-Za-z0-9_-]{1,64}$'))
+$$;
+alter table public.broadcasts drop constraint if exists broadcasts_device_ids_elems_ck;
+alter table public.broadcasts add constraint broadcasts_device_ids_elems_ck
+  check (public.device_ids_valid(device_ids)) not valid;
+alter table public.geofences drop constraint if exists geofences_device_ids_elems_ck;
+alter table public.geofences add constraint geofences_device_ids_elems_ck
+  check (public.device_ids_valid(device_ids)) not valid;
+
 -- Los grants por columna de 005/006/007 no cambian (el filtro de rol esta en policies + trigger).
 
 -- broadcasts: viewer y admin mandan 'mensaje'; 'evacuacion' solo admin.
@@ -1787,7 +1809,8 @@ language plpgsql security definer set search_path = '' as $$
 begin
   if new.kind = 'evacuacion'
      and public.jwt_role() is distinct from 'admin'
-     and not (public.jwt_role() is null and auth.uid() is null) then
+     and not (auth.jwt() is null and auth.uid() is null)
+     and coalesce(auth.jwt() ->> 'role', '') <> 'service_role' then
     raise exception 'broadcasts: la evacuacion solo la manda un admin' using errcode = '42501';
   end if;
   return new;
@@ -2023,6 +2046,7 @@ create policy dcfg_update_admin on public.device_config
 -- ===========================================================================
 -- security_invoker = true: corre con los permisos y la RLS de quien consulta (viewer/admin ven; device 0 filas).
 -- Geocerca que requiere Atender = misma regla que el visor: restringida/enter, permitida/exit o peligro/enter.
+-- (011 agrega archived_at al final de la lista.)
 create or replace view public.incident_report with (security_invoker = true) as
   select e.id               as event_id,
          e.created_at,
@@ -2103,11 +2127,143 @@ end $$;
 --  where email = 'jorge_e_castro@hotmail.com';
 -- select email, raw_app_meta_data from auth.users where email = 'jorge_e_castro@hotmail.com';
 
--- Verificacion rapida de 010 (tablas, vista, triggers admin-only, publicacion realtime)
+-- ===== 011_archivar_eventos.sql =====
+-- Archivar eventos (decision del usuario): el admin oculta del Historial/Reportes alertas ya resueltas SIN perder el registro.
+-- Idempotente. Ejecutar en Supabase > SQL Editor (despues de 010).
+--
+--   event_archive : INSERT (archivar) y DELETE (desarchivar) solo role admin; SELECT viewer/admin; el casco (device) no ve nada.
+--                   Sin UPDATE. Grants por columna: insert (event_id, reason). archived_by / archived_at / archived_by_email
+--                   los fija el trigger desde el JWT. 60 por minuto por usuario.
+--   Solo se archiva lo ya ATENDIDO (fila en event_acks) o informativo. Una alerta pendiente (sos, fall, not_worn, inactive,
+--   geocerca que requiere Atender) se rechaza con un mensaje claro.
+--   La fila del evento NO se toca; borrar el evento (casco_purge) borra su archivo por cascada.
+--   incident_report: expone archived_at (null si no esta archivado) y NO excluye archivados (el visor filtra).
+
+create table if not exists public.event_archive (
+  event_id          uuid primary key references public.events(id) on delete cascade,
+  archived_by       uuid not null default auth.uid(),
+  archived_by_email text default coalesce(auth.jwt() ->> 'email', ''),
+  archived_at       timestamptz not null default now(),
+  reason            text check (reason is null or length(reason) <= 200)
+);
+create index if not exists event_archive_at_idx   on public.event_archive (archived_at desc);
+create index if not exists event_archive_user_idx on public.event_archive (archived_by, archived_at desc);
+
+create or replace function public.event_archive_guard() returns trigger
+language plpgsql security definer set search_path = '' as $$
+declare u uuid := auth.uid(); ev record;
+begin
+  -- admin con usuario, o sesion directa de DB sin JWT (SQL Editor / service_role). Nunca viewer, device ni anon.
+  if not ((public.jwt_role() = 'admin' and u is not null)
+          or (auth.jwt() is null and u is null)
+          or coalesce(auth.jwt() ->> 'role', '') = 'service_role') then
+    raise exception 'event_archive: solo un admin puede archivar' using errcode = '42501';
+  end if;
+
+  select e.type, e.payload into ev from public.events e where e.id = new.event_id;
+  if found
+     and (ev.type in ('sos','fall','not_worn','inactive')
+          or (ev.type = 'geofence'
+              and ((ev.payload ->> 'kind' = 'restringida' and ev.payload ->> 'action' = 'enter')
+                or (ev.payload ->> 'kind' = 'permitida'   and ev.payload ->> 'action' = 'exit')
+                or (ev.payload ->> 'kind' = 'peligro'     and ev.payload ->> 'action' = 'enter'))))
+     and not exists (select 1 from public.event_acks a where a.event_id = new.event_id) then
+    raise exception 'event_archive: la alerta esta pendiente de atender; atendela antes de archivarla'
+      using errcode = '22023';
+  end if;
+
+  new.archived_at := now();
+  if u is not null then
+    new.archived_by       := u;
+    new.archived_by_email := coalesce(auth.jwt() ->> 'email', '');
+    perform pg_advisory_xact_lock(hashtextextended('event_archive:' || u::text, 0));
+    if (select count(*) from public.event_archive x
+         where x.archived_by = u and x.archived_at > now() - interval '1 minute') >= 60 then
+      raise exception 'rate limit: demasiados eventos archivados por minuto' using errcode = '54000';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke all on function public.event_archive_guard() from public, anon, authenticated;
+
+drop trigger if exists event_archive_guard_trg on public.event_archive;
+create trigger event_archive_guard_trg before insert on public.event_archive
+  for each row execute function public.event_archive_guard();
+
+alter table public.event_archive enable row level security;
+revoke all on public.event_archive from anon;
+revoke all on public.event_archive from authenticated;
+grant select on public.event_archive to authenticated;
+grant insert (event_id, reason) on public.event_archive to authenticated;
+grant delete on public.event_archive to authenticated;   -- desarchivar; sin UPDATE
+
+drop policy if exists earch_select_viewer on public.event_archive;
+create policy earch_select_viewer on public.event_archive
+  for select to authenticated
+  using (public.jwt_role() in ('viewer','admin'));
+
+drop policy if exists earch_insert_admin on public.event_archive;
+create policy earch_insert_admin on public.event_archive
+  for insert to authenticated
+  with check (public.jwt_role() = 'admin' and archived_by = auth.uid());
+
+drop policy if exists earch_delete_admin on public.event_archive;
+create policy earch_delete_admin on public.event_archive
+  for delete to authenticated
+  using (public.jwt_role() = 'admin');
+
+-- incident_report (010) + archived_at al FINAL de la lista (CREATE OR REPLACE VIEW solo permite agregar columnas al final).
+create or replace view public.incident_report with (security_invoker = true) as
+  select e.id               as event_id,
+         e.created_at,
+         e.device_id,
+         d.name             as device_name,
+         e.type,
+         case when e.type = 'geofence'
+              then jsonb_strip_nulls(jsonb_build_object(
+                     'zone_name', left(e.payload ->> 'zone_name', 60),
+                     'kind',      left(e.payload ->> 'kind', 20),
+                     'action',    left(e.payload ->> 'action', 10)))
+              else jsonb_strip_nulls(jsonb_build_object(
+                     'reason',    left(e.payload ->> 'reason', 60)))
+         end                as payload,
+         e.lat,
+         e.lng,
+         a.acked_at,
+         a.acked_by_email,
+         a.note,
+         case when a.acked_at is not null
+              then greatest(0, extract(epoch from (a.acked_at - e.created_at))::integer)
+         end                as tta_s,
+         ar.archived_at
+    from public.events e
+    left join public.event_acks a     on a.event_id = e.id
+    left join public.devices d        on d.device_id = e.device_id
+    left join public.event_archive ar on ar.event_id = e.id
+   where e.type in ('sos','fall','not_worn','inactive')
+      or (e.type = 'geofence'
+          and ((e.payload ->> 'kind' = 'restringida' and e.payload ->> 'action' = 'enter')
+            or (e.payload ->> 'kind' = 'permitida'   and e.payload ->> 'action' = 'exit')
+            or (e.payload ->> 'kind' = 'peligro'     and e.payload ->> 'action' = 'enter')));
+revoke all on public.incident_report from anon;
+revoke all on public.incident_report from authenticated;
+grant select on public.incident_report to authenticated;
+
+-- Tiempo real (idempotente; respeta RLS: el casco no recibe nada de esta tabla)
+do $$
+begin
+  if not exists (select 1 from pg_publication_tables
+                 where pubname = 'supabase_realtime'
+                   and schemaname = 'public' and tablename = 'event_archive') then
+    alter publication supabase_realtime add table public.event_archive;
+  end if;
+end $$;
+
+-- Verificacion rapida de 010 y 011 (tablas, vista, triggers admin-only, publicacion realtime)
 select
   (select count(*) from pg_tables where schemaname='public'
-     and tablename in ('device_commands','device_command_acks','device_config')) as tanda4_tablas_esperado_3,
-  (select count(*) from pg_views where schemaname='public' and viewname = 'incident_report') as tanda4_vista_esperado_1,
-  (select count(*) from pg_trigger where tgname = 'aa_admin_only_trg' and not tgisinternal) as tanda4_triggers_admin_esperado_7,
+     and tablename in ('device_commands','device_command_acks','device_config','event_archive')) as tanda4_5_tablas_esperado_4,
+  (select count(*) from pg_views where schemaname='public' and viewname = 'incident_report') as vista_esperado_1,
+  (select count(*) from pg_trigger where tgname = 'aa_admin_only_trg' and not tgisinternal) as triggers_admin_esperado_7,
   (select count(*) from pg_publication_tables where pubname='supabase_realtime' and schemaname='public'
-     and tablename in ('device_commands','device_command_acks','device_config')) as tanda4_realtime_esperado_3;
+     and tablename in ('device_commands','device_command_acks','device_config','event_archive')) as realtime_esperado_4;

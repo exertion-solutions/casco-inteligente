@@ -261,7 +261,7 @@ select * from public.assignments where ends_at is null;
 Agrega: **Sacar foto / Linterna / Probar enlace / Reiniciar agente** desde el visor, **configuracion remota por casco**, alertas nuevas (**casco no puesto**, **inmovilidad**, **equipo**, **caida cancelada**), la vista de **reportes** y el reparto de permisos **viewer / admin** (docs/PROTOCOLO-COMANDOS.md).
 
 **14.1 Crear las tablas y permisos.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/010_comandos_config_roles.sql`, **Run**. Debe decir `Success`.
-(Si usaste `ejecutar-todo.sql` actualizado, ya esta incluido y al final muestra 4 numeros: 3, 1, 7 y 3.) Se puede repetir sin problema.
+(Si usaste `ejecutar-todo.sql` actualizado, ya esta incluido (junto con el 011) y al final muestra 4 numeros: 4, 1, 7 y 4.) Se puede repetir sin problema.
 
 > Si alguna vez volves a correr a mano `005`, `006` o `007` sueltas, **volve a correr `010` despues**: esas migraciones recrean los permisos viejos de `viewer`. (El bloqueo por trigger sigue activo, pero las pruebas del paso 7 te lo van a marcar.)
 
@@ -292,6 +292,20 @@ select created_at, device_id, type, acked_at, tta_s from public.incident_report 
 
 **14.5** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
 
+## 15. Archivar eventos (opcional, despues del paso 14)
+
+El **admin** puede **archivar** una alerta ya resuelta para que deje de verse en el Historial y los Reportes **sin perder el registro** (se puede desarchivar).
+
+**15.1 Crear la tabla.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/011_archivar_eventos.sql`, **Run**. Debe decir `Success`.
+(Si usaste `ejecutar-todo.sql` actualizado, ya esta incluido.) Se puede repetir sin problema.
+
+**15.2 Reglas.**
+- Archivar y desarchivar: solo `admin`. El `viewer` ve que esta archivado pero no lo cambia. El casco no ve nada de esto.
+- Solo se archiva lo **ya atendido** (con "Atender") o lo informativo. Una alerta pendiente (SOS, caida, casco no puesto, inmovilidad, geocerca restringida) se rechaza con el mensaje "la alerta esta pendiente de atender".
+- Maximo 60 por minuto por usuario. Nada se borra: el evento y su atencion siguen en la base; la vista `incident_report` trae la columna `archived_at` (vacia si no esta archivado) y es el visor el que filtra.
+
+**15.3** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`. Si hay filas en `false` y no se ve por que, corre `supabase/tests/ver_fallos.sql`: devuelve **una sola fila** con la cantidad de fallos y, por cada uno, que esperaba, que dio y el error de la base.
+
 ## Si algo falla
 
 | Sintoma | Causa probable |
@@ -321,3 +335,5 @@ select created_at, device_id, type, acked_at, tta_s from public.incident_report 
 | El casco no confirma un comando (queda "pendiente") | el comando tiene mas de 2 minutos (el casco solo lee los recientes), el casco esta dado de baja, o falta que el agente lo lea (poll de 3 s) |
 | "violates check constraint device_config_ck" | la configuracion trae una clave no permitida o un valor del tipo equivocado (ver paso 14.3) |
 | El visor no muestra alertas `not_worn` / `inactive` | falta correr 010 (el tipo no estaba permitido) o el casco no tiene activada la deteccion (`not_worn_s`, `inactivity_s` en 0) |
+| "event_archive: la alerta esta pendiente de atender" | se intento archivar una alerta sin "Atender": atenderla primero |
+| "event_archive: solo un admin puede archivar" | el usuario es `viewer`: solo el admin archiva y desarchiva |

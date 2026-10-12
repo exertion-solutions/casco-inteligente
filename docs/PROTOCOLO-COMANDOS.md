@@ -78,3 +78,12 @@ Archivos: `supabase/migrations/010_comandos_config_roles.sql`, `supabase/promove
   (restringida/enter, permitida/exit, peligro/enter). Paginar por keyset (`created_at` desc, `event_id`); el filtro de rango y casco va en la consulta.
 - **Retencion** (`casco_purge`): comandos y acks 7 dias; `equip` y `fall_cancel` 90 dias; `not_worn` e `inactive` 1 ano (como sos/fall).
 - **Fuera de esta migracion**: la Edge Function `escalate` sigue escalando solo `sos`, `fall` y `geofence`; escalar `not_worn`/`inactive` requiere ampliar su filtro.
+
+## 9. Archivar eventos (migracion 011)
+- Tabla `public.event_archive(event_id pk -> events on delete cascade, archived_by, archived_by_email, archived_at, reason <= 200)`.
+  INSERT (archivar) y DELETE (desarchivar): solo `admin`; SELECT: viewer/admin; el casco no la ve; sin UPDATE. Insertar solo `event_id` y `reason`.
+- Solo se archiva un evento ya atendido (fila en `event_acks`) o informativo; una alerta pendiente (sos, fall, not_worn, inactive, geocerca que requiere
+  Atender) falla con codigo 22023 y el mensaje "la alerta esta pendiente de atender". 60 archivados por minuto por usuario (54000).
+- `incident_report.archived_at` (null si no esta archivado); la vista NO excluye archivados: el visor filtra. Publicada en Realtime.
+- Aviso de seguridad de las migraciones: los triggers admin-only dejan pasar una sesion directa de base de datos SIN JWT (SQL Editor, fixtures) y
+  `service_role`; viewer, device, anon y authenticated sin rol quedan bloqueados.

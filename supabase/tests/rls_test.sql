@@ -2,7 +2,7 @@
 -- USO: Supabase > SQL Editor > pegar TODO > Run. Es solo lectura neta: cada caso corre
 -- en una subtransaccion que se revierte (no deja filas ni objetos).
 -- Resultado: una tabla con columnas test | expected | got | ok. TODAS deben ser ok = true.
--- Requiere haber ejecutado antes supabase/schema.sql y migrations/002 a 010 (o ejecutar-todo.sql).
+-- Requiere haber ejecutado antes supabase/schema.sql y migrations/002 a 011 (o ejecutar-todo.sql).
 -- Desde la migracion 010 solo role='admin' escribe devices/people/groups/assignments/geofences/geo_points/device_config
 -- y manda evacuacion; los casos 'viewer' de esas tablas esperan DENIED.
 --
@@ -155,7 +155,7 @@ with c as (select
        insert into public.people(id,full_name,active) values ('b2b2b2b2-0000-0000-0000-000000000003','Persona Inactiva',false);
        insert into public.assignments(device_id,person_id) values ('4132','b2b2b2b2-0000-0000-0000-000000000001');
        update public.assignments set ends_at = now();
-     end $d$s$ as seed_eq_closed
+     end $d$$s$ as seed_eq_closed
   ,
   -- Tanda 4 (migracion 010). Comandos c0c0c0c0..01 (4132, photo), ..02 (9999, ping), ..03 (4132, vencido: 15 min),
   -- ..04 (7777, casco de baja). Config: 4132 y 9999. Eventos eeeeeeee..11 sos (atendido, tta 90 s), ..12 geocerca
@@ -166,34 +166,34 @@ with c as (select
        insert into public.device_commands(id,device_id,action) values
          ('c0c0c0c0-0000-0000-0000-000000000001','4132','photo'),
          ('c0c0c0c0-0000-0000-0000-000000000002','9999','ping');
-     end $d$s$ as seed_dc,
+     end $d$$s$ as seed_dc,
   $s$do $d$ begin
        perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","email":"seed@test.local","app_metadata":{"role":"viewer"}}',true);
        insert into public.device_commands(id,device_id,action) values
          ('c0c0c0c0-0000-0000-0000-000000000003','4132','ping');
        update public.device_commands set created_at = now() - interval '15 minutes'
          where id = 'c0c0c0c0-0000-0000-0000-000000000003';
-     end $d$s$ as seed_dc_old,
+     end $d$$s$ as seed_dc_old,
   $s$do $d$ begin
        perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","email":"seed@test.local","app_metadata":{"role":"viewer"}}',true);
        insert into public.device_commands(id,device_id,action) values
          ('c0c0c0c0-0000-0000-0000-000000000001','4132','photo');
        insert into public.device_command_acks(command_id,device_id,ok,detail)
          values ('c0c0c0c0-0000-0000-0000-000000000001','4132',true,'foto subida');
-     end $d$s$ as seed_dack,
+     end $d$$s$ as seed_dack,
   $s$do $d$ begin
        perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","app_metadata":{"role":"admin"}}',true);
        insert into public.devices(device_id,name,status) values ('7777','Casco 7777','baja');
        perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","email":"seed@test.local","app_metadata":{"role":"viewer"}}',true);
        insert into public.device_commands(id,device_id,action) values
          ('c0c0c0c0-0000-0000-0000-000000000004','7777','ping');
-     end $d$s$ as seed_dc_baja,
+     end $d$$s$ as seed_dc_baja,
   $s$do $d$ begin
        perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","app_metadata":{"role":"admin"}}',true);
        insert into public.device_config(device_id,config) values
          ('4132','{"heartbeat_s":30,"torch_allowed":true}'),
          ('9999','{"torch_allowed":false}');
-     end $d$s$ as seed_cfg,
+     end $d$$s$ as seed_cfg,
   $s$do $d$ begin
        insert into public.events(id,device_id,type,payload) values
          ('eeeeeeee-0000-0000-0000-000000000011','4132','sos','{"reason":"hombre_caido"}'),
@@ -203,7 +203,22 @@ with c as (select
          ('eeeeeeee-0000-0000-0000-000000000015','4132','not_worn','{}');
        insert into public.event_acks(event_id,acked_by,acked_by_email,acked_at,note)
          values ('eeeeeeee-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000009','seed@test.local', now() + interval '90 seconds','ok');
-     end $d$s$ as seed_inc
+     end $d$$s$ as seed_inc
+  ,
+  -- Tanda 5 (migracion 011). nojwt = sesion directa de DB (claims vacios). seed_arch = seed_inc + el sos ..11 ya archivado.
+  ''::text as nojwt,
+  $s$do $d$ begin
+       insert into public.events(id,device_id,type,payload) values
+         ('eeeeeeee-0000-0000-0000-000000000011','4132','sos','{"reason":"hombre_caido"}'),
+         ('eeeeeeee-0000-0000-0000-000000000012','4132','geofence','{"kind":"restringida","action":"enter","zone_name":"Zona A"}'),
+         ('eeeeeeee-0000-0000-0000-000000000013','4132','geofence','{"kind":"informativa","action":"enter"}'),
+         ('eeeeeeee-0000-0000-0000-000000000014','4132','heartbeat','{}'),
+         ('eeeeeeee-0000-0000-0000-000000000015','4132','not_worn','{}');
+       insert into public.event_acks(event_id,acked_by,acked_by_email,acked_at,note)
+         values ('eeeeeeee-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000009','seed@test.local', now() + interval '90 seconds','ok');
+       perform set_config('request.jwt.claims','{"sub":"00000000-0000-0000-0000-000000000009","email":"seed@test.local","app_metadata":{"role":"admin"}}',true);
+       insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000011','resuelto');
+     end $d$$s$ as seed_arch
 )
 select r.* from c, lateral (
   -- ===================== anon (solo anon key) =====================
@@ -558,7 +573,7 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('gf trigger: shape inmutable aun como postgres', 'ALLOWED', 'postgres', c.admin, $q$do $b$ declare s text; begin update public.geofences set shape = 'polygon' where id = '99999999-0000-0000-0000-000000000001' returning shape into s; if s <> 'circle' then raise exception 'shape=%', s; end if; end $b$$q$, c.seed_gf)
   union all select * from pg_temp.t('gf trigger: JWT sin rol se rechaza (aun como postgres)', 'DENIED', 'postgres', c.norole, $q$insert into public.geofences(name,kind,shape,geometry) values ('z','restringida','circle','{"center":[-34.6,-58.4],"radius_m":100}')$q$)
   union all select * from pg_temp.t('gf trigger: UPDATE con JWT device se rechaza (aun como postgres)', 'DENIED', 'postgres', c.dev, $q$update public.geofences set active = false$q$, c.seed_gf)
-  union all select * from pg_temp.t('gf trigger: UPDATE sin JWT (SQL Editor) permitido', 'ALLOWED', 'postgres', c.anon, $q$update public.geofences set name = 'mantenimiento' where id = '99999999-0000-0000-0000-000000000001'$q$, c.seed_gf)
+  union all select * from pg_temp.t('gf trigger: UPDATE sin JWT (SQL Editor) permitido', 'ALLOWED', 'postgres', c.nojwt, $q$update public.geofences set name = 'mantenimiento' where id = '99999999-0000-0000-0000-000000000001'$q$, c.seed_gf)
   -- ---- geofences: validacion de campos y geometria ----
   union all select * from pg_temp.t('gf admin: name vacio', 'DENIED', 'authenticated', c.admin, $q$insert into public.geofences(name,kind,shape,geometry) values ('','restringida','circle','{"center":[-34.6,-58.4],"radius_m":100}')$q$)
   union all select * from pg_temp.t('gf admin: name en blanco', 'DENIED', 'authenticated', c.admin, $q$insert into public.geofences(name,kind,shape,geometry) values ('   ','restringida','circle','{"center":[-34.6,-58.4],"radius_m":100}')$q$)
@@ -655,7 +670,7 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('gp trigger: created_by/created_at se pisan', 'ALLOWED', 'postgres', '{"role":"authenticated","sub":"00000000-0000-0000-0000-000000000005","app_metadata":{"role":"admin"}}', $q$do $b$ declare u uuid; c timestamptz; begin insert into public.geo_points(name,category,lat,lng,created_by,created_at) values ('p','extintor',-34.6,-58.4,'00000000-0000-0000-0000-0000000000aa', now() - interval '1 year') returning created_by, created_at into u, c; if u <> '00000000-0000-0000-0000-000000000005'::uuid or c < now() - interval '1 second' then raise exception 'no pisado: % %', u, c; end if; end $b$$q$)
   union all select * from pg_temp.t('gp trigger: deleted_at falsificado se pisa a now()', 'ALLOWED', 'postgres', c.admin, $q$do $b$ declare d timestamptz; begin update public.geo_points set deleted_at = '2000-01-01' where id = 'dddddddd-0000-0000-0000-000000000001' returning deleted_at into d; if d is null or d < now() - interval '1 second' then raise exception 'deleted_at=%', d; end if; end $b$$q$, c.seed_gp)
   union all select * from pg_temp.t('gp trigger: JWT sin rol se rechaza (aun como postgres)', 'DENIED', 'postgres', c.norole, $q$insert into public.geo_points(name,category,lat,lng) values ('p','extintor',-34.6,-58.4)$q$)
-  union all select * from pg_temp.t('gp trigger: UPDATE sin JWT (SQL Editor) permitido', 'ALLOWED', 'postgres', c.anon, $q$update public.geo_points set name = 'mantenimiento'$q$, c.seed_gp)
+  union all select * from pg_temp.t('gp trigger: UPDATE sin JWT (SQL Editor) permitido', 'ALLOWED', 'postgres', c.nojwt, $q$update public.geo_points set name = 'mantenimiento'$q$, c.seed_gp)
   union all select * from pg_temp.t('gp admin: name vacio', 'DENIED', 'authenticated', c.admin, $q$insert into public.geo_points(name,category,lat,lng) values ('','extintor',-34.6,-58.4)$q$)
   union all select * from pg_temp.t('gp admin: name 81 caracteres', 'DENIED', 'authenticated', c.admin, $q$insert into public.geo_points(name,category,lat,lng) values (repeat('a',81),'extintor',-34.6,-58.4)$q$)
   union all select * from pg_temp.t('gp admin: category invalida', 'DENIED', 'authenticated', c.admin, $q$insert into public.geo_points(name,category,lat,lng) values ('p','bomba',-34.6,-58.4)$q$)
@@ -789,7 +804,7 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('eq admin: INSERT con deleted_at (sin grant de insert)', 'DENIED', 'authenticated', c.admin, $q$insert into public.devices(device_id,name,deleted_at) values ('5555','x',now())$q$)
   union all select * from pg_temp.t('eq trigger: created_by/created_at se pisan (casco)', 'ALLOWED', 'postgres', '{"role":"authenticated","sub":"00000000-0000-0000-0000-000000000005","app_metadata":{"role":"admin"}}', $q$do $b$ declare u uuid; c timestamptz; begin insert into public.devices(device_id,name,created_by,created_at) values ('5555','x','00000000-0000-0000-0000-0000000000aa', now() - interval '1 year') returning created_by, created_at into u, c; if u <> '00000000-0000-0000-0000-000000000005'::uuid or c < now() - interval '1 second' then raise exception 'no pisado: % %', u, c; end if; end $b$$q$)
   union all select * from pg_temp.t('eq trigger: JWT sin rol se rechaza (aun como postgres)', 'DENIED', 'postgres', c.norole, $q$insert into public.devices(device_id,name) values ('5555','x')$q$)
-  union all select * from pg_temp.t('eq trigger: UPDATE sin JWT (SQL Editor) permitido', 'ALLOWED', 'postgres', c.anon, $q$update public.devices set name = 'mantenimiento' where device_id = '4132'$q$, c.seed_eq)
+  union all select * from pg_temp.t('eq trigger: UPDATE sin JWT (SQL Editor) permitido', 'ALLOWED', 'postgres', c.nojwt, $q$update public.devices set name = 'mantenimiento' where device_id = '4132'$q$, c.seed_eq)
   union all select * from pg_temp.t('eq admin: device_id con HTML', 'DENIED', 'authenticated', c.admin, $q$insert into public.devices(device_id,name) values ('<b>','x')$q$)
   union all select * from pg_temp.t('eq admin: device_id vacio', 'DENIED', 'authenticated', c.admin, $q$insert into public.devices(device_id,name) values ('','x')$q$)
   union all select * from pg_temp.t('eq admin: device_id duplicado', 'DENIED', 'authenticated', c.admin, $q$insert into public.devices(device_id,name) values ('4132','x')$q$, c.seed_eq)
@@ -877,7 +892,7 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('dc user_metadata falso: INSERT', 'DENIED', 'authenticated', c.usermeta, $q$insert into public.device_commands(device_id,action) values ('4132','photo')$q$)
   union all select * from pg_temp.t('dc device: SELECT propio reciente', 'ALLOWED', 'authenticated', c.dev, $q$select * from public.device_commands where device_id='4132'$q$, c.seed_dc)
   union all select * from pg_temp.t('dc device: SELECT de otro casco', 'DENIED', 'authenticated', c.dev, $q$select * from public.device_commands where device_id='9999'$q$, c.seed_dc)
-  union all select * from pg_temp.t('dc device: ve exactamente 1 (el suyo)', 'ALLOWED', 'authenticated', c.dev, $q$do $b$ declare n int; begin select count(*) into n from public.device_commands; if n <> 1 then raise exception 've %', n; end if; end $b$q$, c.seed_dc)
+  union all select * from pg_temp.t('dc device: ve exactamente 1 (el suyo)', 'ALLOWED', 'authenticated', c.dev, $q$do $b$ declare n int; begin select count(*) into n from public.device_commands; if n <> 1 then raise exception 've %', n; end if; end $b$$q$, c.seed_dc)
   union all select * from pg_temp.t('dc device: SELECT propio vencido (>2 min)', 'DENIED', 'authenticated', c.dev, 'select * from public.device_commands', c.seed_dc_old)
   union all select * from pg_temp.t('dc device sin claim device_id: SELECT', 'DENIED', 'authenticated', c.dev_noid, 'select * from public.device_commands', c.seed_dc)
   union all select * from pg_temp.t('dc device: INSERT', 'DENIED', 'authenticated', c.dev, $q$insert into public.device_commands(device_id,action) values ('4132','photo')$q$)
@@ -903,9 +918,9 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('dc viewer: DELETE', 'DENIED', 'authenticated', c.viewer, 'delete from public.device_commands', c.seed_dc)
   union all select * from pg_temp.t('dc viewer: SELECT todo', 'ALLOWED', 'authenticated', c.viewer, 'select * from public.device_commands', c.seed_dc_old)
   union all select * from pg_temp.t('dc admin: SELECT todo', 'ALLOWED', 'authenticated', c.admin, 'select * from public.device_commands', c.seed_dc)
-  union all select * from pg_temp.t('dc viewer: 10 comandos/min', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ begin for i in 1..10 loop insert into public.device_commands(device_id,action) values ('4132','ping'); end loop; end $b$q$)
-  union all select * from pg_temp.t('dc viewer: 11 comandos/min', 'DENIED', 'authenticated', c.viewer, $q$do $b$ begin for i in 1..11 loop insert into public.device_commands(device_id,action) values ('4132','ping'); end loop; end $b$q$)
-  union all select * from pg_temp.t('dc admin: 11 comandos/min', 'DENIED', 'authenticated', c.admin, $q$do $b$ begin for i in 1..11 loop insert into public.device_commands(device_id,action) values ('4132','ping'); end loop; end $b$q$)
+  union all select * from pg_temp.t('dc viewer: 10 comandos/min', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ begin for i in 1..10 loop insert into public.device_commands(device_id,action) values ('4132','ping'); end loop; end $b$$q$)
+  union all select * from pg_temp.t('dc viewer: 11 comandos/min', 'DENIED', 'authenticated', c.viewer, $q$do $b$ begin for i in 1..11 loop insert into public.device_commands(device_id,action) values ('4132','ping'); end loop; end $b$$q$)
+  union all select * from pg_temp.t('dc admin: 11 comandos/min', 'DENIED', 'authenticated', c.admin, $q$do $b$ begin for i in 1..11 loop insert into public.device_commands(device_id,action) values ('4132','ping'); end loop; end $b$$q$)
   union all select * from pg_temp.t('dc trigger: requested_by/email/created_at se pisan', 'ALLOWED', 'postgres', '{"role":"authenticated","sub":"00000000-0000-0000-0000-000000000005","email":"sup@test.local","app_metadata":{"role":"viewer"}}',
             $q$do $b$ declare u uuid; e text; t timestamptz; begin
                  insert into public.device_commands(device_id,action,requested_by,requested_by_email,created_at)
@@ -914,7 +929,7 @@ select r.* from c, lateral (
                  if u <> '00000000-0000-0000-0000-000000000005'::uuid or e <> 'sup@test.local' or t > now() + interval '1 second' then
                    raise exception 'no pisado: % % %', u, e, t;
                  end if;
-               end $b$q$)
+               end $b$$q$)
   union all select * from pg_temp.t('dc trigger: restart_agent con JWT viewer se rechaza (aun como postgres)', 'DENIED', 'postgres', c.viewer, $q$insert into public.device_commands(device_id,action) values ('4132','restart_agent')$q$)
   union all select * from pg_temp.t('dc trigger: JWT sin rol se rechaza (aun como postgres)', 'DENIED', 'postgres', c.norole, $q$insert into public.device_commands(device_id,action) values ('4132','ping')$q$)
   -- ---- device_command_acks ----
@@ -947,18 +962,18 @@ select r.* from c, lateral (
                  insert into public.device_command_acks(command_id,device_id,ok,created_at)
                    values ('c0c0c0c0-0000-0000-0000-000000000001','4132',true, now() + interval '1 day') returning created_at into t;
                  if t > now() + interval '1 second' then raise exception 'created_at no pisado'; end if;
-               end $b$q$, c.seed_dc)
+               end $b$$q$, c.seed_dc)
   union all select * from pg_temp.t('dack: borrar el comando borra el ack (cascada)', 'ALLOWED', 'postgres', c.anon,
             $q$do $b$ begin
                  delete from public.device_commands where id = 'c0c0c0c0-0000-0000-0000-000000000001';
                  if exists (select 1 from public.device_command_acks where command_id = 'c0c0c0c0-0000-0000-0000-000000000001') then raise exception 'ack huerfano'; end if;
-               end $b$q$, c.seed_dack)
+               end $b$$q$, c.seed_dack)
   -- ---- events: tipos nuevos (not_worn, inactive, equip, fall_cancel) y regla de casco de baja (009) ----
   union all select * from pg_temp.t('ev device: INSERT not_worn', 'ALLOWED', 'authenticated', c.dev, $q$insert into public.events(device_id,type,payload) values ('4132','not_worn','{"s":120}')$q$)
   union all select * from pg_temp.t('ev device: INSERT inactive', 'ALLOWED', 'authenticated', c.dev, $q$insert into public.events(device_id,type,payload) values ('4132','inactive','{"s":300}')$q$)
   union all select * from pg_temp.t('ev device: INSERT equip', 'ALLOWED', 'authenticated', c.dev, $q$insert into public.events(device_id,type,payload) values ('4132','equip','{"kind":"bat_low","level":15}')$q$)
   union all select * from pg_temp.t('ev device: INSERT fall_cancel', 'ALLOWED', 'authenticated', c.dev, $q$insert into public.events(device_id,type) values ('4132','fall_cancel')$q$)
-  union all select * from pg_temp.t('ev device: 31 equip/min (rate limit por casco y tipo)', 'DENIED', 'authenticated', c.dev, $q$do $b$ begin for i in 1..31 loop insert into public.events(device_id,type) values ('4132','equip'); end loop; end $b$q$)
+  union all select * from pg_temp.t('ev device: 31 equip/min (rate limit por casco y tipo)', 'DENIED', 'authenticated', c.dev, $q$do $b$ begin for i in 1..31 loop insert into public.events(device_id,type) values ('4132','equip'); end loop; end $b$$q$)
   union all select * from pg_temp.t('ev viewer: INSERT not_worn (solo el casco)', 'DENIED', 'authenticated', c.viewer, $q$insert into public.events(device_id,type) values ('4132','not_worn')$q$)
   union all select * from pg_temp.t('ev casco de baja: INSERT sos (siempre aceptado)', 'ALLOWED', 'authenticated', c.dev_baja, $q$insert into public.events(device_id,type) values ('7777','sos')$q$, c.seed_dc_baja)
   union all select * from pg_temp.t('ev casco de baja: INSERT fall (siempre aceptado)', 'ALLOWED', 'authenticated', c.dev_baja, $q$insert into public.events(device_id,type) values ('7777','fall')$q$, c.seed_dc_baja)
@@ -973,7 +988,7 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('cfg user_metadata falso: INSERT', 'DENIED', 'authenticated', c.usermeta, $q$insert into public.device_config(device_id,config) values ('5555','{"heartbeat_s":30}')$q$)
   union all select * from pg_temp.t('cfg device: SELECT su fila', 'ALLOWED', 'authenticated', c.dev, $q$select * from public.device_config where device_id='4132'$q$, c.seed_cfg)
   union all select * from pg_temp.t('cfg device: SELECT fila ajena', 'DENIED', 'authenticated', c.dev, $q$select * from public.device_config where device_id='9999'$q$, c.seed_cfg)
-  union all select * from pg_temp.t('cfg device: ve exactamente 1 fila', 'ALLOWED', 'authenticated', c.dev, $q$do $b$ declare n int; begin select count(*) into n from public.device_config; if n <> 1 then raise exception 've %', n; end if; end $b$q$, c.seed_cfg)
+  union all select * from pg_temp.t('cfg device: ve exactamente 1 fila', 'ALLOWED', 'authenticated', c.dev, $q$do $b$ declare n int; begin select count(*) into n from public.device_config; if n <> 1 then raise exception 've %', n; end if; end $b$$q$, c.seed_cfg)
   union all select * from pg_temp.t('cfg device sin claim device_id: SELECT', 'DENIED', 'authenticated', c.dev_noid, 'select * from public.device_config', c.seed_cfg)
   union all select * from pg_temp.t('cfg device: INSERT', 'DENIED', 'authenticated', c.dev, $q$insert into public.device_config(device_id,config) values ('4132','{"heartbeat_s":30}')$q$)
   union all select * from pg_temp.t('cfg device: UPDATE', 'DENIED', 'authenticated', c.dev, $q$update public.device_config set config = '{"heartbeat_s":5}' where device_id='4132'$q$, c.seed_cfg)
@@ -998,9 +1013,9 @@ select r.* from c, lateral (
             $q$do $b$ declare u uuid; t timestamptz; begin
                  update public.device_config set config = '{"heartbeat_s":20}' where device_id = '4132' returning updated_by, updated_at into u, t;
                  if u is distinct from '00000000-0000-0000-0000-000000000006'::uuid or t < now() - interval '1 second' then raise exception 'updated_by=% updated_at=%', u, t; end if;
-               end $b$q$, c.seed_cfg)
+               end $b$$q$, c.seed_cfg)
   union all select * from pg_temp.t('cfg trigger: JWT viewer se rechaza (aun como postgres)', 'DENIED', 'postgres', c.viewer, $q$insert into public.device_config(device_id,config) values ('5555','{}')$q$)
-  union all select * from pg_temp.t('cfg trigger: sesion sin JWT (SQL Editor) permitida', 'ALLOWED', 'postgres', c.anon, $q$insert into public.device_config(device_id,config) values ('5555','{}')$q$)
+  union all select * from pg_temp.t('cfg trigger: sesion sin JWT (SQL Editor) permitida', 'ALLOWED', 'postgres', c.nojwt, $q$insert into public.device_config(device_id,config) values ('5555','{}')$q$)
   -- ---- roles: viewer solo lee / atiende / manda video, foto, linterna, ping y mensajes ----
   union all select * from pg_temp.t('rol viewer: INSERT casco', 'DENIED', 'authenticated', c.viewer, $q$insert into public.devices(device_id,name) values ('5555','x')$q$)
   union all select * from pg_temp.t('rol viewer: UPDATE casco', 'DENIED', 'authenticated', c.viewer, $q$update public.devices set name = 'x' where device_id = '4132'$q$, c.seed_eq)
@@ -1023,7 +1038,7 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('rol trigger: viewer no escribe zonas (aun como postgres)', 'DENIED', 'postgres', c.viewer, $q$insert into public.geofences(name,kind,shape,geometry) values ('z','restringida','circle','{"center":[-34.6,-58.4],"radius_m":100}')$q$)
   union all select * from pg_temp.t('rol viewer: atender alerta (event_acks)', 'ALLOWED', 'authenticated', c.viewer, $q$insert into public.event_acks(event_id,note) values ('eeeeeeee-0000-0000-0000-000000000001','ok')$q$, c.seed_esc_ev)
   union all select * from pg_temp.t('rol viewer: stream_commands start', 'ALLOWED', 'authenticated', c.viewer, $q$insert into public.stream_commands(device_id,action) values ('4132','start')$q$)
-  union all select * from pg_temp.t('rol viewer: lee zonas y registro', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ begin perform 1 from public.geofences; perform 1 from public.geo_points; perform 1 from public.groups; perform 1 from public.assignments; perform 1 from public.devices_full; end $b$q$, c.seed_eq)
+  union all select * from pg_temp.t('rol viewer: lee zonas y registro', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ begin perform 1 from public.geofences; perform 1 from public.geo_points; perform 1 from public.groups; perform 1 from public.assignments; perform 1 from public.devices_full; end $b$$q$, c.seed_eq)
   union all select * from pg_temp.t('rol admin: INSERT casco', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.devices(device_id,name) values ('5555','x')$q$)
   union all select * from pg_temp.t('rol admin: INSERT grupo', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.groups(name) values ('x')$q$)
   union all select * from pg_temp.t('rol admin: INSERT zona', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.geofences(name,kind,shape,geometry) values ('z','restringida','circle','{"center":[-34.6,-58.4],"radius_m":100}')$q$)
@@ -1036,8 +1051,8 @@ select r.* from c, lateral (
   union all select * from pg_temp.t('ir device: SELECT (0 filas)', 'DENIED', 'authenticated', c.dev, 'select * from public.incident_report', c.seed_inc)
   union all select * from pg_temp.t('ir viewer: SELECT', 'ALLOWED', 'authenticated', c.viewer, 'select * from public.incident_report', c.seed_inc)
   union all select * from pg_temp.t('ir admin: SELECT', 'ALLOWED', 'authenticated', c.admin, 'select * from public.incident_report', c.seed_inc)
-  union all select * from pg_temp.t('ir viewer: solo alertas (sos, geocerca restringida, not_worn)', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ declare n int; begin select count(*) into n from public.incident_report where event_id in ('eeeeeeee-0000-0000-0000-000000000011','eeeeeeee-0000-0000-0000-000000000012','eeeeeeee-0000-0000-0000-000000000013','eeeeeeee-0000-0000-0000-000000000014','eeeeeeee-0000-0000-0000-000000000015'); if n <> 3 then raise exception 'n=%', n; end if; end $b$q$, c.seed_inc)
-  union all select * from pg_temp.t('ir viewer: tta_s = 90 en la atendida y null en la pendiente', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ declare a int; p int; r text; begin select tta_s, payload ->> 'reason' into a, r from public.incident_report where event_id = 'eeeeeeee-0000-0000-0000-000000000011'; select tta_s into p from public.incident_report where event_id = 'eeeeeeee-0000-0000-0000-000000000015'; if a is distinct from 90 or p is not null or r is distinct from 'hombre_caido' then raise exception 'tta=% pend=% reason=%', a, p, r; end if; end $b$q$, c.seed_inc)
+  union all select * from pg_temp.t('ir viewer: solo alertas (sos, geocerca restringida, not_worn)', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ declare n int; begin select count(*) into n from public.incident_report where event_id in ('eeeeeeee-0000-0000-0000-000000000011','eeeeeeee-0000-0000-0000-000000000012','eeeeeeee-0000-0000-0000-000000000013','eeeeeeee-0000-0000-0000-000000000014','eeeeeeee-0000-0000-0000-000000000015'); if n <> 3 then raise exception 'n=%', n; end if; end $b$$q$, c.seed_inc)
+  union all select * from pg_temp.t('ir viewer: tta_s = 90 en la atendida y null en la pendiente', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ declare a int; p int; r text; begin select tta_s, payload ->> 'reason' into a, r from public.incident_report where event_id = 'eeeeeeee-0000-0000-0000-000000000011'; select tta_s into p from public.incident_report where event_id = 'eeeeeeee-0000-0000-0000-000000000015'; if a is distinct from 90 or p is not null or r is distinct from 'hombre_caido' then raise exception 'tta=% pend=% reason=%', a, p, r; end if; end $b$$q$, c.seed_inc)
   -- ---- Tanda 4: configuracion estatica ----
   union all select 'RLS activo en device_commands', 'OK', case when (select relrowsecurity from pg_class where oid = 'public.device_commands'::regclass) then 'OK' else 'BAD' end, ((select relrowsecurity from pg_class where oid = 'public.device_commands'::regclass))
   union all select 'RLS activo en device_command_acks', 'OK', case when (select relrowsecurity from pg_class where oid = 'public.device_command_acks'::regclass) then 'OK' else 'BAD' end, ((select relrowsecurity from pg_class where oid = 'public.device_command_acks'::regclass))
@@ -1054,6 +1069,83 @@ select r.* from c, lateral (
   union all select 'roles: trigger admin-only en las 7 tablas', 'OK', case when (select count(distinct tgrelid) from pg_trigger where tgname = 'aa_admin_only_trg' and not tgisinternal and tgrelid in ('public.groups'::regclass,'public.devices'::regclass,'public.people'::regclass,'public.assignments'::regclass,'public.geofences'::regclass,'public.geo_points'::regclass,'public.device_config'::regclass)) = 7 then 'OK' else 'BAD' end, ((select count(distinct tgrelid) from pg_trigger where tgname = 'aa_admin_only_trg' and not tgisinternal and tgrelid in ('public.groups'::regclass,'public.devices'::regclass,'public.people'::regclass,'public.assignments'::regclass,'public.geofences'::regclass,'public.geo_points'::regclass,'public.device_config'::regclass)) = 7)
   union all select 'roles: ninguna policy de escritura nombra a viewer en las tablas admin (si falla: volver a correr 010)', 'OK', case when not exists (select 1 from pg_policies where schemaname='public' and tablename in ('groups','devices','people','assignments','geofences','geo_points','device_config') and cmd in ('INSERT','UPDATE') and (coalesce(qual,'') || coalesce(with_check,'')) ~ 'viewer') then 'OK' else 'BAD' end, (not exists (select 1 from pg_policies where schemaname='public' and tablename in ('groups','devices','people','assignments','geofences','geo_points','device_config') and cmd in ('INSERT','UPDATE') and (coalesce(qual,'') || coalesce(with_check,'')) ~ 'viewer'))
   union all select 'device_command_ack_ok: SECURITY DEFINER y sin EXECUTE para anon', 'OK', case when (select prosecdef from pg_proc where oid = 'public.device_command_ack_ok(uuid,text)'::regprocedure) and not has_function_privilege('anon','public.device_command_ack_ok(uuid,text)','EXECUTE') then 'OK' else 'BAD' end, ((select prosecdef from pg_proc where oid = 'public.device_command_ack_ok(uuid,text)'::regprocedure) and not has_function_privilege('anon','public.device_command_ack_ok(uuid,text)','EXECUTE'))
+  -- ======================= Tanda 5: archivar eventos (migracion 011) =======================
+  -- Eventos del seed: ..11 sos atendido, ..12 geocerca restringida pendiente, ..13 geocerca informativa, ..14 heartbeat, ..15 not_worn pendiente.
+  union all select * from pg_temp.t('arch anon: SELECT', 'DENIED', 'anon', c.anon, 'select * from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch anon: INSERT', 'DENIED', 'anon', c.anon, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch sin rol: SELECT', 'DENIED', 'authenticated', c.norole, 'select * from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch sin rol: INSERT', 'DENIED', 'authenticated', c.norole, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch user_metadata falso: INSERT', 'DENIED', 'authenticated', c.usermeta, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch device: SELECT (no ve nada)', 'DENIED', 'authenticated', c.dev, 'select * from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch device: INSERT', 'DENIED', 'authenticated', c.dev, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch device: DELETE', 'DENIED', 'authenticated', c.dev, 'delete from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch viewer: INSERT (solo admin)', 'DENIED', 'authenticated', c.viewer, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch viewer: DELETE (solo admin)', 'DENIED', 'authenticated', c.viewer, 'delete from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch viewer: SELECT', 'ALLOWED', 'authenticated', c.viewer, 'select * from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch admin: SELECT', 'ALLOWED', 'authenticated', c.admin, 'select * from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch admin: archivar sos atendido', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000011','falsa alarma')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: archivar geocerca informativa', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000013')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: archivar heartbeat (informativo)', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000014')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: archivar not_worn PENDIENTE', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000015')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: archivar geocerca restringida PENDIENTE', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000012')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: archivar not_worn una vez atendido', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000015')$q$, $s$do $d$ begin
+       insert into public.events(id,device_id,type) values ('eeeeeeee-0000-0000-0000-000000000015','4132','not_worn');
+       insert into public.event_acks(event_id,acked_by,note) values ('eeeeeeee-0000-0000-0000-000000000015','00000000-0000-0000-0000-000000000009','ok');
+     end $d$$s$)
+  union all select * from pg_temp.t('arch admin: evento inexistente', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-0000000000ff')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: duplicado (ya archivado)', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_arch)
+  union all select * from pg_temp.t('arch admin: reason 200', 'ALLOWED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000011',repeat('a',200))$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: reason 201', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,reason) values ('eeeeeeee-0000-0000-0000-000000000011',repeat('a',201))$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: falsear archived_by (sin grant)', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,archived_by) values ('eeeeeeee-0000-0000-0000-000000000011','00000000-0000-0000-0000-0000000000aa')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: falsear archived_at (sin grant)', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,archived_at) values ('eeeeeeee-0000-0000-0000-000000000011', now() + interval '1 day')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: falsear archived_by_email (sin grant)', 'DENIED', 'authenticated', c.admin, $q$insert into public.event_archive(event_id,archived_by_email) values ('eeeeeeee-0000-0000-0000-000000000011','otro@x.com')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: UPDATE (sin grant ni policy)', 'DENIED', 'authenticated', c.admin, $q$update public.event_archive set reason = 'x'$q$, c.seed_arch)
+  union all select * from pg_temp.t('arch admin: desarchivar (DELETE)', 'ALLOWED', 'authenticated', c.admin, 'delete from public.event_archive', c.seed_arch)
+  union all select * from pg_temp.t('arch admin: desarchivar no borra el evento', 'ALLOWED', 'authenticated', c.admin, $q$do $b$ begin delete from public.event_archive; if not exists (select 1 from public.events where id = 'eeeeeeee-0000-0000-0000-000000000011') then raise exception 'evento borrado'; end if; end $b$$q$, c.seed_arch)
+  union all select * from pg_temp.t('arch trigger: archived_by/email/at los fija el servidor', 'ALLOWED', 'postgres', '{"role":"authenticated","sub":"00000000-0000-0000-0000-000000000006","email":"adm@test.local","app_metadata":{"role":"admin"}}',
+            $q$do $b$ declare u uuid; e text; t timestamptz; begin
+                 insert into public.event_archive(event_id,archived_by,archived_by_email,archived_at)
+                   values ('eeeeeeee-0000-0000-0000-000000000011','00000000-0000-0000-0000-0000000000aa','falso@x.com', now() + interval '1 day')
+                   returning archived_by, archived_by_email, archived_at into u, e, t;
+                 if u <> '00000000-0000-0000-0000-000000000006'::uuid or e <> 'adm@test.local' or t > now() + interval '1 second' then
+                   raise exception 'no pisado: % % %', u, e, t;
+                 end if;
+               end $b$$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch trigger: JWT viewer se rechaza (aun como postgres)', 'DENIED', 'postgres', c.viewer, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch trigger: JWT anon se rechaza (aun como postgres)', 'DENIED', 'postgres', c.anon, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000011')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch trigger: pendiente se rechaza aun como postgres con JWT admin', 'DENIED', 'postgres', c.admin, $q$insert into public.event_archive(event_id) values ('eeeeeeee-0000-0000-0000-000000000015')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch trigger: sesion de DB sin JWT (mantenimiento) permitida', 'ALLOWED', 'postgres', c.nojwt, $q$insert into public.event_archive(event_id,archived_by) values ('eeeeeeee-0000-0000-0000-000000000011','00000000-0000-0000-0000-000000000009')$q$, c.seed_inc)
+  union all select * from pg_temp.t('arch admin: 60 archivados/min', 'ALLOWED', 'postgres', c.admin,
+            $q$do $b$ begin
+                 for i in 1..60 loop
+                   insert into public.events(id,device_id,type) values (('eeeeeeee-0000-0000-0001-' || lpad(i::text,12,'0'))::uuid, 'h' || i, 'heartbeat');
+                   insert into public.event_archive(event_id) values (('eeeeeeee-0000-0000-0001-' || lpad(i::text,12,'0'))::uuid);
+                 end loop;
+               end $b$$q$)
+  union all select * from pg_temp.t('arch admin: 61 archivados/min', 'DENIED', 'postgres', c.admin,
+            $q$do $b$ begin
+                 for i in 1..61 loop
+                   insert into public.events(id,device_id,type) values (('eeeeeeee-0000-0000-0001-' || lpad(i::text,12,'0'))::uuid, 'h' || i, 'heartbeat');
+                   insert into public.event_archive(event_id) values (('eeeeeeee-0000-0000-0001-' || lpad(i::text,12,'0'))::uuid);
+                 end loop;
+               end $b$$q$)
+  union all select * from pg_temp.t('arch: borrar el evento borra su archivo (cascada, como casco_purge)', 'ALLOWED', 'postgres', c.nojwt,
+            $q$do $b$ begin
+                 delete from public.events where id = 'eeeeeeee-0000-0000-0000-000000000011';
+                 if exists (select 1 from public.event_archive where event_id = 'eeeeeeee-0000-0000-0000-000000000011') then raise exception 'archivo huerfano'; end if;
+               end $b$$q$, c.seed_arch)
+  union all select * from pg_temp.t('ir viewer: archived_at expuesto y archivados NO excluidos', 'ALLOWED', 'authenticated', c.viewer, $q$do $b$ declare a timestamptz; p timestamptz; n int; begin select archived_at into a from public.incident_report where event_id = 'eeeeeeee-0000-0000-0000-000000000011'; select archived_at into p from public.incident_report where event_id = 'eeeeeeee-0000-0000-0000-000000000015'; select count(*) into n from public.incident_report where event_id in ('eeeeeeee-0000-0000-0000-000000000011','eeeeeeee-0000-0000-0000-000000000012','eeeeeeee-0000-0000-0000-000000000015'); if a is null or p is not null or n <> 3 then raise exception 'archived=% pend=% n=%', a, p, n; end if; end $b$$q$, c.seed_arch)
+  union all select * from pg_temp.t('ir device: archived_at (0 filas)', 'DENIED', 'authenticated', c.dev, 'select archived_at from public.incident_report', c.seed_arch)
+  -- ---- Tanda 5: configuracion estatica ----
+  union all select 'RLS activo en event_archive', 'OK', case when (select relrowsecurity from pg_class where oid = 'public.event_archive'::regclass) then 'OK' else 'BAD' end, ((select relrowsecurity from pg_class where oid = 'public.event_archive'::regclass))
+  union all select 'event_archive: sin policy de UPDATE/ALL', 'OK', case when not exists (select 1 from pg_policies where schemaname='public' and tablename='event_archive' and cmd in ('UPDATE','ALL')) then 'OK' else 'BAD' end, (not exists (select 1 from pg_policies where schemaname='public' and tablename='event_archive' and cmd in ('UPDATE','ALL')))
+  union all select 'event_archive: escritura solo admin (policies INSERT/DELETE)', 'OK', case when (select count(*) from pg_policies where schemaname='public' and tablename='event_archive' and cmd in ('INSERT','DELETE') and (coalesce(qual,'') || coalesce(with_check,'')) ~ 'admin' and (coalesce(qual,'') || coalesce(with_check,'')) !~ 'viewer') = 2 then 'OK' else 'BAD' end, ((select count(*) from pg_policies where schemaname='public' and tablename='event_archive' and cmd in ('INSERT','DELETE') and (coalesce(qual,'') || coalesce(with_check,'')) ~ 'admin' and (coalesce(qual,'') || coalesce(with_check,'')) !~ 'viewer') = 2)
+  union all select 'event_archive: anon sin privilegios', 'OK', case when not exists (select 1 from information_schema.role_table_grants where table_schema='public' and table_name='event_archive' and grantee='anon') then 'OK' else 'BAD' end, (not exists (select 1 from information_schema.role_table_grants where table_schema='public' and table_name='event_archive' and grantee='anon'))
+  union all select 'event_archive: authenticated sin UPDATE/TRUNCATE', 'OK', case when not has_table_privilege('authenticated','public.event_archive','UPDATE') and not has_table_privilege('authenticated','public.event_archive','TRUNCATE') then 'OK' else 'BAD' end, (not has_table_privilege('authenticated','public.event_archive','UPDATE') and not has_table_privilege('authenticated','public.event_archive','TRUNCATE'))
+  union all select 'event_archive: solo event_id y reason son insertables', 'OK', case when has_column_privilege('authenticated','public.event_archive','event_id','INSERT') and has_column_privilege('authenticated','public.event_archive','reason','INSERT') and not (has_column_privilege('authenticated','public.event_archive','archived_by','INSERT') or has_column_privilege('authenticated','public.event_archive','archived_at','INSERT') or has_column_privilege('authenticated','public.event_archive','archived_by_email','INSERT')) then 'OK' else 'BAD' end, (has_column_privilege('authenticated','public.event_archive','event_id','INSERT') and has_column_privilege('authenticated','public.event_archive','reason','INSERT') and not (has_column_privilege('authenticated','public.event_archive','archived_by','INSERT') or has_column_privilege('authenticated','public.event_archive','archived_at','INSERT') or has_column_privilege('authenticated','public.event_archive','archived_by_email','INSERT')))
+  union all select 'event_archive en publicacion realtime', 'OK', case when exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='event_archive') then 'OK' else 'BAD' end, (exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='event_archive'))
+  union all select 'incident_report expone archived_at', 'OK', case when exists (select 1 from information_schema.columns where table_schema='public' and table_name='incident_report' and column_name='archived_at') then 'OK' else 'BAD' end, (exists (select 1 from information_schema.columns where table_schema='public' and table_name='incident_report' and column_name='archived_at'))
+  union all select 'device_ids: validador por elemento en broadcasts y geofences', 'OK', case when (select count(*) from pg_constraint where conname in ('broadcasts_device_ids_elems_ck','geofences_device_ids_elems_ck')) = 2 then 'OK' else 'BAD' end, ((select count(*) from pg_constraint where conname in ('broadcasts_device_ids_elems_ck','geofences_device_ids_elems_ck')) = 2)
   -- ============================ configuracion ============================
   union all select 'bucket privado, con limite de tamano y mime', 'OK',
             (select case when not public and file_size_limit is not null and allowed_mime_types is not null

@@ -14,9 +14,11 @@
 --                         (migracion 009); el resto de los tipos (incluidos los nuevos) exige device_is_active.
 --
 -- Defensa en profundidad del cambio de roles: ademas de reescribir las policies, un trigger BEFORE INSERT OR UPDATE
--- (aa_admin_only_trg, se dispara antes que los guards 006/007 por orden alfabetico) rechaza a todo el que no sea admin
--- (o una sesion sin JWT = SQL Editor/service_role). Si alguien vuelve a ejecutar 005/006/007 sueltas, las policies
--- viejas de viewer reaparecen pero el trigger sigue bloqueando; volve a correr esta migracion para limpiarlas.
+-- (aa_admin_only_trg, se dispara antes que los guards 006/007 por orden alfabetico) rechaza a todo el que no sea admin.
+-- Excepcion deliberada: una sesion directa de base de datos SIN JWT (SQL Editor, migraciones, fixtures de prueba) y
+-- service_role pasan; PostgREST siempre setea request.jwt.claims, asi que ninguna peticion de la API cae en ese caso.
+-- Si alguien vuelve a ejecutar 005/006/007 sueltas, las policies viejas de viewer reaparecen pero el trigger sigue
+-- bloqueando; volve a correr esta migracion para limpiarlas.
 
 -- ===========================================================================
 -- 0. events.type: lista completa (existentes + nuevos). NOT VALID: no revalida filas viejas.
@@ -46,12 +48,16 @@ create policy events_insert_device on public.events
 -- ===========================================================================
 -- 1. Roles: solo admin escribe el registro, el mapa y la configuracion
 -- ===========================================================================
--- Trigger generico. Permite admin o sesion sin JWT (SQL Editor / service_role, igual que los guards 006/007).
+-- Trigger generico. Permite: (a) role admin con usuario; (b) sesion directa de base de datos SIN JWT
+-- (auth.jwt() null y auth.uid() null); (c) service_role. Bloquea viewer, device, anon y authenticated sin rol
+-- (claims presentes sin admin).
 create or replace function public.admin_only_guard() returns trigger
 language plpgsql security definer set search_path = '' as $$
 declare r text := public.jwt_role(); u uuid := auth.uid();
 begin
-  if r = 'admin' or (r is null and u is null) then
+  if (r = 'admin' and u is not null)
+     or (auth.jwt() is null and u is null)
+     or coalesce(auth.jwt() ->> 'role', '') = 'service_role' then
     return new;
   end if;
   raise exception '%: solo un admin puede modificar', tg_table_name using errcode = '42501';
@@ -147,6 +153,22 @@ create policy geo_points_update_admin on public.geo_points
   using (public.jwt_role() = 'admin' and deleted_at is null)
   with check (public.jwt_role() = 'admin');
 
+-- device_ids: el CHECK de 005/006 valida la lista unida con comas, asi que UN elemento '4132,9999' pasaba.
+-- Validador por elemento (inmutable; un CHECK no admite subconsultas, por eso va en funcion). NOT VALID: solo filas nuevas.
+create or replace function public.device_ids_valid(p text[]) returns boolean
+language sql immutable set search_path = '' as $$
+  select p is null
+      or (cardinality(p) between 1 and 100
+          and array_position(p, null::text) is null
+          and not exists (select 1 from unnest(p) d where d !~ '^[A-Za-z0-9_-]{1,64}$'))
+$$;
+alter table public.broadcasts drop constraint if exists broadcasts_device_ids_elems_ck;
+alter table public.broadcasts add constraint broadcasts_device_ids_elems_ck
+  check (public.device_ids_valid(device_ids)) not valid;
+alter table public.geofences drop constraint if exists geofences_device_ids_elems_ck;
+alter table public.geofences add constraint geofences_device_ids_elems_ck
+  check (public.device_ids_valid(device_ids)) not valid;
+
 -- Los grants por columna de 005/006/007 no cambian (el filtro de rol esta en policies + trigger).
 
 -- broadcasts: viewer y admin mandan 'mensaje'; 'evacuacion' solo admin.
@@ -165,7 +187,8 @@ language plpgsql security definer set search_path = '' as $$
 begin
   if new.kind = 'evacuacion'
      and public.jwt_role() is distinct from 'admin'
-     and not (public.jwt_role() is null and auth.uid() is null) then
+     and not (auth.jwt() is null and auth.uid() is null)
+     and coalesce(auth.jwt() ->> 'role', '') <> 'service_role' then
     raise exception 'broadcasts: la evacuacion solo la manda un admin' using errcode = '42501';
   end if;
   return new;
@@ -401,6 +424,7 @@ create policy dcfg_update_admin on public.device_config
 -- ===========================================================================
 -- security_invoker = true: corre con los permisos y la RLS de quien consulta (viewer/admin ven; device 0 filas).
 -- Geocerca que requiere Atender = misma regla que el visor: restringida/enter, permitida/exit o peligro/enter.
+-- (011 agrega archived_at al final de la lista.)
 create or replace view public.incident_report with (security_invoker = true) as
   select e.id               as event_id,
          e.created_at,

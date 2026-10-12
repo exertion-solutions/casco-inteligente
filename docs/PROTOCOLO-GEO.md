@@ -90,6 +90,8 @@ Tabla `public.geo_points`: `id`, `name`, `category` (`'punto_reunion'`,`'extinto
 - El microfono se libera durante llamadas WebRTC y mientras el casco habla (evita auto-disparo). Bateria: reconocimiento
   solo con pantalla/servicio activos, nunca con el casco sin movimiento > 10 min (config `voice_idle_off_minutes`).
 - Todas las instrucciones y respuestas habladas del casco son en **espanol rioplatense (es-AR)**.
+- **Implementado en 0.7.0** (`VoiceCommandAgent`/`VoiceCommandPolicy`; modelo `vosk-model-small-es-0.42`; instalacion `tools/instalar-modelo-voz.ps1`;
+  detalle, convivencia de audio verificada y riesgos en `android/README-VOZ.md`, "Tanda 5"). Pendiente: prueba hablada en campo.
 
 ## 6. Privacidad y cumplimiento
 - Ubicacion de personas = dato personal (Ley 25.326): informar al trabajador, limitar a la jornada, retencion acotada
