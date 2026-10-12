@@ -53,6 +53,9 @@ public class AgentPolicyCheck {
         eq(true, AgentPolicy.newFix(2000L, 1000L), "fix nuevo");
         eq(true, AgentPolicy.fixFresh(120), "fix 120 s");
         eq(false, AgentPolicy.fixFresh(121), "fix 121 s viejo");
+        eq(true, AgentPolicy.staleDue(300_000L, 0), "stale a los 5 min");
+        eq(false, AgentPolicy.staleDue(299_999L, 0), "stale antes de 5 min");
+        eq(true, AgentPolicy.staleDue(0, -AgentPolicy.STALE_REPUBLISH_MS), "stale la primera vez");
 
         // llamadas: offer con hangup del mismo call_id se ignora
         eq("[c1]", AgentPolicy.hungUpCalls(Arrays.asList("c1", "c1", "c2"),

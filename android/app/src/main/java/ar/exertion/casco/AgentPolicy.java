@@ -57,6 +57,13 @@ final class AgentPolicy {
         return ageS <= 120;
     }
 
+    /** Sin fix fresco (bajo techo): se republica la ultima posicion conocida (src=last_known) como mucho cada 5 min. */
+    static final long STALE_REPUBLISH_MS = 5 * 60_000L;
+
+    static boolean staleDue(long nowMs, long lastStaleMs) {
+        return nowMs - lastStaleMs >= STALE_REPUBLISH_MS;
+    }
+
     /** No republicar el mismo fix (sin satelites): solo si cambio su marca de tiempo. */
     static boolean newFix(long fixTime, long lastPublishedFixTime) {
         return fixTime != lastPublishedFixTime;

@@ -61,6 +61,7 @@ public class MediaWatcherService extends Service {
     private Outbox outbox;
     private LocationTracker loc;
     private long lastLocFixTime = -1;
+    private long lastStaleMs = -AgentPolicy.STALE_REPUBLISH_MS;
     private PowerManager.WakeLock sosWake, upWake;
     private Supabase sb;
     private Config cfg;
@@ -480,15 +481,21 @@ public class MediaWatcherService extends Service {
             try {
                 loc.ensureStarted(teleThread.getLooper());
                 LocationTracker.Fix f = loc.last();
-                if (f != null && AgentPolicy.fixFresh(f.ageS()) && AgentPolicy.accuracyOk(f.hasAcc, (float) f.acc)
-                        && AgentPolicy.newFix(f.time, lastLocFixTime)) {
-                    lastLocFixTime = f.time;
-                    JSONObject p = new JSONObject().put("acc", Math.round(f.acc)).put("src", "gps");
-                    if (f.spd >= 0) p.put("spd", Math.round(f.spd * 10) / 10.0);
-                    if (f.brg >= 0) p.put("brg", Math.round(f.brg));
-                    if (!Double.isNaN(f.alt)) p.put("alt", Math.round(f.alt));
-                    if (f.sats >= 0) p.put("n", f.sats);
-                    emit("location", null, null, null, p, f);
+                if (f != null) {
+                    boolean fresh = AgentPolicy.fixFresh(f.ageS()) && AgentPolicy.accuracyOk(f.hasAcc, (float) f.acc);
+                    long now = SystemClock.elapsedRealtime();
+                    boolean publish = fresh ? AgentPolicy.newFix(f.time, lastLocFixTime) : AgentPolicy.staleDue(now, lastStaleMs);
+                    if (publish) {
+                        if (fresh) lastLocFixTime = f.time; else lastStaleMs = now;
+                        JSONObject p = new JSONObject().put("src", fresh ? "gps" : "last_known");
+                        if (f.hasAcc) p.put("acc", Math.round(f.acc));
+                        if (!fresh) p.put("age_s", f.ageS());
+                        if (f.spd >= 0) p.put("spd", Math.round(f.spd * 10) / 10.0);
+                        if (f.brg >= 0) p.put("brg", Math.round(f.brg));
+                        if (!Double.isNaN(f.alt)) p.put("alt", Math.round(f.alt));
+                        if (f.sats >= 0) p.put("n", f.sats);
+                        emit("location", null, null, null, p, f);
+                    }
                 }
             } catch (Exception e) {
                 Log.w(TAG, "ubicacion: " + e);
