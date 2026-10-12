@@ -22,7 +22,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610121830">
+<link rel="stylesheet" href="app.css?v=202610122000">
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
@@ -37,7 +37,7 @@
     <button id="themeBtn" type="button" class="icon-btn" aria-label="Cambiar tema claro u oscuro" title="Cambiar tema claro u oscuro">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3v18" /><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>
     </button>
-    <a id="cmdLink" class="btn" href="comandos.html" aria-label="Comandos de voz del casco: abrir la guía en esta pestaña" title="Comandos de voz del casco">
+    <a id="cmdLink" class="btn" href="comandos.html" aria-label="Comandos de voz del casco: abrir la guía en el panel" title="Comandos de voz del casco">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
       <span>Comandos de voz</span>
     </a>
@@ -80,6 +80,10 @@
       <button type="button" role="tab" id="tabRep" aria-selected="false" aria-controls="panelRep" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></svg>
         <span>Reportes</span>
+      </button>
+      <button type="button" role="tab" id="tabCmd" aria-selected="false" aria-controls="panelCmd" tabindex="-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+        <span>Comandos</span>
       </button>
     </nav>
 
@@ -212,6 +216,7 @@
       </div>
 
       <div id="panelDone" role="tabpanel" aria-labelledby="tabDone" class="hidden">
+        <div class="row"><label class="chk arc-toggle-l hidden"><input type="checkbox" class="arc-toggle"> Mostrar archivados</label></div>
         <section class="block" aria-labelledby="doneH">
           <h2 id="doneH" class="sec">SOS y caídas atendidos</h2>
           <ul id="feedDone"></ul>
@@ -230,6 +235,9 @@
         </details>
         <p id="histLive" class="sr-only" role="status" aria-live="polite"></p>
       </div>
+      <div id="panelCmd" role="tabpanel" aria-labelledby="tabCmd" class="hidden">
+        <section class="block" aria-label="Comandos de voz del casco"><div id="cmdHost" class="mute">Cargando comandos…</div></section>
+      </div>
       <div id="panelRep" role="tabpanel" aria-labelledby="tabRep" class="hidden">
         <section class="block" aria-labelledby="repH">
           <h2 id="repH" class="sec">Reportes de incidentes</h2>
@@ -243,7 +251,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610121830"></script>
-<script src="app.js?v=202610121830"></script>
+<script src="config.js?v=202610122000"></script>
+<script src="app.js?v=202610122000"></script>
 </body>
 </html>

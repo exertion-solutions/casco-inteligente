@@ -14,46 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610121830">
-<style>
-  .cmd-page { max-width: 1040px; margin: 0 auto; padding: var(--sp-5) var(--sp-4) var(--sp-6); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); }
-  .cmd-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
-  .cmd-top a.back { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); border-radius: var(--r); color: var(--ink); text-decoration: none; font-weight: 600; }
-  .cmd-page h1 { font-size: var(--fs-5); }
-  .cmd-page h2 { font-size: var(--fs-4); margin-bottom: var(--sp-3); }
-  .cmd-lead { font-size: var(--fs-3); color: var(--mute); max-width: 68ch; }
-  .cmd-status { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-4); background: var(--pend-tint); border: 1px solid var(--pend); border-radius: var(--r); }
-  .cmd-status > strong { color: var(--pend); }
-  .cmd-status > div { min-width: 0; }
-  .cmd-steps { margin: 0; padding-left: var(--sp-5); display: grid; gap: var(--sp-2); }
-  .cmd-steps li { padding-left: var(--sp-1); }
-  .cmd-tools { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: center; }
-  .cmd-tools input { min-height: 44px; min-width: 0; width: 100%; flex: 1 1 220px; padding: 0 var(--sp-3); font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r); }
-  .cmd-tools button { min-height: 44px; padding: 0 var(--sp-4); font: 600 var(--fs-3)/1 var(--font-ui); color: var(--ink); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r); cursor: pointer; }
-  .cmd-group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-4); }
-  .cmd-table { width: 100%; border-collapse: collapse; }
-  .cmd-table caption { text-align: left; font-size: var(--fs-4); font-weight: 700; padding-bottom: var(--sp-3); }
-  .cmd-table th, .cmd-table td { text-align: left; vertical-align: top; padding: var(--sp-3) var(--sp-3) var(--sp-3) 0; border-top: 1px solid var(--line); }
-  .cmd-table th { font-size: var(--fs-2); color: var(--mute); font-weight: 600; }
-  .cmd-say { font-family: var(--font-mono); font-size: var(--fs-2); overflow-wrap: anywhere; }
-  .cmd-page, .cmd-group { min-width: 0; }
-  .cmd-page td, .cmd-page li, .cmd-page p { overflow-wrap: anywhere; }
-  .cmd-say b { display: block; font-weight: 500; }
-  .cmd-chip { display: inline-block; padding: 2px var(--sp-2); border-radius: 999px; font-size: var(--fs-1); font-weight: 700; border: 1px solid var(--line-strong); white-space: nowrap; }
-  .cmd-chip.ok { color: var(--ok); border-color: var(--ok); }
-  .cmd-chip.soon { color: var(--pend); border-color: var(--pend); }
-  .cmd-note { font-size: var(--fs-2); color: var(--mute); }
-  .cmd-warn { color: var(--sos); font-weight: 700; }
-  tr[hidden] { display: none; }
-  @media (max-width: 720px) {
-    .cmd-table thead { display: none; }
-    .cmd-table, .cmd-table tbody, .cmd-table tr, .cmd-table td { display: block; width: 100%; }
-    .cmd-table tr { padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
-    .cmd-table td { border: 0; padding: var(--sp-1) 0; }
-    .cmd-table td::before { content: attr(data-l); display: block; font-size: var(--fs-1); color: var(--mute); text-transform: uppercase; letter-spacing: .04em; }
-  }
-  @media print { .cmd-tools, .cmd-top a.back { display: none; } }
-</style>
+<link rel="stylesheet" href="app.css?v=202610122000">
 </head>
 <body>
 <main class="cmd-page" id="main">
@@ -66,7 +27,7 @@
   <div class="cmd-status" role="note">
     <strong>Estado</strong>
     <div>
-      <p><strong>El reconocimiento por voz todavía no está instalado en el casco 4132.</strong> Hoy el casco ya <em>habla</em> en español (órdenes del supervisor, avisos) y se maneja con sus tres botones físicos. Los comandos de esta lista quedan definidos para activarse cuando se instale el modelo de voz sin conexión (ver “Activación” al final).</p>
+      <p><strong>El reconocimiento por voz ya está implementado en la versión 0.7.0 del agente, pero viene apagado.</strong> Se activa por casco: hace falta copiar el modelo de voz sin conexión y encender <span class="cmd-say">voice_commands</span> (ver “Activación” al final). Hasta entonces el casco solo <em>habla</em> en español (órdenes del supervisor, avisos) y se maneja con sus tres botones físicos. La prueba hablada en campo todavía está pendiente.</p>
     </div>
   </div>
 
@@ -75,6 +36,8 @@
     <ol class="cmd-steps">
       <li>Decí <strong>“casco”</strong> y, sin pausa larga, el comando. Ejemplo: <span class="cmd-say">“casco, activar linterna”</span>.</li>
       <li>Esperá la respuesta hablada del casco (“Linterna encendida”). Si no responde, repetí más cerca y más despacio.</li>
+      <li>Si querés ir de a pasos, decí solo <span class="cmd-say">“casco”</span>: suena un tono corto y tenés 8 segundos para decir el comando sin repetir la palabra.</li>
+      <li>El casco no escucha mientras habla, mientras suena una sirena o una orden del supervisor, ni durante una llamada de voz. Espere a que termine de hablar.</li>
       <li>En lugares ruidosos, acercá el micrófono y hablá frases cortas. Si no estás seguro, decí <span class="cmd-say">“casco, ayuda”</span>.</li>
       <li>Para emergencias, el botón <strong>SOS</strong> físico siempre manda sobre la voz.</li>
     </ol>
@@ -93,15 +56,15 @@
       <tbody>
         <tr data-k="sos emergencia auxilio socorro alerta">
           <td class="cmd-say" data-l="Decí"><b>“casco, activar SOS”</b><b>“casco, emergencia”</b><b>“casco, auxilio”</b><b>“casco, socorro”</b></td>
-          <td data-l="Qué hace">Dispara el SOS: avisa al panel con tu posición y arranca el video. Tenés 5 segundos para cancelar.</td>
+          <td data-l="Qué hace">Dispara el SOS: avisa al panel con tu posición y arranca el video. Tenés 5 segundos para decir “cancelar”, que empiezan a contar cuando el casco termina de hablar.</td>
           <td data-l="El casco responde">“Emergencia en cinco segundos. Diga cancelar para anular.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="cancelar anular">
           <td class="cmd-say" data-l="Decí"><b>“casco, cancelar”</b></td>
-          <td data-l="Qué hace">Cancela la cuenta regresiva de un SOS por voz o de “hombre caído”.</td>
-          <td data-l="El casco responde">“Cancelado.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Qué hace">Cancela la cuenta regresiva de un SOS por voz o de “hombre caído”. Durante la cuenta alcanza con decir “cancelar”, sin la palabra “casco”.</td>
+          <td data-l="El casco responde">“Cancelado.” (o “No hay nada para cancelar.”)</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
       </tbody>
     </table>
@@ -114,27 +77,27 @@
       <tbody>
         <tr data-k="foto camara fotografia sacar">
           <td class="cmd-say" data-l="Decí"><b>“casco, foto”</b><b>“casco, sacar foto”</b></td>
-          <td data-l="Qué hace">Saca una foto y la manda al panel.</td>
-          <td data-l="El casco responde">“Foto enviada.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Qué hace">Saca una foto y la manda al panel. No se puede mientras la cámara está transmitiendo video.</td>
+          <td data-l="El casco responde">“Foto enviada.” (o “No puedo sacar la foto: la cámara está ocupada…”)</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="activar camara iniciar video transmitir">
           <td class="cmd-say" data-l="Decí"><b>“casco, activar cámara”</b><b>“casco, iniciar video”</b></td>
           <td data-l="Qué hace">Empieza a transmitir video en vivo al panel.</td>
           <td data-l="El casco responde">“Transmisión de video iniciada.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="detener desactivar camara video parar">
           <td class="cmd-say" data-l="Decí"><b>“casco, desactivar cámara”</b><b>“casco, detener video”</b></td>
-          <td data-l="Qué hace">Corta la transmisión de video.</td>
+          <td data-l="Qué hace">Corta la transmisión de video (la de una emergencia no se puede cortar por voz). La transmisión pedida por voz se corta sola a los 10 minutos.</td>
           <td data-l="El casco responde">“Transmisión detenida.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="audio microfono sonido">
           <td class="cmd-say" data-l="Decí"><b>“casco, activar audio”</b><b>“casco, desactivar audio”</b></td>
-          <td data-l="Qué hace">Agrega o saca el sonido ambiente del video en vivo.</td>
-          <td data-l="El casco responde">“Transmisión con audio.” / “Transmisión sin audio.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Qué hace">Agrega o saca el sonido ambiente del video en vivo (reconecta la transmisión un instante). Sin video en curso queda para la próxima transmisión.</td>
+          <td data-l="El casco responde">“Transmisión con audio.” / “Transmisión sin audio.” (sin video: “Audio activado. Se usará en la próxima transmisión.”)</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
       </tbody>
     </table>
@@ -147,27 +110,27 @@
       <tbody>
         <tr data-k="linterna luz prender encender">
           <td class="cmd-say" data-l="Decí"><b>“casco, activar linterna”</b><b>“casco, prender linterna”</b></td>
-          <td data-l="Qué hace">Enciende la linterna del casco.</td>
-          <td data-l="El casco responde">“Linterna encendida.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Qué hace">Enciende la linterna del casco. Si la cámara está transmitiendo, avisa que no se puede y por qué.</td>
+          <td data-l="El casco responde">“Linterna encendida.” (o “No puedo usar la linterna: la cámara está ocupada por la transmisión de video.”)</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="linterna luz apagar desactivar">
           <td class="cmd-say" data-l="Decí"><b>“casco, desactivar linterna”</b><b>“casco, apagar linterna”</b></td>
           <td data-l="Qué hace">Apaga la linterna.</td>
           <td data-l="El casco responde">“Linterna apagada.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="estado bateria senal">
           <td class="cmd-say" data-l="Decí"><b>“casco, estado”</b><b>“casco, batería”</b></td>
           <td data-l="Qué hace">Te dice la batería, la señal y si hay video en curso.</td>
-          <td data-l="El casco responde">“Batería al ochenta por ciento, señal buena, sin video.”</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="El casco responde">“Batería al 80 por ciento, señal buena, sin video.”</td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
         <tr data-k="ayuda comandos lista repetir">
           <td class="cmd-say" data-l="Decí"><b>“casco, ayuda”</b><b>“casco, repetir”</b></td>
           <td data-l="Qué hace">Lista los comandos disponibles / repite lo último que dijo.</td>
           <td data-l="El casco responde">Lee la lista de comandos en español.</td>
-          <td data-l="Estado"><span class="cmd-chip soon">Próximamente</span></td>
+          <td data-l="Estado"><span class="cmd-chip ok">Disponible al activar</span></td>
         </tr>
       </tbody>
     </table>
@@ -259,8 +222,9 @@
     <h2 id="act">Activación (técnicos)</h2>
     <ul class="cmd-steps">
       <li>El reconocimiento corre <strong>sin conexión</strong> en el casco (Vosk, modelo en español) y no envía audio a ninguna nube.</li>
-      <li>Falta copiar el modelo <span class="cmd-say">vosk-model-small-es</span> (~40 MB) al casco y poner <span class="cmd-say">voice_commands: true</span> en su configuración. La palabra de activación se cambia con <span class="cmd-say">voice_wake_word</span>.</li>
-      <li>Para proteger la batería, el reconocimiento se apaga si el casco está quieto más de 10 minutos.</li>
+      <li>Copiar el modelo <span class="cmd-say">vosk-model-small-es-0.42</span> (~40 MB, no va en el APK) con <span class="cmd-say">tools\instalar-modelo-voz.ps1</span> y poner <span class="cmd-say">voice_commands: true</span> en la configuración del casco (o desde la configuración remota). La palabra de activación se cambia con <span class="cmd-say">voice_wake_word</span>.</li>
+      <li>Para proteger la batería, el reconocimiento se apaga si el casco está quieto más de <span class="cmd-say">voice_idle_off_minutes</span> (10 por defecto) y vuelve al moverse.</li>
+      <li>Con la transmisión de video con audio el casco sigue escuchando: Android 10 permite las dos capturas a la vez en este equipo. Si el micrófono compartido llegara a entregar silencio, el reconocimiento se pausa solo mientras dure esa transmisión.</li>
       <li class="cmd-warn">Avisar al personal: el casco escucha su micrófono mientras el reconocimiento está activo (Ley 25.326).</li>
     </ul>
   </section>

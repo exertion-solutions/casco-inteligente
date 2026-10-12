@@ -515,3 +515,56 @@ details.fold > summary:focus-visible { outline: 3px solid var(--accent); outline
 .login-logo { width: 140px; height: 140px; max-width: 50%; height: auto; justify-self: center; border-radius: 50%; }
 .login h2 { text-align: center; }
 .print-logo { width: 48px; height: 48px; }
+
+/* Archivados: ocultos por defecto; con el interruptor se ven atenuados */
+.arc-hidden { display: none !important; }
+.archived { opacity: .65; }
+.arc-row { padding-top: var(--sp-1); }
+.arc-note { font-size: var(--fs-1); }
+button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
+@media print { .noprint { display: none !important; } .archived { opacity: 1; } }
+
+/* ---------- Comandos de voz (pagina comandos.html y pestana Comandos del panel) ---------- */
+  .cmd-page { max-width: 1040px; margin: 0 auto; padding: var(--sp-5) var(--sp-4) var(--sp-6); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-5); }
+  .cmd-top { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+  .cmd-top a.back { display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--sp-4); border: 1px solid var(--line-strong); border-radius: var(--r); color: var(--ink); text-decoration: none; font-weight: 600; }
+  .cmd-page h1 { font-size: var(--fs-5); }
+  .cmd-page h2 { font-size: var(--fs-4); margin-bottom: var(--sp-3); }
+  .cmd-lead { font-size: var(--fs-3); color: var(--mute); max-width: 68ch; }
+  .cmd-status { display: flex; gap: var(--sp-3); align-items: flex-start; padding: var(--sp-4); background: var(--pend-tint); border: 1px solid var(--pend); border-radius: var(--r); }
+  .cmd-status > strong { color: var(--pend); }
+  .cmd-status > div { min-width: 0; }
+  .cmd-steps { margin: 0; padding-left: var(--sp-5); display: grid; gap: var(--sp-2); }
+  .cmd-steps li { padding-left: var(--sp-1); }
+  .cmd-tools { display: flex; gap: var(--sp-3); flex-wrap: wrap; align-items: center; }
+  .cmd-tools input { min-height: 44px; min-width: 0; width: 100%; flex: 1 1 220px; padding: 0 var(--sp-3); font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r); }
+  .cmd-tools button { min-height: 44px; padding: 0 var(--sp-4); font: 600 var(--fs-3)/1 var(--font-ui); color: var(--ink); background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r); cursor: pointer; }
+  .cmd-group { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: var(--sp-4); }
+  .cmd-table { width: 100%; border-collapse: collapse; }
+  .cmd-table caption { text-align: left; font-size: var(--fs-4); font-weight: 700; padding-bottom: var(--sp-3); }
+  .cmd-table th, .cmd-table td { text-align: left; vertical-align: top; padding: var(--sp-3) var(--sp-3) var(--sp-3) 0; border-top: 1px solid var(--line); }
+  .cmd-table th { font-size: var(--fs-2); color: var(--mute); font-weight: 600; }
+  .cmd-say { font-family: var(--font-mono); font-size: var(--fs-2); overflow-wrap: anywhere; }
+  .cmd-page, .cmd-group { min-width: 0; }
+  .cmd-page td, .cmd-page li, .cmd-page p { overflow-wrap: anywhere; }
+  .cmd-say b { display: block; font-weight: 500; }
+  .cmd-chip { display: inline-block; padding: 2px var(--sp-2); border-radius: 999px; font-size: var(--fs-1); font-weight: 700; border: 1px solid var(--line-strong); white-space: nowrap; }
+  .cmd-chip.ok { color: var(--ok); border-color: var(--ok); }
+  .cmd-chip.soon { color: var(--pend); border-color: var(--pend); }
+  .cmd-note { font-size: var(--fs-2); color: var(--mute); }
+  .cmd-warn { color: var(--sos); font-weight: 700; }
+  tr[hidden] { display: none; }
+  @media (max-width: 720px) {
+    .cmd-table thead { display: none; }
+    .cmd-table, .cmd-table tbody, .cmd-table tr, .cmd-table td { display: block; width: 100%; }
+    .cmd-table tr { padding: var(--sp-3) 0; border-top: 1px solid var(--line); }
+    .cmd-table td { border: 0; padding: var(--sp-1) 0; }
+    .cmd-table td::before { content: attr(data-l); display: block; font-size: var(--fs-1); color: var(--mute); text-transform: uppercase; letter-spacing: .04em; }
+  }
+  @media print { .cmd-tools, .cmd-top a.back { display: none; } }
+#cmdHost .cmd-page { padding: 0; max-width: none; }
+#cmdHost .cmd-top h2 { font-size: var(--fs-5); }
+/* barra de pestanas deslizable cuando no entran (movil / tira) */
+.nav { overflow-x: auto; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+@media (max-width: 1023px) { .nav [role="tab"] { flex: 1 0 60px; } }

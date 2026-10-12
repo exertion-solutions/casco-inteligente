@@ -1379,10 +1379,10 @@
       ul.querySelectorAll(':scope > li.empty').forEach(n => n.remove());
       if (!ul.children.length) { const li = mk('li', 'empty mute', msg); ul.append(li); }
     }
-    $('doneCount').textContent = String($('feedDone').querySelectorAll(':scope > li:not(.empty)').length);
+    $('doneCount').textContent = String($('feedDone').querySelectorAll(':scope > li:not(.empty):not(.arc-hidden)').length);   // los archivados no cuentan
   }
   // [UI] Centro y En vivo comparten el panel principal (data-view cambia el foco del layout).
-  const TABS = [['main', 'tabMain', 'panelMain'], ['live', 'tabLive', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['done', 'tabDone', 'panelDone'], ['rep', 'tabRep', 'panelRep']];
+  const TABS = [['main', 'tabMain', 'panelMain'], ['live', 'tabLive', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['done', 'tabDone', 'panelDone'], ['rep', 'tabRep', 'panelRep'], ['cmd', 'tabCmd', 'panelCmd']];
   // Aviso en la insignia de Historial: eventos u ordenes nuevas mientras se mira otra pestaña.
   let histNew = 0;
   function bumpHist() {
@@ -1404,6 +1404,8 @@
     if (name === 'map') ensureMap();
     if (name === 'eq') renderEq();
     if (name === 'rep') repQ.show();
+    if (name === 'cmd') loadCmdPanel();
+    const selTab = $(act[1]); if (selTab && selTab.scrollIntoView) selTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });   // barra deslizable
     if (name === 'done') { histNew = 0; $('navHistNew').classList.add('hidden'); $('histLive').textContent = ''; }
   }
   for (const [k, t] of TABS) $(t).addEventListener('click', () => showTab(k));
@@ -1422,6 +1424,7 @@
     if (li) {
       renderAction({ id: ack.event_id });
       $('feedDone').prepend(li);   // el SOS atendido sale de la pagina principal
+      if (arcOk()) arcCard(li, true);
     }
     syncEmpty();
     refreshBanner();
@@ -1470,7 +1473,7 @@
     if (cards.has(ev.id)) return false;
     const li = document.createElement('li');
     li.className = 'card ev t-' + ev.type;
-    li.dataset.id = ev.id;
+    li.dataset.id = ev.id; li.dataset.att = needsAttention(ev) ? '1' : '';
     cards.set(ev.id, li);
     if (ev.type === 'equip') noteEquip(ev);
     if (ev.type === 'photo') notePhoto(ev);
@@ -1496,6 +1499,7 @@
     const feed = (needsAttention(ev) && acks.has(ev.id)) ? $('feedDone') : $('feed');
     place(feed, li, new Date(ev.created_at).getTime() || 0);
     trimList(feed, feed === $('feed') ? FEED_MAX : FEED_DONE_MAX);
+    if (arcOk()) arcCard(li, feed === $('feedDone'));
     syncEmpty();
     if (needsAttention(ev)) {
       if (!acks.has(ev.id)) pending.set(ev.id, ev);
@@ -3138,20 +3142,26 @@
     tta: a && a.acked_at ? Math.max(0, (new Date(a.acked_at) - new Date(e.created_at)) / 1000) : null });
   // -> { rows (<= n), more, src }. Vista incident_report si existe; si no, events + event_acks (mismo resultado).
   async function fetchPage(o, f, cur, n) {
-    if (o.view && QR.view !== 'missing') {
-      let q = sb.from('incident_report').select(RPT_COLS);
-      if (f.type) q = q.eq('type', f.type);
-      if (f.st === 'ack') q = q.not('acked_at', 'is', null); else if (f.st === 'pend') q = q.is('acked_at', null);
-      let r;
-      try { r = await qFilters(q, f, 'event_id', cur).limit(n + 1); } catch (e) { r = asRes(e); }
-      if (!r.error && Array.isArray(r.data)) {
-        QR.view = 'ok';
-        return { rows: r.data.slice(0, n).map(normView), more: r.data.length > n, src: 'vista' };
-      }
-      if (tableMissing(r)) QR.view = 'missing'; else throw r.error || new Error('sin datos');
-    }
     const out = [];
-    let c = cur, exhausted = false;
+    let c = cur, exhausted = false, viaView = false;
+    if (o.view && QR.view !== 'missing') {
+      for (let g = 0; g < 8 && out.length <= n && !exhausted; g++) {
+        let q = sb.from('incident_report').select(RPT_COLS);
+        if (f.type) q = q.eq('type', f.type);
+        if (f.st === 'ack') q = q.not('acked_at', 'is', null); else if (f.st === 'pend') q = q.is('acked_at', null);
+        let r;
+        try { r = await qFilters(q, f, 'event_id', c).limit(n + 1); } catch (e) { r = asRes(e); }
+        if (r.error || !Array.isArray(r.data)) {
+          if (g === 0 && tableMissing(r)) { QR.view = 'missing'; break; }
+          throw r.error || new Error('sin datos');
+        }
+        QR.view = 'ok'; viaView = true;
+        for (const x of r.data) { const row = normView(x); if (arcKeep(row)) out.push(row); }
+        if (r.data.length <= n) exhausted = true; else { const l = r.data[r.data.length - 1]; c = { at: l.created_at, id: l.event_id }; }
+      }
+      if (viaView) return { rows: out.slice(0, n), more: out.length > n, src: 'vista' };
+    }
+    c = cur; exhausted = false;
     for (let g = 0; g < 8 && out.length <= n && !exhausted; g++) {
       const r = await qFilters(sb.from('events').select(EV_COLS).in('type', f.type ? [f.type] : o.types), f, 'id', c).limit(n + 1);
       if (r.error) throw r.error;
@@ -3163,7 +3173,8 @@
         if ((o.alertsOnly || f.st) && !att) continue;   // reportes: solo lo que requiere Atender; el estado solo aplica a alertas
         const a = am.get(e.id);
         if ((f.st === 'ack' && !a) || (f.st === 'pend' && a)) continue;
-        out.push(normEvent(e, a));
+        const row = normEvent(e, a);
+        if (arcKeep(row)) out.push(row);
       }
       if (data.length <= n) exhausted = true; else c = { at: data[data.length - 1].created_at, id: data[data.length - 1].id };
     }
@@ -3178,11 +3189,121 @@
   const stateOf = r => (!r.att ? 'Informativo' : r.ackAt ? 'Atendida' : 'Pendiente');
   const csvRow = r => [fmtAR(r.at), r.dev, personOf.get(r.dev) || '', typeLbl(r.type), detailOf(r),
     llOk(r.lat, r.lng) ? String(r.lat).replace('.', ',') : '', llOk(r.lat, r.lng) ? String(r.lng).replace('.', ',') : '',
-    stateOf(r), r.ackBy, r.ackAt ? fmtAR(r.ackAt) : '', r.note, r.tta != null ? Math.round(r.tta) : '', r.id];
-  const CSV_HEAD = ['fecha', 'casco', 'persona', 'tipo', 'detalle', 'latitud', 'longitud', 'estado', 'atendio_por', 'fecha_atencion', 'nota', 'segundos_hasta_atender', 'id_evento'];
+    stateOf(r), r.ackBy, r.ackAt ? fmtAR(r.ackAt) : '', r.note, r.tta != null ? Math.round(r.tta) : '', r.id,
+    ARC.ids.has(r.id) ? ARC.ids.get(r.id).by : '', ARC.ids.has(r.id) ? fmtAR(ARC.ids.get(r.id).at) : ''];
+  const CSV_HEAD = ['fecha', 'casco', 'persona', 'tipo', 'detalle', 'latitud', 'longitud', 'estado', 'atendio_por', 'fecha_atencion', 'nota', 'segundos_hasta_atender', 'id_evento', 'archivado_por', 'archivado_el'];
+
+  // ---- Archivar (docs: event_archive; solo admin escribe, viewer solo mira) ----
+  // Archivar no borra: oculta de listados, contadores, CSV e impresion salvo "Mostrar archivados". Solo atendidos o informativos.
+  const ARC = { ids: new Map(), avail: 'unknown', show: false, ch: null };   // event_id -> { by, at, reason }
+  const arcQueries = [];
+  const arcOk = () => ARC.avail === 'ok';
+  const arcKeep = r => !arcOk() || ARC.show || !ARC.ids.has(r.id);
+  const arcWho = rec => 'Archivado por ' + (rec.by || 'un administrador') + (rec.at ? ' el ' + fmtAR(rec.at) : '');
+  const PEND_TIP = 'Atendé la alerta primero';
+  function arcCard(li, done) {
+    const rec = arcOk() ? ARC.ids.get(li.dataset.id) : null;
+    li.classList.toggle('arc-hidden', !!rec && !ARC.show);
+    li.classList.toggle('archived', !!rec && ARC.show);
+    const old = li.querySelector(':scope > .arc-row'); if (old) old.remove();
+    if (!arcOk()) return;
+    const row = mk('div', 'row arc-row');
+    if (rec) {
+      if (!ARC.show) return;
+      row.append(mk('span', 'mute', arcWho(rec)));
+      if (isAdmin()) row.append(btn('Desarchivar', 'ghost', () => arcRun(() => unarchiveEvent(li.dataset.id)), 'Desarchivar el evento'));
+    } else if (isAdmin()) {
+      const pend = !done && li.dataset.att === '1';
+      const b = mk('button', 'ghost', 'Archivar'); b.type = 'button';
+      b.setAttribute('aria-label', 'Archivar el evento');
+      if (pend) { b.setAttribute('aria-disabled', 'true'); b.title = PEND_TIP; }
+      else b.addEventListener('click', () => arcRun(() => askArchive([li.dataset.id])));
+      row.append(b);
+    } else return;
+    li.append(row);
+  }
+  function arcCards() {
+    for (const ul of [$('feed'), $('feedDone')]) for (const li of ul.children) if (li.dataset && li.dataset.id) arcCard(li, ul.id === 'feedDone');
+  }
+  function arcUi() {
+    document.querySelectorAll('.arc-toggle-l').forEach(l => l.classList.toggle('hidden', !arcOk()));
+    document.querySelectorAll('.arc-toggle').forEach(c => { c.checked = ARC.show; });
+    arcCards(); syncEmpty();
+    if (lastEv && arcOk() && !ARC.show && ARC.ids.has(String(lastEv.id))) { lastEv = null; $('kpiLast').textContent = '—'; $('kpiLastWhen').textContent = ''; }
+    arcQueries.forEach(q => q.repaint());
+  }
+  async function arcRun(fn) {
+    const m = await fn();
+    if (m) { $('status').textContent = m; announce(m); }
+  }
+  async function archiveEvents(ids, reason) {
+    const rows = ids.map(id => ({ event_id: id, reason: reason || null }));
+    let res;
+    try { res = await sb.from('event_archive').upsert(rows, { onConflict: 'event_id', ignoreDuplicates: true }); } catch (e) { res = asRes(e); }
+    if (tableMissing(res)) { ARC.avail = 'missing'; arcUi(); return MISSING_TXT; }
+    if (res.error) {
+      if (isAuthErr(res.error)) { sessionExpired(); return 'Sesión vencida.'; }
+      return noPerm(res.error) ? 'Sin permiso: solo un administrador puede archivar.' : 'El servidor no permitió archivar: ' + String(res.error.message || 'error').slice(0, 120);
+    }
+    const email = $('who').dataset.email || '', at = new Date().toISOString();
+    ids.forEach(id => ARC.ids.set(id, { by: email, at, reason: reason || '' }));
+    arcUi(); announce(ids.length + (ids.length === 1 ? ' evento archivado.' : ' eventos archivados.'));
+    return '';
+  }
+  async function askArchive(ids) {
+    if (!isAdmin() || !ids.length) return '';
+    const reason = inp('text', '', { maxLength: 200, autocomplete: 'off' });
+    const ok = await askConfirm('¿Archivar ' + ids.length + (ids.length === 1 ? ' evento' : ' eventos') + '?',
+      [mk('p', '', 'Dejan de verse en Historial y Reportes (con “Mostrar archivados” se ven y se pueden desarchivar). El registro no se borra.'),
+        fld('Motivo (opcional, hasta 200 caracteres)', reason)], 'Sí, archivar', false);
+    return ok ? archiveEvents(ids, reason.value.trim().replace(/\s+/g, ' ')) : '';
+  }
+  async function unarchiveEvent(id) {
+    if (!isAdmin()) return '';
+    let res;
+    try { res = await sb.from('event_archive').delete().eq('event_id', id); } catch (e) { res = asRes(e); }
+    if (tableMissing(res)) { ARC.avail = 'missing'; arcUi(); return MISSING_TXT; }
+    if (res.error) return noPerm(res.error) ? 'Sin permiso: solo un administrador puede desarchivar.' : 'No se pudo desarchivar: ' + String(res.error.message || 'error').slice(0, 120);
+    ARC.ids.delete(id); arcUi(); announce('Evento desarchivado.');
+    return '';
+  }
+  async function loadArchive() {
+    const m = new Map();
+    try {
+      for (let from = 0; from < 5000; from += 1000) {
+        const r = await sb.from('event_archive').select('event_id,archived_by_email,archived_at,reason').order('archived_at', { ascending: false }).range(from, from + 999);
+        if (tableMissing(r)) { ARC.avail = 'missing'; ARC.ids.clear(); arcUi(); return; }
+        if (r.error || !Array.isArray(r.data)) { if (isAuthErr(r.error)) sessionExpired(); return; }
+        r.data.forEach(a => m.set(String(a.event_id), { by: a.archived_by_email || '', at: a.archived_at, reason: a.reason || '' }));
+        if (r.data.length < 1000) break;
+      }
+      ARC.ids = m; ARC.avail = 'ok'; ensureArcChannel();
+    } catch (_) { return; }
+    arcUi();
+  }
+  function ensureArcChannel() {
+    if (ARC.ch) return;
+    ARC.ch = sb.channel('archive-feed')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_archive' }, p => {
+        const a = p.new; if (!a || !a.event_id) return;
+        ARC.ids.set(String(a.event_id), { by: a.archived_by_email || '', at: a.archived_at, reason: a.reason || '' }); arcUi();
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'event_archive' }, p => {
+        const a = p.old; if (!a || !a.event_id) return;
+        ARC.ids.delete(String(a.event_id)); arcUi();
+      })
+      .subscribe(resubscribed(() => loadArchive()));
+  }
+  document.addEventListener('change', e => {
+    const t = e.target;
+    if (!t || !t.classList || !t.classList.contains('arc-toggle')) return;
+    ARC.show = !!t.checked;
+    arcUi();
+    arcQueries.forEach(q => q.restart());
+  });
 
   function buildQuery(host, o) {
-    const st = { cursors: [null], page: 0, rows: [], more: false, busy: false, applied: null, loaded: false, src: '' };
+    const st = { cursors: [null], page: 0, rows: [], more: false, busy: false, again: false, applied: null, loaded: false, src: '', sel: new Set() };
     const form = mk('form', 'qform'); form.noValidate = true;
     const inFrom = inp('date', ymdAgo(7)), inTo = inp('date', ymdAgo(0));
     const selDev = sel([['', 'Todos los cascos']], ''), selType = sel([['', 'Todos los tipos'], ...o.types.map(t => [t, typeLbl(t)])], '');
@@ -3192,7 +3313,9 @@
     const bGo = mk('button', '', 'Buscar'); bGo.type = 'submit';
     const bCsv = mk('button', 'ghost', 'Exportar CSV'); bCsv.type = 'button';
     const bPrint = mk('button', 'ghost', 'Imprimir / PDF'); bPrint.type = 'button';
-    const acts = rowOf(bGo, bCsv, bPrint);
+    const tl = mk('label', 'chk arc-toggle-l hidden'), tc = mk('input', 'arc-toggle'); tc.type = 'checkbox'; tc.checked = ARC.show; tl.append(tc, 'Mostrar archivados');
+    const bArch = mk('button', 'ghost hidden', 'Archivar seleccionados (0)'); bArch.type = 'button';
+    const acts = rowOf(bGo, bCsv, bPrint, tl, bArch);
     const err = mk('div', 'err'); err.setAttribute('role', 'alert');
     form.append(g, acts, err);
     const stat = mk('p', 'mute'); stat.setAttribute('role', 'status');
@@ -3200,7 +3323,6 @@
     const table = mk('table', 'qtable');
     const cap = mk('caption', 'sr-only', o.title); table.append(cap);
     const head = mk('thead'), hr = mk('tr');
-    for (const h of ['Fecha', 'Casco', 'Tipo', 'Detalle', 'Ubicación', 'Estado', 'Atendió', 'Nota', 'Hasta atender']) { const th = mk('th', '', h); th.scope = 'col'; hr.append(th); }
     head.append(hr);
     const body = mk('tbody');
     table.append(head, body);
@@ -3213,7 +3335,7 @@
     const setStat = (t, bad) => { stat.textContent = t; stat.classList.toggle('bad', !!bad); };
     const filters = () => ({ from: inFrom.value, to: inTo.value, dev: selDev.value, type: selType.value, st: selSt.value });
     const describe = f => 'Desde ' + (f.from || '—') + ' hasta ' + (f.to || '—') + ' · casco: ' + (f.dev ? label(f.dev) : 'todos') + ' · tipo: ' + (f.type ? typeLbl(f.type) : 'todos') +
-      ' · estado: ' + (f.st === 'ack' ? 'atendidas' : f.st === 'pend' ? 'pendientes' : 'todas');
+      ' · estado: ' + (f.st === 'ack' ? 'atendidas' : f.st === 'pend' ? 'pendientes' : 'todas') + (ARC.show ? ' · con archivados' : '');
     const fillDevs = () => {
       const ids = knownDevices(), sig = ids.map(label).join('|');
       if (selDev.dataset.sig === sig) return;
@@ -3222,32 +3344,77 @@
       selDev.replaceChildren(new Option('Todos los cascos', ''), ...ids.map(i => new Option(label(i), i)));
       selDev.value = ids.includes(cur) ? cur : '';
     };
+    const archivable = r => !r.att || !!r.ackAt;
     function paint() {
+      const adm = isAdmin() && arcOk();
+      const cols = ['Fecha', 'Casco', 'Tipo', 'Detalle', 'Ubicación', 'Estado', 'Atendió', 'Nota', 'Hasta atender'];
+      const ths = [];
+      if (adm) {
+        const th = mk('th', 'noprint'); th.scope = 'col';
+        const all = mk('input'); all.type = 'checkbox'; all.setAttribute('aria-label', 'Seleccionar todas las filas que se pueden archivar');
+        const cand = st.rows.filter(r => archivable(r) && !ARC.ids.has(r.id));
+        all.checked = cand.length > 0 && cand.every(r => st.sel.has(r.id)); all.disabled = !cand.length;
+        all.addEventListener('change', () => { cand.forEach(r => (all.checked ? st.sel.add(r.id) : st.sel.delete(r.id))); paint(); });
+        th.append(all); ths.push(th);
+      }
+      for (const h of cols) { const th = mk('th', '', h); th.scope = 'col'; ths.push(th); }
+      if (adm) { const th = mk('th', 'noprint', 'Archivo'); th.scope = 'col'; ths.push(th); }
+      hr.replaceChildren(...ths);
       const rows = st.rows.map(r => {
-        const tr = mk('tr', r.att && !r.ackAt ? 'pend' : '');
+        const rec = arcOk() ? ARC.ids.get(r.id) : null;
+        const tr = mk('tr', (r.att && !r.ackAt ? 'pend' : '') + (rec ? ' archived' : ''));
         const c = (t, cls) => { const td = mk('td', cls || '', t); tr.append(td); return td; };
+        if (adm) {
+          const td = mk('td', 'noprint'), cb = mk('input'); cb.type = 'checkbox';
+          cb.setAttribute('aria-label', 'Seleccionar para archivar la fila del ' + fmtAR(r.at) + ' del casco ' + r.dev);
+          cb.disabled = !!rec || !archivable(r); cb.checked = st.sel.has(r.id);
+          cb.addEventListener('change', () => { if (cb.checked) st.sel.add(r.id); else st.sel.delete(r.id); updSel(); });
+          td.append(cb); tr.append(td);
+        }
         c(fmtAR(r.at), 'mono'); c(label(r.dev)); c(typeLbl(r.type)); c(detailOf(r) || '—');
         c(llOk(r.lat, r.lng) ? coordTxt(r.lat, r.lng) : '—', 'mono');
-        c(stateOf(r), r.att && !r.ackAt ? 'bad' : '');
+        const sc = c(stateOf(r), r.att && !r.ackAt ? 'bad' : '');
+        if (rec) sc.append(mk('div', 'mute arc-note', arcWho(rec)));
         c(r.ackBy ? r.ackBy + (r.ackAt ? ' · ' + fmtAR(r.ackAt) : '') : '—'); c(r.note || '—');
         c(r.tta != null ? clock(r.tta) : '—', 'mono');
+        if (adm) {
+          const td = mk('td', 'noprint');
+          if (rec) td.append(btn('Desarchivar', 'ghost', async () => { const m = await unarchiveEvent(r.id); if (m) setStat(m, true); }, 'Desarchivar la fila del ' + fmtAR(r.at) + ' del casco ' + r.dev));
+          else {
+            const b = mk('button', 'ghost', 'Archivar'); b.type = 'button';
+            b.setAttribute('aria-label', 'Archivar la fila del ' + fmtAR(r.at) + ' del casco ' + r.dev);
+            if (!archivable(r)) { b.setAttribute('aria-disabled', 'true'); b.title = PEND_TIP; }
+            else b.addEventListener('click', async () => { const m = await askArchive([r.id]); if (m) setStat(m, true); });
+            td.append(b);
+          }
+          tr.append(td);
+        }
         return tr;
       });
       body.replaceChildren(...(rows.length ? rows : [(() => {
         const tr = mk('tr'), td = mk('td', 'empty mute', st.applied ? 'Sin resultados para estos filtros.' : 'Elegí los filtros y tocá Buscar.');
-        td.colSpan = 9; tr.append(td); return tr;
+        td.colSpan = cols.length + (adm ? 2 : 0); tr.append(td); return tr;
       })()]));
       const a = st.page * PAGE_N;
       pageTxt.textContent = st.rows.length ? 'Página ' + (st.page + 1) + ' · filas ' + (a + 1) + ' a ' + (a + st.rows.length) : 'Página ' + (st.page + 1);
       bPrev.disabled = st.busy || st.page === 0; bNext.disabled = st.busy || !st.more;
       bCsv.disabled = bPrint.disabled = st.busy || !st.rows.length;
+      bArch.classList.toggle('hidden', !adm);
+      updSel();
+    }
+    function updSel() {
+      const ids = [...st.sel].filter(id => st.rows.some(r => r.id === id));
+      bArch.textContent = 'Archivar seleccionados (' + ids.length + ')';
+      bArch.disabled = st.busy || !ids.length;
     }
     async function load(page) {
-      if (st.busy || !st.applied) return;
+      if (!st.applied) return;
+      if (st.busy) { st.again = true; return; }
       st.busy = true; setStat('Cargando…'); paint();
       try {
         const r = await fetchPage(o, st.applied, st.cursors[page], PAGE_N);
         st.page = page; st.rows = r.rows; st.more = r.more; st.src = r.src; st.loaded = true;
+        st.sel = new Set([...st.sel].filter(id => r.rows.some(x => x.id === id)));
         if (r.more) { const l = r.rows[r.rows.length - 1]; st.cursors[page + 1] = { at: l.at, id: l.id }; }
         setStat((r.rows.length ? '' : 'Sin resultados. ') + (o.view && r.src === 'eventos' ? 'La vista de reportes del servidor todavía no está disponible: se calcula desde los eventos.' : ''));
       } catch (e) {
@@ -3259,16 +3426,22 @@
         }
       }
       st.busy = false; paint();
+      if (st.again) { st.again = false; load(st.page); }
     }
     form.addEventListener('submit', e => {
       e.preventDefault(); err.textContent = '';
       const f = filters();
       if (f.from && f.to && f.from > f.to) { err.textContent = 'La fecha Desde es posterior a Hasta.'; return; }
-      st.applied = f; st.cursors = [null]; st.page = 0;
+      st.applied = f; st.cursors = [null]; st.page = 0; st.sel.clear();
       load(0);
     });
     bPrev.addEventListener('click', () => load(st.page - 1));
     bNext.addEventListener('click', () => load(st.page + 1));
+    bArch.addEventListener('click', async () => {
+      const ids = [...st.sel].filter(id => st.rows.some(r => r.id === id)).slice(0, PAGE_N);
+      const m = await askArchive(ids);
+      if (m) setStat(m, true); else st.sel.clear();
+    });
     bPrint.addEventListener('click', () => {
       printH.textContent = o.title + ' · ' + describe(st.applied || filters()) + ' · generado ' + fmtAR(new Date().toISOString()) + ' (hora de Argentina) · página ' + (st.page + 1);
       window.print();
@@ -3288,19 +3461,63 @@
           const l = r.rows[r.rows.length - 1]; cur = { at: l.at, id: l.id };
         }
         csvDownload(o.csv + '_' + today() + '.csv', CSV_HEAD, all.map(csvRow));
-        setStat('CSV exportado: ' + all.length + ' filas' + (trunc ? ' (tope de ' + CSV_PAGE * CSV_MAX_PAGES + ': acotá las fechas para ver el resto)' : '') + '.');
+        setStat('CSV exportado: ' + all.length + ' filas' + (ARC.show ? ' (con archivados)' : '') + (trunc ? ' (tope de ' + CSV_PAGE * CSV_MAX_PAGES + ': acotá las fechas para ver el resto)' : '') + '.');
       } catch (e) { setStat('No se pudo exportar: ' + String((e && e.message) || 'error') + '.', true); }
       st.busy = false; paint();
     });
     paint();
-    return {
-      show() { fillDevs(); if (!st.applied) { st.applied = filters(); load(0); } },
-      reset() { st.applied = null; st.rows = []; st.more = false; st.cursors = [null]; st.page = 0; setStat(''); paint(); },
+    const q = {
+      show() { fillDevs(); if (!st.applied) { st.applied = filters(); load(0); } else paint(); },
+      reset() { st.applied = null; st.rows = []; st.more = false; st.cursors = [null]; st.page = 0; st.sel.clear(); setStat(''); paint(); },
+      repaint() { if (st.applied && st.loaded) load(st.page); else paint(); },   // cambio un archivo: se vuelve a leer la pagina actual
+      restart() { if (st.applied && st.loaded) { st.cursors = [null]; st.sel.clear(); load(0); } else paint(); },
     };
+    arcQueries.push(q);
+    return q;
   }
   const repQ = buildQuery($('repHost'), { title: 'Reporte de incidentes', csv: 'reporte_incidentes', types: ALERT_TYPES, view: true, alertsOnly: true });
   const histQ = buildQuery($('histQuery'), { title: 'Historial de eventos', csv: 'historial_eventos', types: HIST_TYPES, view: false, alertsOnly: false });
   $('histSearch').addEventListener('toggle', () => { if ($('histSearch').open) histQ.show(); });
+
+  // ---- Pestaña Comandos: fuente unica comandos.html (se carga una vez, ids con prefijo para no chocar) ----
+  let cmdState = 'idle';
+  async function loadCmdPanel() {
+    if (cmdState === 'loading' || cmdState === 'ready') return;
+    cmdState = 'loading';
+    const host = $('cmdHost');
+    try {
+      const r = await fetch('comandos.html', { cache: 'no-cache' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+      const src = doc.querySelector('main.cmd-page');
+      if (!src) throw new Error('sin contenido');
+      const box = document.importNode(src, true);
+      box.querySelectorAll('script, .cmd-top .back').forEach(n => n.remove());
+      box.querySelectorAll('[id]').forEach(n => { n.id = 'cmdp-' + n.id; });
+      box.querySelectorAll('[aria-labelledby]').forEach(n => n.setAttribute('aria-labelledby', n.getAttribute('aria-labelledby').split(/\s+/).map(x => 'cmdp-' + x).join(' ')));
+      box.querySelectorAll('label[for]').forEach(n => n.setAttribute('for', 'cmdp-' + n.getAttribute('for')));
+      const h1 = box.querySelector('h1');
+      if (h1) { const h2 = mk('h2', '', h1.textContent); h1.replaceWith(h2); }
+      const div = mk('div', box.className); div.append(...box.childNodes);   // sin un segundo <main>
+      host.className = ''; host.replaceChildren(div);
+      const norm = t => String(t).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const rows = [...div.querySelectorAll('.cmd-table tbody tr')];
+      rows.forEach(rw => { rw._t = norm((rw.getAttribute('data-k') || '') + ' ' + rw.textContent); });
+      const q = div.querySelector('#cmdp-q'), pr = div.querySelector('#cmdp-print');
+      if (q) q.addEventListener('input', () => { const v = norm(q.value.trim()); rows.forEach(rw => { rw.hidden = !!v && rw._t.indexOf(v) < 0; }); });
+      if (pr) pr.addEventListener('click', () => window.print());
+      cmdState = 'ready';
+    } catch (e) {
+      cmdState = 'idle';
+      const rb = mk('button', 'ghost', 'Reintentar'); rb.type = 'button'; rb.addEventListener('click', loadCmdPanel);
+      const a2 = mk('a', 'btn', 'Abrir la guía en otra página'); a2.href = 'comandos.html';
+      host.className = ''; host.replaceChildren(mk('p', 'err', 'No se pudo cargar la guía de comandos (' + ((e && e.message) || 'error') + ').'), rowOf(rb, a2));
+    }
+  }
+  $('cmdLink').addEventListener('click', e => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button || $('app').classList.contains('hidden')) return;
+    e.preventDefault(); showTab('cmd');
+  });
 
   // ---- Roles en la UI (el servidor tambien lo exige por RLS): admin hace todo; supervisor (viewer) mira, atiende y manda mensajes ----
   function applyRole() {
@@ -3321,6 +3538,8 @@
     if (CMD.ch) { try { sb.removeChannel(CMD.ch); } catch (_) {} CMD.ch = null; }
     photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear();
     QR.view = 'unknown'; repQ.reset(); histQ.reset();
+    ARC.ids.clear(); ARC.avail = 'unknown'; ARC.show = false;
+    if (ARC.ch) { try { sb.removeChannel(ARC.ch); } catch (_) {} ARC.ch = null; }
   }
 
   // ---- Sesion vencida: aviso fijo + volver al login (el feed queda a la vista, sin perderlo en silencio) ----
@@ -3443,7 +3662,7 @@
         scheduleRender(R_DEV);
         if (ev.lat != null && ev.lng != null) noteLoc(ev);
         if (needsAttention(ev) && !cards.has(ev.id) && !acks.has(ev.id)) alertSos(ev);
-        if (!cards.has(ev.id)) bumpHist();
+        if (!cards.has(ev.id) && !(arcOk() && ARC.ids.has(String(ev.id)))) bumpHist();
         render(ev);
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_acks' }, p => applyAck(p.new))
@@ -3483,7 +3702,7 @@
       $('pendList').replaceChildren(eb); $('pendBox').removeAttribute('aria-busy');
       return;
     }
-    loadEscalation(); loadBroadcasts(); loadGeo();
+    loadEscalation(); loadBroadcasts(); loadGeo(); loadArchive();
     (async () => {   // cascos y posiciones por casco: primero se conocen los registrados
       await Promise.allSettled([loadEquipos()]);
       await loadDevices();

@@ -54,7 +54,7 @@ const REP = Array.from({ length: 120 }, (_, i) => ({ event_id: 'r' + String(i).p
   lat: -34.6 - i / 10000, lng: -58.4, acked_at: i % 3 === 0 ? iso((i + 1) * 3600000 - 95000) : null, acked_by_email: i % 3 === 0 ? 'sup@demo.test' : null,
   note: i % 3 === 0 ? 'Nota; con punto y coma' : null, tta_s: i % 3 === 0 ? 95 : null }));
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
-const NEWT = ['device_commands', 'device_command_acks', 'device_config', 'incident_report'];
+const NEWT = ['device_commands', 'device_command_acks', 'device_config', 'incident_report', 'event_archive'];
 const devicesT = [
   { device_id: '4132', name: 'Casco Perforación', model: 'rd_aqm6816', group_id: 'g1', sector: 'Pozo 12', status: 'activo', imei: '860000000000001' },
   { device_id: '4133', name: 'Casco Mantenimiento', model: 'rd_aqm6816', group_id: 'g1', sector: 'Planta', status: 'activo' },
@@ -93,11 +93,18 @@ async function mock(ctx, opts = {}) {
     if (req.method() !== 'GET' && req.method() !== 'HEAD') {
       let body = null; try { body = JSON.parse(req.postData() || 'null'); } catch {}
       (S.posts = S.posts || []).push({ t, method: req.method(), body });
+      if (t === 'event_archive') {
+        S.arch = S.arch || [];
+        if (req.method() === 'DELETE') { const id = (u.searchParams.get('event_id') || '').replace('eq.', ''); S.arch = S.arch.filter(x => x.event_id !== id); return route.fulfill({ status: 204, headers: CORS }); }
+        for (const b of (Array.isArray(body) ? body : [])) if (!S.arch.some(x => x.event_id === b.event_id)) S.arch.push({ event_id: b.event_id, archived_by_email: 'supervisor@demo.test', archived_at: new Date().toISOString(), reason: b.reason });
+        return route.fulfill({ status: 201, headers: CORS });
+      }
       if (t === 'device_commands') { const n = (S.cmdSeq = (S.cmdSeq || 0) + 1); return json({ id: 'cmd-' + n, created_at: new Date().toISOString() }, 201); }
       if (t === 'broadcasts') return json({ id: 'bc-' + Date.now(), kind: body.kind, message: body.message, device_ids: body.device_ids, repeat: body.repeat, created_at: new Date().toISOString(), created_by_email: 'supervisor@demo.test' }, 201);
       return json(req.method() === 'POST' ? [{ id: 'new' }] : [], 201);
     }
     const q = u.search;
+    if (t === 'event_archive') return json((S.arch || []).slice());
     if (t === 'device_command_acks') {
       const ids = ((u.searchParams.get('command_id') || '').match(/[\w-]+/g) || []).slice(1);
       return json((S.acks || []).filter(a => ids.includes(a.command_id)));
@@ -230,6 +237,8 @@ for (const scheme of process.env.ONLYFIX ? [] : ['dark', 'light']) {
     await shot(page, `${TAG}-historial-${sz}-${scheme}`);
     const hist = await page.evaluate(() => ({ items: document.querySelectorAll('#feedDone > li:not(.empty)').length, rules: document.querySelectorAll('#feedDone .rulebox').length, count: document.getElementById('doneCount').textContent }));
     log(`[${scheme} ${sz}] historial`, JSON.stringify(hist));
+    await page.click('#tabCmd'); await page.waitForSelector('#cmdp-q', { timeout: 8000 }); await page.waitForTimeout(150);
+    if (sz === '375') await shot(page, `${TAG}-comandos-tab-${sz}-${scheme}`);
     const ov = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
     if (ov) errors.push(`[${scheme} ${sz}] horizontal overflow in a tab`);
 
@@ -549,7 +558,7 @@ if (!process.env.ONLY4) {
   await page.selectOption('#repHost select >> nth=2', 'pend');
   await page.locator('#repHost button[type=submit]').click();
   await waitFor(async () => /Página 1/.test(await page.locator('#repHost .pager').innerText()));
-  const cells = await page.evaluate(() => [...document.querySelectorAll('#repHost tbody tr')].map(r => [r.children[2].textContent, r.children[5].textContent]));
+  const cells = await page.evaluate(() => [...document.querySelectorAll('#repHost tbody tr')].map(r => [r.children[3].textContent, r.children[6].textContent]));
   check(cells.length > 0 && cells.every(c => c[0] === 'SOS' && c[1] === 'Pendiente'), 't4: filtros tipo=SOS y estado=pendientes (' + cells.length + ' filas)');
   await page.selectOption('#repHost select >> nth=2', '');
   await page.selectOption('#repHost select >> nth=1', '');
@@ -647,6 +656,105 @@ if (!process.env.ONLY4) {
   const bad = cerr.filter(x => !/Failed to load resource.*404|tile\.openstreetmap|fonts\.g|ERR_|favicon|sslip\.io\/live/.test(x));
   check(bad.length === 0, 't4 sin tablas: sin errores de consola salvo los 404 de recurso (' + cerr.length + ' 404, otros: ' + bad.join(' | ').slice(0, 150) + ')');
   check((state.hits || []).length <= 8, 't4 sin tablas: pocos pedidos a tablas inexistentes (' + (state.hits || []).length + ')');
+  await ctx.close();
+}
+
+// ---- 7) Archivar (event_archive): admin archiva/desarchiva, viewer solo mira, tabla ausente degrada, CSV excluye ----
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, state });
+  await closeOv(page);
+  await page.click('#tabRep');
+  check(await waitFor(async () => (await page.locator('#repHost tbody tr').count()) === 50), 'arc: reportes cargan 50 filas');
+  check(await waitFor(async () => (await page.locator('#repHost .arc-toggle-l').isVisible())), 'arc: toggle "Mostrar archivados" visible con la tabla presente');
+  const pendBtn = page.locator('#repHost tbody tr.pend button[aria-label^="Archivar la fila"]').first();
+  check((await pendBtn.getAttribute('aria-disabled')) === 'true' && /Atendé la alerta primero/.test((await pendBtn.getAttribute('title')) || ''), 'arc: Archivar deshabilitado en pendientes con tooltip');
+  const okRow = page.locator('#repHost tbody tr:not(.pend)').first();
+  const when0 = await okRow.locator('td').nth(1).innerText();
+  await okRow.locator('button[aria-label^="Archivar la fila"]').click();
+  await page.locator('dialog[open] input[type=text]').fill('limpieza de turno');
+  await page.locator('dialog[open] button', { hasText: 'Sí, archivar' }).click();
+  check(await waitFor(() => (state.arch || []).length === 1 && state.arch[0].reason === 'limpieza de turno'), 'arc: archivar una fila inserta en event_archive con motivo');
+  check(await waitFor(async () => !(await page.locator('#repHost tbody').innerText()).includes(when0)), 'arc: la fila archivada desaparece del listado');
+  const boxes = page.locator('#repHost tbody tr:not(.pend) input[type=checkbox]:not(:disabled)');
+  for (let i = 0; i < 3; i++) await boxes.nth(i).check();
+  check(/\(3\)/.test(await page.locator('#repHost button', { hasText: 'Archivar seleccionados' }).innerText()), 'arc: contador de seleccionados');
+  await page.locator('#repHost button', { hasText: 'Archivar seleccionados' }).click();
+  await page.locator('dialog[open] button', { hasText: 'Sí, archivar' }).click();
+  check(await waitFor(() => (state.arch || []).length === 4), 'arc: un solo lote archiva 3 mas (total 4)');
+  const batchPosts = posts(state, 'event_archive').filter(x => Array.isArray(x.body) && x.body.length === 3);
+  check(batchPosts.length === 1, 'arc: el lote fue un unico INSERT de 3 filas');
+  await waitFor(async () => (await page.locator('#repHost tbody tr').count()) === 50);
+  let [csv] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }).catch(() => null), page.locator('#repHost button', { hasText: 'Exportar CSV' }).click()]);
+  let lines = csv ? fs.readFileSync(await csv.path(), 'utf8').split('\r\n').filter(Boolean) : [];
+  check(lines.length === 121 - 4, 'arc: el CSV excluye los archivados (' + lines.length + ')');
+  await page.locator('#repHost .arc-toggle').check();
+  check(await waitFor(async () => (await page.locator('#repHost tbody tr.archived').count()) >= 1), 'arc: con el toggle aparecen atenuados');
+  check(/Archivado por supervisor@demo.test el \d{2}\/\d{2}\/\d{4}/.test(await page.locator('#repHost tbody tr.archived').first().innerText()), 'arc: "Archivado por <email> el <fecha>"');
+  await shot(page, `${TAG}-arc-reportes`);
+  [csv] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }).catch(() => null), page.locator('#repHost button', { hasText: 'Exportar CSV' }).click()]);
+  lines = csv ? fs.readFileSync(await csv.path(), 'utf8').split('\r\n').filter(Boolean) : [];
+  check(lines.length === 121, 'arc: con el toggle el CSV incluye archivados (' + lines.length + ')');
+  await page.locator('#repHost tbody tr.archived').first().locator('button', { hasText: 'Desarchivar' }).click();
+  check(await waitFor(() => (state.arch || []).length === 3), 'arc: Desarchivar borra de event_archive');
+  await page.locator('#repHost .arc-toggle').uncheck();
+  await page.click('#tabDone');
+  const eq = page.locator('#feed li', { hasText: 'EQUIPO' }).first();
+  await eq.locator('button', { hasText: 'Archivar' }).click();
+  await page.locator('dialog[open] button', { hasText: 'Sí, archivar' }).click();
+  check(await waitFor(() => (state.arch || []).some(x => x.event_id === 'e-eq')), 'arc: archivar una tarjeta informativa del Historial');
+  check(await waitFor(async () => (await page.locator('#feed li.arc-hidden').count()) === 1), 'arc: la tarjeta archivada se oculta por defecto');
+  const ackedDone = await page.locator('#feedDone > li:not(.empty):not(.arc-hidden)').count();
+  check(String(ackedDone) === (await page.locator('#doneCount').innerText()), 'arc: la insignia de Historial cuenta solo no archivados (' + ackedDone + ')');
+  await ctx.close();
+}
+if (!process.env.ONLY4) {
+  const state = { arch: [{ event_id: 'e-done', archived_by_email: 'adm@demo.test', archived_at: iso(60000), reason: null }, { event_id: 'r000', archived_by_email: 'adm@demo.test', archived_at: iso(60000), reason: null }] };
+  const [ctx, page] = await newPage({ t4: true, role: 'viewer', state });
+  await closeOv(page);
+  await page.click('#tabDone');
+  check(await waitFor(async () => (await page.locator('#feedDone li.arc-hidden').count()) === 1), 'arc viewer: el atendido archivado no se ve por defecto');
+  check((await page.locator('#doneCount').innerText()) === '0', 'arc viewer: la insignia no cuenta archivados');
+  await page.locator('#panelDone > .row .arc-toggle').check();
+  check(await waitFor(async () => /Archivado por adm@demo.test/.test(await page.locator('#feedDone').innerText())), 'arc viewer: con el toggle se ve "Archivado por"');
+  check((await page.locator('#panelDone button:visible', { hasText: /Archivar|Desarchivar/ }).count()) === 0, 'arc viewer: sin botones de archivar');
+  await page.click('#tabRep');
+  await waitFor(async () => (await page.locator('#repHost tbody tr').count()) === 50);
+  check((await page.locator('#repHost button:visible', { hasText: /Archivar|Desarchivar/ }).count()) === 0 && (await page.locator('#repHost tbody input[type=checkbox]').count()) === 0, 'arc viewer: reportes sin botones ni casillas');
+  await ctx.close();
+}
+if (!process.env.ONLY4) {
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, noNew: true, state });
+  await closeOv(page);
+  await page.click('#tabRep');
+  check(await waitFor(async () => (await page.locator('#repHost tbody td.mono').count()) > 0), 'arc sin tabla: reportes cargan igual');
+  check(!(await page.locator('#repHost .arc-toggle-l').isVisible()) && (await page.locator('#repHost button:visible', { hasText: /Archivar/ }).count()) === 0, 'arc sin tabla: sin toggle ni botones de archivar');
+  await ctx.close();
+}
+
+// ---- 8) Pestaña Comandos dentro del panel ----
+if (!process.env.ONLY4) {
+  const [ctx, page] = await newPage({});
+  const perr = [];
+  page.on('pageerror', e => perr.push(e.message));
+  await closeOv(page);
+  await page.click('#cmdLink');
+  check(await page.locator('#panelCmd').isVisible() && (await page.evaluate(() => location.pathname.endsWith('index.html') || location.pathname === '/')), 'cmd: el enlace del encabezado abre la pestaña Comandos sin salir de la pagina');
+  await page.waitForSelector('#cmdp-q');
+  const vis = () => page.evaluate(() => [...document.querySelectorAll('#cmdHost .cmd-table tbody tr')].filter(r => r.offsetParent).length);
+  const n0 = await vis();
+  await page.fill('#cmdp-q', 'linterna');
+  await page.waitForTimeout(250);
+  const n1 = await vis();
+  check(n0 > 0 && n1 > 0 && n1 < n0, 'cmd: el buscador de la pestaña filtra (' + n0 + ' -> ' + n1 + ')');
+  check(await page.locator('#cmdHost #cmdp-t-panel').count() === 1 && await page.locator('main#main').count() === 1, 'cmd: ids con prefijo y un solo <main>');
+  await page.evaluate(() => { window.__p = 0; window.print = () => { window.__p++; }; });
+  await page.click('#cmdp-print');
+  check((await page.evaluate(() => window.__p)) === 1, 'cmd: Imprimir dentro del panel');
+  await page.focus('#tabCmd'); await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowRight');
+  check((await page.evaluate(() => document.activeElement.id)) === 'tabCmd', 'cmd: teclado llega a la pestaña Comandos');
+  check(perr.length === 0, 'cmd: sin errores de pagina');
   await ctx.close();
 }
 
