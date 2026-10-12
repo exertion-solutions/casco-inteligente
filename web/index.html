@@ -64,11 +64,12 @@
   #lives { display:grid; gap:12px; margin-bottom:12px; }
   .live { display:grid; gap:8px; }
   .live h2 { font-size:16px; margin:0; overflow-wrap:anywhere; }
-  .vwrap { position:relative; width:100%; aspect-ratio:var(--ar,4/3); max-height:70vh; background:#000; border-radius:8px; overflow:hidden; container-type:size; margin-inline:auto; }
-  .vwrap[data-rot="90"], .vwrap[data-rot="270"] { aspect-ratio:var(--arr,3/4); width:auto; height:70vh; max-width:100%; }
-  .vwrap video { position:absolute; top:50%; left:50%; width:100cqw; height:100cqh; object-fit:contain; background:#000;
-    transform:translate(-50%,-50%) rotate(var(--r,0deg)); object-view-box:var(--ovb,none); }
-  .vwrap[data-rot="90"] video, .vwrap[data-rot="270"] video { width:100cqh; height:100cqw; }
+  .vwrap { position:relative; width:100%; aspect-ratio:4/3; max-height:70vh; background:#000; border-radius:8px; overflow:hidden; container-type:size; margin-inline:auto; }
+  .vwrap[data-rot="90"], .vwrap[data-rot="270"] { aspect-ratio:3/4; width:auto; height:70vh; max-width:100%; }
+  .vwrap video, .vwrap canvas { position:absolute; top:50%; left:50%; width:100cqw; height:100cqh; object-fit:contain; background:#000;
+    transform:translate(-50%,-50%) rotate(var(--r,0deg)); }
+  .vwrap[data-rot="90"] video, .vwrap[data-rot="270"] video, .vwrap[data-rot="90"] canvas, .vwrap[data-rot="270"] canvas { width:100cqh; height:100cqw; }
+  .vwrap video.vsrc { opacity:0; pointer-events:none; }
   .vwrap .fsexit { display:none; position:absolute; top:12px; right:12px; z-index:2; background:rgba(0,0,0,.65); color:#fff; border:1px solid rgba(255,255,255,.5); }
   .vwrap:fullscreen, .vwrap:-webkit-full-screen { width:100vw; height:100vh; max-height:none; max-width:none; aspect-ratio:auto; border-radius:0; }
   .vwrap:fullscreen .fsexit, .vwrap:-webkit-full-screen .fsexit { display:block; }
@@ -127,7 +128,7 @@
 </main>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=202610120044"></script>
+<script src="config.js?v=202610120046"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -264,14 +265,28 @@
     let cropOn = hasCrop;
     try { const s = localStorage.getItem(CROP_KEY); if (s !== null) cropOn = s === '1'; } catch (_) {}
     const bCrop = mk('button', 'ghost', ''); bCrop.type = 'button';
+    const cv = mk('canvas', 'hidden'); cv.setAttribute('aria-hidden', 'true'); wrap.insertBefore(cv, video.nextSibling);
+    const ctx = cv.getContext('2d');
+    let cropRect = { l: 0, t: 0, r: 0, b: 0 }, drawing = false;
+    const useCanvas = () => cropOn && hasCrop;
+    const drawLoop = () => {
+      if (!useCanvas()) { drawing = false; return; }
+      const vw = video.videoWidth, vh = video.videoHeight;
+      if (vw && vh) {
+        const sx = Math.round(vw * cropRect.l), sy = Math.round(vh * cropRect.t);
+        const sw = Math.max(1, Math.round(vw * (1 - cropRect.l - cropRect.r))), sh = Math.max(1, Math.round(vh * (1 - cropRect.t - cropRect.b)));
+        if (cv.width !== sw || cv.height !== sh) { cv.width = sw; cv.height = sh; }
+        ctx.drawImage(video, sx, sy, sw, sh, 0, 0, sw, sh);
+      }
+      if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(drawLoop); else requestAnimationFrame(drawLoop);
+    };
     const applyCrop = () => {
       const f = v => Math.max(0, Math.min(0.6, Number(v) || 0));
-      const c = cropOn && hasCrop ? { l: f(CROP.left), t: f(CROP.top), r: f(CROP.right), b: f(CROP.bottom) } : { l: 0, t: 0, r: 0, b: 0 };
-      const pct = v => (v * 100).toFixed(1) + '%';
-      wrap.style.setProperty('--ovb', (c.l || c.t || c.r || c.b) ? 'inset(' + pct(c.t) + ' ' + pct(c.r) + ' ' + pct(c.b) + ' ' + pct(c.l) + ')' : 'none');
-      const w = (1 - c.l - c.r) * 640, hh = (1 - c.t - c.b) * 480;
-      wrap.style.setProperty('--ar', w.toFixed(1) + ' / ' + hh.toFixed(1));
-      wrap.style.setProperty('--arr', hh.toFixed(1) + ' / ' + w.toFixed(1));
+      cropRect = { l: f(CROP.left), t: f(CROP.top), r: f(CROP.right), b: f(CROP.bottom) };
+      const on = useCanvas();
+      video.classList.toggle('vsrc', on);
+      cv.classList.toggle('hidden', !on);
+      if (on && !drawing) { drawing = true; drawLoop(); }
       bCrop.textContent = 'Ocultar datos de la imagen: ' + (cropOn ? 'sí' : 'no');
       bCrop.setAttribute('aria-pressed', String(cropOn));
     };
