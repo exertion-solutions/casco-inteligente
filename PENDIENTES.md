@@ -59,3 +59,9 @@
 - Siguiente comando: `tools/instalar-agente.ps1 -Config config.local.json` (con el casco por USB) y luego VOICE_ENABLED=true en web/config.js tras desplegar turn-credentials + coturn.
 - Cargar a mano en Supabase IMEI/ICCID reales del 4132 (no al repo).
 - Al final: /ponytail:ponytail-review y /ponytail:ponytail; revocar llave SSH claude-casco-vps; rotar MEDIA_AUTH_SECRET.
+
+## Cierre 2026-10-12: rediseño publicado + review ponytail
+- Visor rediseñado en vivo (e497c54, DESIGN.md 85fd09c). URL en vivo verificada: login carga, 0 errores de consola.
+- Review ponytail: out/ponytail-review.md (20 hallazgos, ~-500 lineas). Descartados a proposito: regla de estacion (movimiento firma), confirmacion doble de evacuacion (seguridad), canvas de recorte (object-view-box fallo en prueba real).
+- Deuda aceptada para despues (sin riesgo): helper saveRow/patch en app.js, Files.copy en Android, unificar safeEqual en funciones, borrar group_members (fase 2) en 007, PS1 Leaflet por <script defer>.
+- Proximo: instalar APK 0.3.0 con casco por USB, desplegar turn-credentials + coturn, activar VOICE_ENABLED, probar de punta a punta con el casco.
