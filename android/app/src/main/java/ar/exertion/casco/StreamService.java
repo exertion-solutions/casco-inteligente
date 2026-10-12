@@ -38,7 +38,18 @@ import java.net.URLEncoder;
 public class StreamService extends Service {
     static final String ACTION_START = "ar.exertion.casco.STREAM_START";
     static final String ACTION_STOP = "ar.exertion.casco.STREAM_STOP";
+    /** Reabre la transmision en curso con/sin audio (voz: "activar audio" / "desactivar audio"). */
+    static final String ACTION_REAUDIO = "ar.exertion.casco.STREAM_REAUDIO";
     private static final String EXTRA_SOURCE = "source";
+    private static final String EXTRA_ANNOUNCE = "announce";
+
+    /**
+     * Voz ("casco, activar audio"): pisa stream_audio y la config remota hasta que el servicio se reinicia.
+     * null = sin pedido (manda RemoteConfig/config.json).
+     */
+    static volatile Boolean audioOverride;
+    /** El intento actual tiene el microfono del stream abierto (lo lee VoiceCommandAgent para no pisarlo). */
+    static volatile boolean audioActive;
     private static final String TAG = "CascoAgente";
 
     /** SRC_* actual. Escribe el hilo sh; lo lee el poll de comandos. */
@@ -93,6 +104,9 @@ public class StreamService extends Service {
         if (ACTION_START.equals(action)) {
             final int src = intent.getIntExtra(EXTRA_SOURCE, StreamPolicy.SRC_REMOTE);
             sh.post(() -> begin(src));
+        } else if (ACTION_REAUDIO.equals(action)) {
+            final String phrase = intent.getStringExtra(EXTRA_ANNOUNCE);
+            sh.post(() -> reconnectForAudio(phrase));
         } else {
             // ACTION_STOP, o reinicio sin intent: no hay nada que transmitir
             sh.post(this::shutdown);
@@ -100,7 +114,30 @@ public class StreamService extends Service {
         return START_NOT_STICKY;
     }
 
+    /** Voz: cambia audio con la transmision en curso. announce = frase al reconectar (la de AAC/sin audio). */
+    static void reaudio(Context c, String announce) {
+        try {
+            c.startForegroundService(new Intent(c, StreamService.class)
+                    .setAction(ACTION_REAUDIO).putExtra(EXTRA_ANNOUNCE, announce));
+        } catch (RuntimeException e) {
+            Log.e(TAG, "no se pudo reabrir StreamService: " + e);
+        }
+    }
+
     // ---- hilo sh ----
+
+    private String announceOnce;       // frase para el proximo "conectado" (reconexion por cambio de audio)
+
+    private void reconnectForAudio(String phrase) {
+        if (source == StreamPolicy.SRC_NONE || cfg == null) return; // nada transmitiendo: el pedido ya quedo en audioOverride
+        Log.i(TAG, "stream: cambio de audio pedido por voz, se reconecta");
+        attempt = 0;
+        audioFailed = false;
+        announced = false;
+        announceOnce = phrase;
+        sh.removeCallbacks(audioTick);
+        connect();
+    }
 
     private void begin(int src) {
         if (source == StreamPolicy.SRC_LOCAL && src == StreamPolicy.SRC_REMOTE) {
@@ -170,12 +207,14 @@ public class StreamService extends Service {
             String host = cfg.streamHost.contains(":") ? cfg.streamHost : cfg.streamHost + ":1935";
             // el microfono SOLO se abre con stream_audio=true Y transmision activa (este intento)
             boolean hasMic = checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
-            if (cfg.streamAudio && !hasMic && !permWarned) {
+            Boolean vo = audioOverride; // voz: "activar audio" / "desactivar audio" pisa la config
+            boolean cfgAudio = vo != null ? vo : RemoteConfig.streamAudio(cfg.streamAudio);
+            if (cfgAudio && !hasMic && !permWarned) {
                 permWarned = true;
                 Log.w(TAG, "stream: stream_audio=true pero falta RECORD_AUDIO: video sin audio "
                         + "(adb shell pm grant ar.exertion.casco android.permission.RECORD_AUDIO)");
             }
-            boolean wantAudio = StreamPolicy.wantAudio(cfg.streamAudio, hasMic, audioFailed);
+            boolean wantAudio = StreamPolicy.wantAudio(cfgAudio, hasMic, audioFailed);
 
             RtmpCamera2 c = new RtmpCamera2(this, new ConnectChecker() {
                 @Override public void onConnectionStarted(String u) { }
@@ -191,7 +230,10 @@ public class StreamService extends Service {
                         Log.i(TAG, "stream: RTMP conectado, transmitiendo");
                         if (!announced) {
                             announced = true;
-                            SpanishVoice.say(audioOn ? SpanishVoice.AUDIO_ON : SpanishVoice.STREAM_ON);
+                            String ph = announceOnce; // cambio de audio por voz: frase propia
+                            announceOnce = null;
+                            if (ph != null) SpanishVoice.announce(ph); // la pidio el operario: habla aunque voice_prompts=false
+                            else SpanishVoice.say(audioOn ? SpanishVoice.AUDIO_ON : SpanishVoice.STREAM_ON);
                         }
                     });
                 }
@@ -256,6 +298,7 @@ public class StreamService extends Service {
                     audioMuted = true;
                 }
             }
+            audioActive = audioOn; // VoiceCommandAgent: el microfono del stream esta (o no) abierto
             String path = StreamPolicy.ingestPath(audioOn, cfg.streamIngestPath);
             String url = "rtmp://" + host + "/" + path + "/" + cfg.deviceId + "?user=device&pass="
                     + URLEncoder.encode(token, "UTF-8"); // nunca loguear url: lleva el token
@@ -334,6 +377,7 @@ public class StreamService extends Service {
     private void releaseCamera() {
         RtmpCamera2 c;
         synchronized (this) { c = cam; cam = null; }
+        audioActive = false;
         if (c == null) return;
         try { c.stopStream(); } catch (Throwable e) { Log.w(TAG, "stream: stopStream: " + e); }
         try { if (c.isOnPreview()) c.stopCamera(); } catch (Throwable e) { Log.w(TAG, "stream: stopCamera: " + e); }
@@ -367,9 +411,10 @@ public class StreamService extends Service {
     private void goForeground() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         String ch = "casco";
-        nm.createNotificationChannel(new NotificationChannel(ch, "Casco Agente", NotificationManager.IMPORTANCE_MIN));
+        nm.createNotificationChannel(new NotificationChannel(ch, "Vigía",NotificationManager.IMPORTANCE_MIN));
         Notification n = new Notification.Builder(this, ch)
-                .setContentTitle("Casco Agente activo")
+                .setContentTitle("Vigía")
+                .setContentText("Casco transmitiendo")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .build();
         startForeground(2, n);

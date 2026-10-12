@@ -1,0 +1,158 @@
+name: Checks
+
+# Sin secretos: solo lee el repo. Cada job es independiente para ver cual falla.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  android-logic:
+    name: Android - logica pura + *Check.java (JDK 17)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Compilar y ejecutar los Check
+        shell: bash
+        run: |
+          set -euo pipefail
+          MAIN=android/app/src/main/java/ar/exertion/casco
+          TEST=android/app/src/test/java/ar/exertion/casco
+          # Logica pura = clases del casco que NO importan android/androidx/webrtc
+          # (todas las *Policy*, Outbox, HealthPayload, OrientationMath, EquipAlerts,
+          # RemoteConfig, WearMonitor y las nuevas que se agreguen sin depender de Android).
+          PURE=$(grep -L -E '^import (android|androidx|org\.webrtc|io\.getstream)|android\.' "$MAIN"/*.java)
+          echo "Clases puras:"; echo "$PURE" | sed 's|.*/|  |'
+          CHECKS=$(ls "$TEST"/*Check.java)
+          echo "Checks:"; echo "$CHECKS" | sed 's|.*/|  |'
+          # Que cada clase *Policy* y las nombradas tengan que estar entre las puras.
+          for c in Outbox HealthPayload OrientationMath; do
+            echo "$PURE" | grep -q "/$c.java" || { echo "::error::$c.java ya no es logica pura (importa Android)"; exit 1; }
+          done
+          for p in "$MAIN"/*Policy*.java; do
+            echo "$PURE" | grep -qxF "$p" || { echo "::error::$p importa Android: la logica *Policy* debe ser pura"; exit 1; }
+          done
+          OUT="$RUNNER_TEMP/casco-classes"; mkdir -p "$OUT"
+          # shellcheck disable=SC2086
+          javac -Xlint:all -d "$OUT" $PURE $CHECKS
+          fail=0
+          for f in $CHECKS; do
+            cls="ar.exertion.casco.$(basename "$f" .java)"
+            if java -ea -cp "$OUT" "$cls"; then echo "OK   $cls"; else echo "::error::FALLA $cls"; fail=1; fi
+          done
+          exit $fail
+
+  web:
+    name: Web - app.js y referencias ?v=
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: node --check
+        run: |
+          set -e
+          for f in web/app.js web/config.js; do node --check "$f"; echo "OK $f"; done
+      - name: index.html / comandos.html referencian archivos existentes
+        run: |
+          node - <<'EOF'
+          const fs = require('fs'), path = require('path');
+          let bad = 0, n = 0;
+          for (const page of fs.readdirSync('web').filter(f => f.endsWith('.html'))) {
+            const html = fs.readFileSync(path.join('web', page), 'utf8');
+            for (const m of html.matchAll(/(?:src|href)="([^"#]+)\?v=([^"]*)"/g)) {
+              n++;
+              if (/^(https?:)?\/\//.test(m[1])) continue;            // externos: no se chequean
+              if (!m[2]) { console.error(`::error::${page}: ${m[1]} tiene ?v= vacio`); bad++; continue; }
+              if (!fs.existsSync(path.join('web', m[1]))) { console.error(`::error::${page}: ${m[1]}?v=${m[2]} no existe en web/`); bad++; }
+              else console.log(`OK ${page} -> ${m[1]}?v=${m[2]}`);
+            }
+          }
+          if (!n) { console.error('::error::no se encontro ninguna referencia ?v='); bad++; }
+          process.exit(bad ? 1 : 0);
+          EOF
+
+  server-sh:
+    name: Server - sintaxis de scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: sh -n / bash -n sobre server/*.sh y server/test/*.sh
+        run: |
+          fail=0
+          for f in server/*.sh server/test/*.sh; do
+            [ -f "$f" ] || continue
+            if head -1 "$f" | grep -q bash; then bash -n "$f"; else sh -n "$f"; fi \
+              && echo "OK $f" || { echo "::error::sintaxis $f"; fail=1; }
+          done
+          exit $fail
+
+  secrets:
+    name: Sin claves service_role ni JWT largos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Buscar claves
+        run: |
+          node - <<'EOF'
+          // Falla si en un archivo versionado (menos out/) hay:
+          //  - un JWT cuyo payload dice role=service_role,
+          //  - cualquier JWT largo (>= 100 car.) cuyo role no sea "anon" (la anon key es publica por diseno),
+          //  - una clave nueva de Supabase sb_secret_...
+          // Las menciones de la palabra "service_role" en documentos/SQL son legitimas: no se marcan.
+          const { execSync } = require('child_process');
+          const fs = require('fs');
+          const files = execSync('git ls-files -z', { maxBuffer: 1 << 28 }).toString().split('\0')
+            .filter(f => f && !f.startsWith('out/') && !f.startsWith('.git/'));
+          let bad = 0;
+          for (const f of files) {
+            let t; try { t = fs.readFileSync(f); } catch { continue; }
+            if (t.includes(0)) continue;                       // binario
+            t = t.toString('utf8');
+            for (const m of t.matchAll(/eyJ[A-Za-z0-9_-]{10,}\.([A-Za-z0-9_-]{10,})(?:\.[A-Za-z0-9_-]*)?/g)) {
+              let role = null;
+              try { role = JSON.parse(Buffer.from(m[1], 'base64url').toString('utf8')).role; } catch {}
+              if (role === 'service_role' || (m[0].length >= 100 && role !== 'anon')) {
+                console.error(`::error file=${f}::JWT sospechoso (role=${role}, ${m[0].length} car.)`); bad++;
+              }
+            }
+            if (/\bsb_secret_[A-Za-z0-9_-]{20,}/.test(t)) { console.error(`::error file=${f}::clave sb_secret_ en el repo`); bad++; }
+          }
+          console.log(`${files.length} archivos revisados, ${bad} hallazgos`);
+          process.exit(bad ? 1 : 0);
+          EOF
+
+  sql:
+    name: Supabase - sintaxis de migraciones
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Parsear supabase/migrations/*.sql con libpg-query
+        run: |
+          npm install --no-save --no-audit --no-fund libpg-query@18
+          node - <<'EOF'
+          const fs = require('fs');
+          const { parse } = require('libpg-query');
+          (async () => {
+            let bad = 0;
+            const dir = 'supabase/migrations/';
+            for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.sql')).sort()) {
+              try { await parse(fs.readFileSync(dir + f, 'utf8')); console.log('OK  ' + f); }
+              catch (e) { console.error(`::error file=${dir}${f}::${e.message}`); bad++; }
+            }
+            process.exit(bad ? 1 : 0);
+          })();
+          EOF

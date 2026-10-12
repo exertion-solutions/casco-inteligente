@@ -163,6 +163,43 @@ Sin TLS en esta etapa (no se abre 5349). Usa `network_mode: host` (recomendado p
 puertos) y no choca con MediaMTX (1935, 8189) ni Caddy (80, 443). `install.sh` abre todo en `ufw`.
 **Si tu proveedor tiene firewall en el panel, abre tambien 3478 UDP/TCP y 49160-49200 UDP alli.**
 
+### Activar la voz en un VPS que ya corre el video (sin `install.sh`)
+
+Para un VPS donde MediaMTX y Caddy ya funcionan (carpeta `/root/casco/server`) y NO tiene coturn. El script
+`activar-voz.sh` solo levanta el contenedor `coturn`: no reinicia ni toca `mediamtx` ni `caddy`. Es idempotente
+(se puede correr dos veces). Para revertir: `desactivar-voz.sh`.
+
+**Paso a paso (sin conocimientos tecnicos):**
+
+1. Entra a https://my.vultr.com > **Products** > tu servidor > boton **View Console** (arriba a la derecha). Se abre una
+   pantalla negra: logueate como `root` con la clave del servidor (al escribirla no se ve nada; es normal).
+2. En la consola pega y ejecuta (Enter al final):
+   ```
+   cd /root/casco/server && curl -fsSL https://raw.githubusercontent.com/exertion-solutions/casco-inteligente/main/server/activar-voz.sh -o activar-voz.sh && sh activar-voz.sh --descargar
+   ```
+   Si el repo ya esta clonado y actualizado (`git pull`), alcanza con `sh activar-voz.sh`.
+   El modo `--descargar` baja `docker-compose.yml` y `turnserver.conf` de GitHub, **imprime el sha256 de cada archivo** (comparalo con
+   `Get-FileHash server\docker-compose.yml` en tu PC si queres verificar) y guarda una copia `*.bak-<fecha>` si cambia algo.
+   Alternativa sin internet en el VPS: subir los dos archivos con `scp docker-compose.yml turnserver.conf root@216.238.110.97:/root/casco/server/` y correr `sh activar-voz.sh`.
+3. El script comprueba la memoria (aborta si quedan menos de 150 MB disponibles, sin cambiar nada), genera el secreto,
+   abre los puertos en `ufw`, levanta coturn y muestra `docker ps`. Si todo sale bien, termina con un bloque
+   "SIGUIENTE PASO" y, en la **ultima linea**, `TURN_SECRET=<texto largo>`.
+4. Seleccionar con el mouse **solo el texto que va despues del `=`** de esa ultima linea y copiarlo (en la consola de Vultr: boton
+   derecho > Copy, o Ctrl+Shift+C).
+5. Supabase: https://supabase.com/dashboard > tu proyecto > **Edge Functions** > **Secrets** > **Add new secret**. Crear dos:
+   `TURN_SECRET` (lo copiado) y `TURN_HOST` (`216.238.110.97`).
+6. Supabase > **Edge Functions** > **Deploy a new function** > **Via Editor**, nombre `turn-credentials`, pegar el contenido de
+   `supabase/functions/turn-credentials/index.ts` > **Deploy**. Luego abrir la funcion > **Details** y **desactivar "Verify JWT"**.
+   (Con CLI: `supabase functions deploy turn-credentials --no-verify-jwt --project-ref zgfvhjpdzkohouktakvt`.)
+7. Abrir en el panel de Vultr (Products > Firewall, si hay un grupo asignado al servidor) los puertos 3478 TCP/UDP y 49160-49200 UDP.
+8. Probar (desde otra PC): `bash test/test-turn.sh 216.238.110.97` y el relay segun "Probar" mas abajo.
+9. **Ultimo paso, a mano**: en `web/config.js` poner `VOICE_ENABLED: true` y publicar la web (subir el cambio a GitHub; ver `docs/PROTOCOLO-VOZ.md`).
+   El script no lo hace.
+
+Notas: el `TURN_SECRET` se guarda en `/root/casco/server/.env` (permiso 600) y **no** se borra al desactivar, porque
+`docker-compose.yml` lo exige para cualquier comando. Si el script dice "no hay memoria", cerrar procesos o subir el plan del VPS
+(coturn usa ~15-25 MB). Para volver atras: `sh desactivar-voz.sh` y `VOICE_ENABLED: false`.
+
 ### Cargar el secreto en la Edge Function (pasos para no tecnicos)
 1. Conectate: `ssh root@IP_DEL_VPS`
 2. `cd casco/server && grep TURN_SECRET .env` -> muestra `TURN_SECRET=<texto largo>`. Copia solo lo que va despues del `=`.

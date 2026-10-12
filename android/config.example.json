@@ -14,5 +14,10 @@
 
   "_comentario_stream_audio": "Audio del casco en el video en vivo. false por defecto (el microfono NO se abre). true = AAC 16 kHz mono ~24 kbps publicado en ingest/<device_id> (el servidor lo pasa a Opus y republica en live/<id>). Activar SOLO tras validar relay-audio en el VPS y avisar al personal (privacidad).",
   "stream_audio": false,
-  "stream_ingest_path": "live"
+  "stream_ingest_path": "live",
+
+  "_comentario_voz": "Comandos de voz en espanol sin nube (Vosk). false por defecto. Requiere el modelo en files/vosk-model-es (tools/instalar-modelo-voz.ps1) y avisar al personal (privacidad). Palabra de activacion de 3-20 letras; voice_idle_off_minutes: sin movimiento apaga el microfono (0 = nunca).",
+  "voice_commands": false,
+  "voice_wake_word": "casco",
+  "voice_idle_off_minutes": 10
 }

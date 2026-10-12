@@ -12,8 +12,8 @@ android {
         minSdk 26
         // targetSdk 28: acceso legacy al almacenamiento compartido (el casco es Android 10).
         targetSdk 28
-        versionCode 7
-        versionName '0.6.1'
+        versionCode 8
+        versionName '0.7.0'
         // El casco es ARMv7: solo se empaqueta esa .so de WebRTC (las 4 ABI suman ~50 MB).
         ndk { abiFilters 'armeabi-v7a' }
     }
@@ -33,4 +33,8 @@ dependencies {
     implementation 'com.github.pedroSG94.RootEncoder:library:2.5.5'
     // Voz bidireccional (WebRTC solo audio). Maven Central, Apache-2.0; trae armeabi-v7a (6,5 MB .so).
     implementation 'io.getstream:stream-webrtc-android:1.3.10'
+    // Comandos de voz en espanol sin nube (Vosk, Apache-2.0; Maven Central). El modelo (~40 MB) NO va en el APK:
+    // tools/instalar-modelo-voz.ps1. JNA como aar explicito (el pom de Vosk lo declara type=aar).
+    implementation 'com.alphacephei:vosk-android:0.3.75'
+    implementation 'net.java.dev.jna:jna:5.18.1@aar'
 }

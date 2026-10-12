@@ -78,7 +78,7 @@ final class FallDetector implements SensorEventListener {
         }
         boolean freeFall = lastFreeFallEnd != 0 && now - lastFreeFallEnd <= IMPACT_WINDOW_MS;
         boolean spin = lastGyroViolentAt != 0 && now - lastGyroViolentAt <= IMPACT_WINDOW_MS;
-        if (mag > IMPACT_MS2 && (freeFall || spin) && now - lastFallAt > COOLDOWN_MS) {
+        if (mag > RemoteConfig.impactMs2(IMPACT_MS2) && (freeFall || spin) && now - lastFallAt > COOLDOWN_MS) {
             lastFallAt = now;
             lastFreeFallEnd = 0;
             lastGyroViolentAt = 0;

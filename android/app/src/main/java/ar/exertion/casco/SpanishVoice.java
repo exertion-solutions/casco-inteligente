@@ -2,7 +2,9 @@ package ar.exertion.casco;
 
 import android.content.Context;
 import android.media.AudioAttributes;
+import android.os.SystemClock;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 
 import java.util.ArrayList;
@@ -47,6 +49,39 @@ final class SpanishVoice implements TextToSpeech.OnInitListener {
         if (v != null) v.speak(text);
     }
 
+    // ---- estado de habla (comandos por voz: no escuchar mientras el casco habla; SOS por voz; repetir) ----
+    private volatile int queued;              // frases en cola o hablando
+    private volatile long lastSpeakAt;        // elapsedRealtime del ultimo speak (tope si el motor nunca avisa que termino)
+    private volatile long lastDone;           // elapsedRealtime en que termino la ultima (0 = nunca)
+    private volatile String lastPhrase;       // ultima frase pedida (para "repetir")
+    private static final long TAIL_MS = 700L; // eco/cola del parlante despues de hablar
+    private static final long MAX_UTTERANCE_MS = 30_000L; // si el motor no avisa el fin, no quedar mudos para siempre
+
+    /** true mientras el casco habla (o hasta TAIL_MS despues): el reconocimiento no debe escuchar. */
+    static boolean busy() {
+        SpanishVoice v = instance;
+        if (v == null) return false;
+        long now = SystemClock.elapsedRealtime();
+        return (v.queued > 0 && now - v.lastSpeakAt < MAX_UTTERANCE_MS) || now - v.lastDone < TAIL_MS;
+    }
+
+    /** elapsedRealtime en que el casco dejo de hablar; -1 = habla ahora; 0 = no habla hace tiempo. */
+    static long quietSince() {
+        SpanishVoice v = instance;
+        if (v == null) return 0;
+        boolean speaking = v.queued > 0 && SystemClock.elapsedRealtime() - v.lastSpeakAt < MAX_UTTERANCE_MS;
+        return speaking ? -1 : v.lastDone;
+    }
+
+    /** Vuelve a decir la ultima frase; false si no hay. */
+    static boolean repeatLast() {
+        SpanishVoice v = instance;
+        String t = v == null ? null : v.lastPhrase;
+        if (t == null) return false;
+        v.speakRaw(t, false);
+        return true;
+    }
+
     private final Context app;
     private TextToSpeech tts;
     private boolean ready, failed, triedDefault;
@@ -78,6 +113,18 @@ final class SpanishVoice implements TextToSpeech.OnInitListener {
                 tts.setAudioAttributes(new AudioAttributes.Builder()
                         .setUsage(AudioAttributes.USAGE_MEDIA) // STREAM_MUSIC
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build());
+                int lr = tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                    @Override public void onStart(String id) { }
+                    @Override public void onDone(String id) { done(); }
+                    @Override public void onError(String id) { done(); }
+                    @Override public void onStop(String id, boolean interrupted) { done(); }
+                    private void done() {
+                        queued = Math.max(0, queued - 1);
+                        lastDone = SystemClock.elapsedRealtime();
+                        Log.i(TAG, "voz: frase terminada (en cola: " + queued + ")");
+                    }
+                });
+                if (lr != TextToSpeech.SUCCESS) Log.w(TAG, "voz: sin avisos de fin de frase (listener=" + lr + ")");
                 ready = true;
                 Log.i(TAG, "voz: idioma " + l);
                 List<String> p = new ArrayList<>(pending);
@@ -96,7 +143,12 @@ final class SpanishVoice implements TextToSpeech.OnInitListener {
     }
 
     synchronized void speak(String text) {
+        speakRaw(text, true);
+    }
+
+    private synchronized void speakRaw(String text, boolean remember) {
         if (failed || VoiceCallManager.inCall) return; // no hablar durante una llamada activa
+        if (remember) lastPhrase = text;
         if (!ready) {
             if (pending.size() < 3) pending.add(text);
             return;
@@ -106,7 +158,12 @@ final class SpanishVoice implements TextToSpeech.OnInitListener {
 
     private void doSpeak(String text) {
         try {
-            tts.speak(text, TextToSpeech.QUEUE_ADD, null, "casco-" + System.nanoTime());
+            queued++;
+            Log.i(TAG, "voz: hablando (en cola: " + queued + ")");
+            lastSpeakAt = SystemClock.elapsedRealtime();
+            if (tts.speak(text, TextToSpeech.QUEUE_ADD, null, "casco-" + System.nanoTime()) != TextToSpeech.SUCCESS) {
+                queued = Math.max(0, queued - 1);
+            }
         } catch (RuntimeException e) {
             Log.w(TAG, "voz: speak fallo: " + e);
         }

@@ -49,6 +49,7 @@ import java.util.Set;
  */
 public class MediaWatcherService extends Service {
     static final String ACTION_SOS = "ar.exertion.casco.SOS";
+    static final String ACTION_VOICE_TEXT = "ar.exertion.casco.VOICE_TEXT";
     static final String ACTION_WATCHDOG = "ar.exertion.casco.WATCHDOG";
     static final String ACTION_HEARTBEAT = WatchdogReceiver.ACTION_HEARTBEAT;
     private static final String TAG = "CascoAgente";
@@ -77,6 +78,8 @@ public class MediaWatcherService extends Service {
     private ManDownPolicy mandown;
     private VoiceCallManager voiceCall;
     private BroadcastAgent bcast;
+    private CommandAgent cmdAgent; // tanda 4: comandos a pedido, config remota, no_worn/inactive, equip
+    private VoiceCommandAgent voiceCmd; // comandos de voz en espanol (Vosk offline; voice_commands)
     private HandlerThread sensorThread, teleThread;
     private Handler tele;
     private int sensorOrientation = 90;
@@ -153,7 +156,11 @@ public class MediaWatcherService extends Service {
                         h.post(() -> handleMandown(mandown.onImpact(SystemClock.elapsedRealtime(), impact)));
                     }
                     @Override public void onWindow(boolean still) {
-                        h.post(() -> handleMandown(mandown.update(SystemClock.elapsedRealtime(), still)));
+                        h.post(() -> {
+                            handleMandown(mandown.update(SystemClock.elapsedRealtime(), still));
+                            if (cmdAgent != null) cmdAgent.onWindow(still, mandown.state() != ManDownPolicy.State.NORMAL);
+                            if (!still && voiceCmd != null) voiceCmd.onMotion(); // voice_idle_off_minutes
+                        });
                     }
                 });
                 if (!fall.start(sensH)) {
@@ -177,8 +184,39 @@ public class MediaWatcherService extends Service {
                 bg.postDelayed(cmdPoll, 5_000L);
                 bg.postDelayed(() -> heartbeatNow(), 10_000L); // el primero; los siguientes los dispara la alarma
                 WatchdogReceiver.scheduleHeartbeat(this);
+                cmdAgent = new CommandAgent(this, sb, cfg, (t, path, p) -> emit(t, null, null, path, p),
+                        () -> { StreamService.stop(this); stopSelf(); }); // restart_agent: la alarma lo relanza
+                cmdAgent.start();
                 voiceCall = new VoiceCallManager(this, sb, cfg);
                 voiceCall.start();
+                voiceCmd = new VoiceCommandAgent(this, cfg, new VoiceCommandAgent.Host() {
+                    @Override public void sos() { // la cuenta regresiva de 5 s termino sin cancelar
+                        h.post(() -> {
+                            startLocalStream();
+                            JSONObject p = null;
+                            try { p = new JSONObject().put("reason", "voz").put("trigger", "voz"); } catch (Exception ignored) { }
+                            emit("sos", "VOZ", null, null, p);
+                        });
+                    }
+                    @Override public boolean fallCountdown() {
+                        ManDownPolicy m = mandown;
+                        return m != null && m.state() == ManDownPolicy.State.CONFIRMANDO;
+                    }
+                    @Override public boolean cancelFall() {
+                        if (!fallCountdown()) return false;
+                        h.post(() -> handleMandown(mandown.onCancelButton(SystemClock.elapsedRealtime())));
+                        return true;
+                    }
+                    @Override public String torch(boolean on) {
+                        CommandAgent c = cmdAgent;
+                        return c == null ? "sin camara" : c.torchForVoice(on);
+                    }
+                    @Override public String photo() {
+                        CommandAgent c = cmdAgent;
+                        return c == null ? "sin camara" : c.photoForVoice();
+                    }
+                });
+                voiceCmd.start(); // el hilo duerme mientras voice_commands (config o remoto) este apagado
                 if (cfg.broadcastEnabled) {
                     bcast = new BroadcastAgent(this, sb, cfg);
                     bcast.start();
@@ -200,6 +238,10 @@ public class MediaWatcherService extends Service {
                 heartbeatNow();
                 pollOnce();
             });
+        }
+        if (ACTION_VOICE_TEXT.equals(action) && started && voiceCmd != null) {
+            // prueba por adb (servicio no exportado): la frase pasa por la misma gramatica y ventana que Vosk
+            voiceCmd.injectText(intent.getStringExtra("text"));
         }
         if (ACTION_SOS.equals(action)) {
             final int ms = AgentPolicy.clampPressMs(intent.getIntExtra("press_ms", 0));
@@ -261,6 +303,7 @@ public class MediaWatcherService extends Service {
             }
             // ordenes del supervisor: la red corre en su propio hilo (no demora SOS en h); backoff propio
             if (bcast != null) bcast.tick();
+            if (cmdAgent != null) cmdAgent.tick(); // comandos a pedido + config remota + alertas de equipo
         }
     }
 
@@ -433,6 +476,7 @@ public class MediaWatcherService extends Service {
                 if (counting) { // cancelado durante la cuenta regresiva: sin evento; solo payload.countdown
                     counting = false;
                     cancelledAt = SystemClock.elapsedRealtime();
+                    if (cmdAgent != null) cmdAgent.onFallCancel(mandown.trigger()); // evento fall_cancel
                     bg.post(this::heartbeatNow);
                 }
                 break;
@@ -472,6 +516,7 @@ public class MediaWatcherService extends Service {
     static void onCancelKey() {
         MediaWatcherService s = instance;
         if (s == null || s.h == null) return;
+        if (s.cmdAgent != null) s.cmdAgent.onButton(); // el operario esta presente (WearMonitor)
         s.h.post(() -> {
             if (s.mandown != null) s.handleMandown(s.mandown.onCancelButton(SystemClock.elapsedRealtime()));
         });
@@ -825,9 +870,10 @@ public class MediaWatcherService extends Service {
     private void goForeground() {
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         String ch = "casco";
-        nm.createNotificationChannel(new NotificationChannel(ch, "Casco Agente", NotificationManager.IMPORTANCE_MIN));
+        nm.createNotificationChannel(new NotificationChannel(ch, "Vigía", NotificationManager.IMPORTANCE_MIN));
         Notification n = new Notification.Builder(this, ch)
-                .setContentTitle("Casco Agente activo")
+                .setContentTitle("Vigía")
+                .setContentText("Casco activo")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .build();
         startForeground(1, n);
@@ -843,6 +889,8 @@ public class MediaWatcherService extends Service {
         if (orient != null) orient.stop();
         if (voiceCall != null) voiceCall.stop();
         if (bcast != null) bcast.stop();
+        if (cmdAgent != null) cmdAgent.stop();
+        if (voiceCmd != null) voiceCmd.stop();
         if (sensorThread != null) sensorThread.quitSafely();
         if (tele != null) tele.removeCallbacksAndMessages(null);
         if (teleThread != null) teleThread.quitSafely();

@@ -8,6 +8,8 @@ final class StreamPolicy {
     enum Act { NONE, START, STOP }
 
     static final int SRC_NONE = 0, SRC_REMOTE = 1, SRC_LOCAL = 2;
+    /** Pedida por voz ("casco, activar camara"): el poll de comandos no la corta; tope MAX_STREAM_MS; stop remoto/voz la corta. */
+    static final int SRC_VOICE = 3;
 
     static final long POLL_MS = 3_000L;
     static final long POLL_BACKOFF_MAX_MS = 30_000L;
@@ -29,7 +31,7 @@ final class StreamPolicy {
             return source == SRC_REMOTE ? Act.STOP : Act.NONE;
         }
         if (id.equals(lastSeen)) return Act.NONE; // ya procesado: no reiniciar tras tope/fallo ni re-parar
-        if ("start".equals(action)) return source == SRC_REMOTE ? Act.NONE : Act.START; // LOCAL se promueve
+        if ("start".equals(action)) return source == SRC_REMOTE || source == SRC_VOICE ? Act.NONE : Act.START; // LOCAL se promueve
         if ("stop".equals(action)) return source != SRC_NONE ? Act.STOP : Act.NONE;
         return Act.NONE;
     }

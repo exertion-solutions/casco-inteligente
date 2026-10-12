@@ -70,6 +70,11 @@ public class StreamPolicyCheck {
         eq(32_000L, StreamPolicy.retryDelayMs(5, SRC_REMOTE), "remoto sin cambios");
         eq(false, StreamPolicy.localWindowEnds(false), "a los 120 s sin conexion sigue");
         eq(true, StreamPolicy.localWindowEnds(true), "a los 120 s con video corta");
+        // transmision pedida por voz: el poll (sin comando vigente) no la corta; el stop del supervisor si
+        eq(Act.NONE, StreamPolicy.decide(null, null, null, StreamPolicy.SRC_VOICE), "voz: sin comando vigente no corta");
+        eq(Act.NONE, StreamPolicy.decide("c9", "start", "c8", StreamPolicy.SRC_VOICE), "voz: start remoto no reinicia");
+        eq(Act.STOP, StreamPolicy.decide("c9", "stop", "c8", StreamPolicy.SRC_VOICE), "voz: stop del supervisor corta");
+        eq(true, StreamPolicy.giveUp(StreamPolicy.SRC_VOICE, 6), "voz: como remoto, se rinde tras 5");
         System.out.println("StreamPolicyCheck OK");
     }
 }

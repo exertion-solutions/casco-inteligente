@@ -412,4 +412,55 @@ final class Supabase {
             return false;
         }
     }
+
+    // ---- tanda 4 (docs/PROTOCOLO-COMANDOS.md): comandos a pedido y configuracion remota ----
+
+    /** Un comando de public.device_commands para este casco. */
+    static final class DeviceCommand {
+        final String id, action;
+        final JSONObject params;
+        DeviceCommand(String id, String action, JSONObject params) {
+            this.id = id; this.action = action; this.params = params;
+        }
+    }
+
+    /** Comandos de los ultimos 2 min (hora del servidor) en orden de creacion. Lanza excepcion ante error de red/HTTP. */
+    java.util.List<DeviceCommand> recentCommands() throws Exception {
+        String since = BroadcastPolicy.isoUtc(System.currentTimeMillis() + serverOffsetMs - CommandPolicy.WINDOW_MS);
+        String path = "/rest/v1/device_commands?select=id,action,params&device_id=eq."
+                + java.net.URLEncoder.encode(cfg.deviceId, "UTF-8") + "&created_at=gte." + since
+                + "&order=created_at.asc&limit=20";
+        org.json.JSONArray a = new org.json.JSONArray(getShort(path));
+        java.util.ArrayList<DeviceCommand> out = new java.util.ArrayList<>();
+        for (int i = 0; i < a.length(); i++) {
+            JSONObject o = a.getJSONObject(i);
+            JSONObject p = o.optJSONObject("params");
+            out.add(new DeviceCommand(o.optString("id"), o.optString("action"), p != null ? p : new JSONObject()));
+        }
+        return out;
+    }
+
+    /** device_command_acks {command_id, device_id, ok, detail}; 409 = ya registrado = exito. */
+    boolean ackCommand(String commandId, boolean ok, String detail) {
+        try {
+            JSONObject r = new JSONObject().put("command_id", commandId).put("device_id", cfg.deviceId).put("ok", ok);
+            String d = CommandPolicy.detail(detail);
+            if (d != null) r.put("detail", d);
+            call("POST", "/rest/v1/device_command_acks", "application/json", r.toString().getBytes("UTF-8"), null);
+            return true;
+        } catch (HttpError e) {
+            if (e.code == 409) return true;
+            Log.w(TAG, "device_command_acks fallo: " + e.getMessage());
+            return false;
+        } catch (Exception e) {
+            Log.w(TAG, "device_command_acks fallo: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** JSON crudo de device_config de este casco (array de 0/1 filas {config, updated_at}). */
+    String deviceConfigJson() throws Exception {
+        return getShort("/rest/v1/device_config?select=config,updated_at&device_id=eq."
+                + java.net.URLEncoder.encode(cfg.deviceId, "UTF-8") + "&limit=1");
+    }
 }

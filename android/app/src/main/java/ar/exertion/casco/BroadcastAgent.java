@@ -117,6 +117,12 @@ final class BroadcastAgent {
         ph.post(this::pollOnce);
     }
 
+    /** Suena la sirena o hay una orden del supervisor en curso: el reconocimiento de voz no escucha. */
+    static boolean playing() {
+        final BroadcastAgent a = instance;
+        return a != null && (a.busy || a.siren != null);
+    }
+
     /** F10/F12 (SosKeyService): silencia la sirena; la voz sigue. No consume el evento. */
     static void silenceSiren() {
         final BroadcastAgent a = instance;
@@ -261,9 +267,11 @@ final class BroadcastAgent {
                 prefs().edit().putInt("alarm", savedAlarm).putInt("music", savedMusic).commit();
             }
             am.setStreamVolume(AudioManager.STREAM_ALARM,
-                    BroadcastPolicy.volumeIndex(cfg.broadcastVolume, am.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0);
+                    BroadcastPolicy.volumeIndex(RemoteConfig.broadcastVolume(cfg.broadcastVolume),
+                            am.getStreamMaxVolume(AudioManager.STREAM_ALARM)), 0);
             am.setStreamVolume(AudioManager.STREAM_MUSIC,
-                    BroadcastPolicy.volumeIndex(cfg.broadcastVolume, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), 0);
+                    BroadcastPolicy.volumeIndex(RemoteConfig.broadcastVolume(cfg.broadcastVolume),
+                            am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)), 0);
         } catch (RuntimeException e) {
             Log.w(TAG, "orden: no se pudo subir el volumen: " + e);
         }

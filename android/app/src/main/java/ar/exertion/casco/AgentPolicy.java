@@ -44,7 +44,7 @@ final class AgentPolicy {
 
     /** Evento location: cada 60 s, cada 30 s con alerta (SOS / hombre caido / transmision local). */
     static long locationIntervalMs(boolean alert) {
-        return alert ? 30_000L : 60_000L;
+        return alert ? RemoteConfig.locationAlertMs(30_000L) : RemoteConfig.locationMs(60_000L); // device_config
     }
 
     /** Un fix sirve para publicar si su precision es conocida y <= 50 m. */

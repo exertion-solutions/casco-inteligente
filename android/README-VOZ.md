@@ -137,3 +137,74 @@ java -ea -cp %TEMP%\chk ar.exertion.casco.HealthPayloadCheck   (tambien Broadcas
 - **Mas red**: un GET extra cada 3 s (backoff 30 s). Con 4G debil el poll puede tardar hasta ~10 s; corre en su hilo.
 - **`repeat` por defecto 3**: un `mensaje` sin `repeat` explicito se repite 3 veces (default de la BD).
 - **DuraSpeed**: si suprime el paquete tras force-stop no hay poll de ordenes (igual que comandos de video).
+
+## Tanda 4: comandos a pedido, config remota, no_worn/inactive/equip (marca: Vigia)
+Protocolo: `docs/PROTOCOLO-COMANDOS.md`. Logica nueva en `CommandAgent` (Android), `CommandPolicy`, `RemoteConfig`, `WearMonitor`, `EquipAlerts` (puras, con *Check).
+Tests: agregar `CommandPolicy,RemoteConfig,WearMonitor,EquipAlerts,AgentPolicy,Outbox,GeoPolicy` a la lista de javac (AgentPolicy ahora depende de RemoteConfig).
+Detalle y pruebas pendientes con el casco: `out/android-tanda4-report.md`. El nombre visible pasa a "Vigia" (label, notificacion); package y claves no cambian.
+
+## Tanda 5: comandos de voz en espanol (0.7.0, versionCode 8)
+Protocolo y frases: `docs/PROTOCOLO-GEO.md` seccion 5; lista para operadores: `web/comandos.html` (mantener en sincronia).
+Codigo: `VoiceCommandAgent` (audio + hilos + acciones) y `VoiceCommandPolicy` (pura: gramatica, normalizacion de tildes,
+ventana de activacion, duplicados, apagado por inactividad, frases habladas). Ganchos en `MediaWatcherService`
+(Host: SOS, cancelar caida, linterna/foto via `CommandAgent`), `StreamService` (`SRC_VOICE`, `audioOverride`, `reaudio`),
+`SpanishVoice` (`busy()`, `quietSince()`, `repeatLast()`), `BroadcastAgent.playing()`.
+
+### Instalar el modelo (NO va en el APK ni en el repo)
+```
+.\tools\instalar-modelo-voz.ps1        # descarga vosk-model-small-es-0.42 (~38 MB), verifica tamano/MD5/zip y copia por ADB
+```
+Destino en el casco: `/sdcard/Android/data/ar.exertion.casco/files/vosk-model-es/` (debe existir `am/final.mdl`).
+Sin modelo: un solo log `voz: falta el modelo en ...` y reintento cada 30 s (no rompe nada). Luego `voice_commands: true`
+en config.json (o clave remota `voice_commands` en device_config: `RemoteConfig.voiceCommands` pisa a la local).
+
+### config.json (opcionales)
+| Clave | Defecto | Rango |
+|---|---|---|
+| `voice_commands` | false | true = escucha (modelo cargado en ~2 s); tambien se enciende/apaga por config remota |
+| `voice_wake_word` | "casco" | una palabra de 3-20 letras que exista en el vocabulario del modelo |
+| `voice_idle_off_minutes` | 10 | 0 (nunca apaga) a 240; sin movimiento ese tiempo se suelta el microfono y vuelve al moverse |
+
+### Como decide
+- Vosk con **gramatica cerrada** (44 frases: `casco <frase>`, la frase suelta y `[unk]`). Resultado final -> `Session.feed`:
+  `casco <comando>` ejecuta; `casco` solo abre una ventana de 8 s (tono corto) para la frase suelta; la frase suelta
+  fuera de ventana se ignora; `cancelar` suelto vale solo con una cuenta regresiva (SOS por voz u hombre caido).
+  Confianza media por palabra < 0,5 se descarta; el mismo comando repetido en 2,5 s se ignora.
+- **SOS por voz**: dice "Emergencia en cinco segundos. Diga cancelar para anular." y los 5 s cuentan desde que el casco
+  termina de hablar (tope de seguridad 15 s). Sale `sos` con `key="VOZ"`, `payload {reason:"voz", trigger:"voz"}` y video local 120 s.
+- **Video por voz** (`SRC_VOICE`): "activar camara" arranca; el poll de comandos no la corta (a diferencia de `SRC_REMOTE`);
+  tope 10 min; "detener video" la corta; una transmision de emergencia (`SRC_LOCAL`) no se corta ni cambia de audio por voz.
+- **Audio por voz**: `StreamService.audioOverride` pisa `stream_audio`/config remota hasta reiniciar el agente; con video en
+  curso reconecta la transmision (corte de ~2-3 s) y dice "Transmision con/sin audio".
+- **Linterna/foto**: `CommandAgent.torchForVoice/photoForVoice` (Camera2). Con la camara tomada por el stream o por otra app el
+  casco dice que no se puede y por que. La foto tarda 5-15 s (calentamiento + subida) y dice "Foto enviada." al terminar.
+- **Estado**: "Bateria al N por ciento, senal buena|regular|mala|sin senal, sin video|con video[ y audio]."
+
+### Convivencia de audio (verificado en el casco, Android 10, 4132)
+| Situacion | Comportamiento |
+|---|---|
+| El casco habla (TTS), sirena u orden del supervisor | Se suelta el microfono (`AudioRecord.release`) y vuelve 0,7 s despues; tope 30 s por si el motor no avisa el fin |
+| Llamada WebRTC (`VoiceCallManager.inCall`) | Se suelta el microfono mientras dure |
+| `stream_audio` / "activar audio" con video en curso | **Captura concurrente OK**: `dumpsys audio` muestra el `MIC` de RootEncoder y el `VOICE_RECOGNITION` del reconocedor activos a la vez, ambos `silenced:false`, mismo UID; el reconocedor recibe audio (picos 14-629). Si alguna vez entregara 3 s de ceros exactos con el stream con audio activo, se pausa hasta que termine esa transmision (log `voz: el microfono entrega ceros ...`) |
+| RundeCap u otra app con el microfono | Un log y reintento cada 5 s (`AudioRecord` no abre) o ceros: se registra y sigue |
+| Sin movimiento `voice_idle_off_minutes` | Microfono suelto; vuelve con el primer movimiento |
+
+### Pruebas
+- Logica pura: `VoiceCommandPolicyCheck` (68 verificaciones) + todos los `*Check`; compilar con las clases puras del README mas
+  `VoiceCommandPolicy.java` y `CommandPolicy,RemoteConfig,WearMonitor,EquipAlerts,AgentPolicy,Outbox,GeoPolicy`.
+- Gramatica contra el modelo real en PC (Vosk Java + voces SAPI es-ES, JNA con `-Djna.encoding=UTF-8`): 14/14 comandos
+  reconocidos, habla libre sin la palabra de activacion queda ignorada, sin avisos de palabras fuera de vocabulario.
+- En el casco: `adb shell am startservice -n ar.exertion.casco/.MediaWatcherService -a ar.exertion.casco.VOICE_TEXT --es text "'casco estado'"`
+  pasa la frase por la misma gramatica/ventana que Vosk (servicio no exportado: solo shell/root). Sirve para probar acciones y
+  frases habladas sin hablar. **No usar "casco emergencia" sin cancelar enseguida** (sale un SOS real a los 5 s).
+- Logs utiles: `adb logcat -s CascoAgente` -> `voz: reconocimiento listo`, `voz: parcial`, `voz: resultado "..." conf=.. -> COMMAND X`, `voz: dice "..."`, `voz: en pausa (...)`.
+
+### Riesgos
+- **La prueba hablada en campo no esta hecha**: no se probo el microfono real del casco con voz humana, ruido de obra, casco
+  puesto ni guantes. Umbral `MIN_CONF=0.5` y ventana 8 s sin calibrar; mirar `conf=` en los logs y ajustar.
+- **Falsos positivos**: la gramatica cerrada fuerza a Vosk a elegir una frase; el filtro es la palabra de activacion + confianza.
+  Una conversacion que diga "casco emergencia" empieza la cuenta de SOS (5 s para cancelar).
+- **Ceguera mientras habla**: el casco no escucha mientras dice una frase (la de ayuda dura ~13 s) ni durante la sirena.
+- **Memoria/bateria**: modelo cargado ~2 s al encender; el microfono abierto continuo consume bateria (por eso el apagado por inactividad).
+- **Privacidad**: el casco escucha el microfono; avisar al personal (Ley 25.326). No se guarda ni envia audio; solo la frase reconocida va al log local.
+- **Foto**: Camera2 tarda y falla si RundeCap tiene la camara abierta.

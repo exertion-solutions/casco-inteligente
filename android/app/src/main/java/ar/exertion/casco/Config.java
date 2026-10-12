@@ -23,6 +23,8 @@ import java.io.FileOutputStream;
  * mandown_confirm_seconds (10), mandown_inactivity_seconds (0 = desactivado).
  * Centro (docs/PROTOCOLO-CENTRO.md): broadcast_enabled (true), broadcast_volume (0-100, 100),
  * stream_audio (false), stream_ingest_path ("live").
+ * Comandos por voz (docs/PROTOCOLO-GEO.md seccion 5): voice_commands (false), voice_wake_word ("casco"),
+ * voice_idle_off_minutes (10; 0 = nunca apaga).
  */
 final class Config {
     static final String RUNDE_FILES = "/sdcard/Android/data/com.tencent.liteav.demo/files";
@@ -38,6 +40,10 @@ final class Config {
     final int broadcastVolume;
     /** Prefijo de ruta RTMP validado ("live" por defecto). Con audio se publica en "ingest" (ver StreamPolicy). */
     final String streamIngestPath;
+    /** Comandos por voz (VoiceCommandAgent): voice_commands (false), voice_wake_word ("casco"), voice_idle_off_minutes (10; 0 = nunca). */
+    final boolean voiceCommands;
+    final String voiceWakeWord;
+    final int voiceIdleOffMinutes;
 
     private Config(JSONObject j) {
         String u = j.optString("supabase_url").trim();
@@ -68,6 +74,9 @@ final class Config {
         streamAudio = j.optBoolean("stream_audio", false);
         String ip = j.optString("stream_ingest_path", "live").trim();
         streamIngestPath = ip.matches("[A-Za-z0-9_-]{1,32}") ? ip : "live";
+        voiceCommands = j.optBoolean("voice_commands", false);
+        voiceWakeWord = VoiceCommandPolicy.sanitizeWake(j.optString("voice_wake_word", VoiceCommandPolicy.DEFAULT_WAKE));
+        voiceIdleOffMinutes = clamp(j.optInt("voice_idle_off_minutes", 10), 0, 240);
     }
 
     private static int clamp(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }

@@ -35,7 +35,7 @@ public class WatchdogReceiver extends BroadcastReceiver {
                     new Intent(c, WatchdogReceiver.class).setAction(action),
                     PendingIntent.FLAG_UPDATE_CURRENT);
             am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP,
-                    SystemClock.elapsedRealtime() + PERIOD_MS, pi);
+                    SystemClock.elapsedRealtime() + (requestCode == 1 ? RemoteConfig.heartbeatMs(PERIOD_MS) : PERIOD_MS), pi);
         } catch (RuntimeException e) {
             Log.w(TAG, "alarma " + action + ": no se pudo armar: " + e);
         }

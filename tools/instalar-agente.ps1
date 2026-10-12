@@ -33,5 +33,6 @@ if ($cur -notlike "*$svc*") {
 & $Adb shell settings put secure accessibility_enabled 1
 # Excluir del ahorro de bateria
 & $Adb shell dumpsys deviceidle whitelist +$pkg
-& $Adb shell am startservice -n "$pkg/.MediaWatcherService"
+# Comandos de voz (opcional): tools\instalar-modelo-voz.ps1 y voice_commands=true en el config (ver android/README-VOZ.md).
+& $Adb shell am startservice -n "$pkg/.MediaWatcherService" $Adb shell am startservice -n "$pkg/.MediaWatcherService"
 Write-Host "Listo. Ver logs: adb logcat -s CascoAgente"
