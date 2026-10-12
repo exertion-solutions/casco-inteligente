@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Casco Inteligente</title>
+<meta name="description" content="Panel de alertas SOS, fotos y video en vivo de cascos inteligentes.">
+<meta name="theme-color" content="#0b6bcb">
+<meta name="robots" content="noindex, nofollow">
+<meta property="og:title" content="Casco Inteligente">
+<meta property="og:description" content="Panel de alertas SOS, fotos y video en vivo de cascos inteligentes.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b6bcb'/%3E%3Cpath d='M12 40c0-12 9-22 20-22s20 10 20 22v4H12z' fill='%23fff'/%3E%3Crect x='8' y='42' width='48' height='6' rx='3' fill='%23fff'/%3E%3C/svg%3E">
 <style>
   :root { --bg:#f4f6f8; --card:#fff; --ink:#14202b; --mute:#5b6b7a; --line:#d9e0e6; --acc:#0b6bcb; --sos:#c62828; --sosbg:#c62828; --onacc:#fff; }
   @media (prefers-color-scheme: dark) {
@@ -37,15 +44,27 @@
   button.attend { background:var(--sosbg); color:#fff; font-weight:600; }
   button[disabled] { opacity:.6; cursor:wait; }
   .hidden { display:none !important; }
+  .skip { position:absolute; left:-999px; top:8px; background:var(--card); color:var(--ink); padding:8px 12px; border-radius:8px; z-index:10; }
+  .skip:focus { left:8px; }
+  #sos button { margin-left:12px; background:#fff; color:#8e1b1b; font-weight:600; }
+  #devices { display:grid; gap:8px; margin-bottom:12px; }
+  #devices h2 { font-size:16px; margin:0; }
+  .dev { display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; }
+  .dot { width:10px; height:10px; border-radius:50%; background:var(--mute); flex:none; }
+  .dot.on { background:#2e7d32; }
+  .dot.off { background:var(--sos); }
+  @media (prefers-reduced-motion: no-preference) { #sos { animation:pulse 1.6s ease-in-out infinite; } }
+  @keyframes pulse { 50% { opacity:.9; } }
   #lives { display:grid; gap:12px; margin-bottom:12px; }
   .live { display:grid; gap:8px; }
   .live h2 { font-size:16px; margin:0; overflow-wrap:anywhere; }
   .live video { width:100%; max-height:420px; object-fit:contain; background:#000; border-radius:8px; }
   .live .state { font-weight:600; }
-  .live .state.bad { color:var(--sos); }
+  .state.bad { color:var(--sos); font-weight:600; }
 </style>
 </head>
 <body>
+<a class="skip" href="#main">Saltar al contenido</a>
 <header>
   <h1>Casco Inteligente</h1>
   <div class="row">
@@ -53,7 +72,7 @@
     <button id="logout" class="ghost hidden">Salir</button>
   </div>
 </header>
-<main>
+<main id="main">
   <form id="login" class="card login">
     <label>Correo <input id="email" type="email" autocomplete="username" required></label>
     <label>Contraseña <input id="password" type="password" autocomplete="current-password" required></label>
@@ -65,10 +84,15 @@
     <div id="sos" role="alert"></div>
     <div class="row" style="margin-bottom:12px">
       <button id="enableSound" class="ghost">Activar sonido de alerta</button>
-      <a class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo</a>
-      <span id="status" class="mute">Conectando…</span>
+      <a class="btn" href="https://caps.runde.pro/index/spyl" target="_blank" rel="noopener noreferrer">Cámara en vivo (Runde)</a>
+      <span id="status" class="mute" role="status">Conectando…</span>
     </div>
+    <section id="devices" class="card" aria-label="Estado de los cascos">
+      <h2>Cascos</h2>
+      <div id="devList" class="mute">Sin datos de cascos todavía.</div>
+    </section>
     <div id="lives" class="hidden"></div>
+    <h2 class="mute" style="font-size:16px;margin:0 0 8px">Eventos recientes</h2>
     <ul id="feed"></ul>
   </section>
 </main>
@@ -110,6 +134,10 @@
 
   // ---- Video en vivo propio (WHEP contra MediaMTX en LIVE_HOST; ver docs/PROTOCOLO-VIDEO.md) ----
   const LIVE_HOST = String(cfg.LIVE_HOST || '').trim();
+  // LIVE_MODE 'runde' (por defecto): "Camara en vivo" abre la plataforma Runde.
+  // LIVE_MODE 'own': panel de video propio (el casco debe transmitir a LIVE_HOST).
+  const OWN_LIVE = !!LIVE_HOST && cfg.LIVE_MODE === 'own';
+  const RUNDE_LIVE_URL = 'https://caps.runde.pro/index/spyl';
   const DEV_RE = /^[A-Za-z0-9_-]{1,64}$/;
   const STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
   const RETRY_WINDOW_MS = 40000;   // el casco tarda hasta ~30 s en arrancar
@@ -136,7 +164,7 @@
   }
 
   function ensureLive(id) {
-    if (!LIVE_HOST || !DEV_RE.test(id)) return null;
+    if (!OWN_LIVE || !DEV_RE.test(id)) return null;
     if (lives.has(id)) return lives.get(id);
     const sec = mk('section', 'card live');
     sec.setAttribute('aria-label', 'Video en vivo del casco ' + id);
@@ -257,12 +285,60 @@
 
   function refreshBanner() {
     const b = $('sos');
+    document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Casco Inteligente';
     if (!pending.size) { b.style.display = 'none'; return; }
     const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
-    b.textContent = pending.size + ' alerta(s) sin atender — última: ' +
+    const txt = document.createElement('span');
+    txt.textContent = pending.size + ' alerta(s) sin atender — última: ' +
       (last.type === 'fall' ? 'CAÍDA' : 'SOS') + ' · Casco ' + last.device_id + ' · ' + fmt(last.created_at);
+    const go = document.createElement('button'); go.type = 'button'; go.textContent = 'Ver alerta';
+    go.addEventListener('click', () => {
+      const li = cards.get(last.id);
+      if (li) { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); const inp = li.querySelector('input'); if (inp) inp.focus({ preventScroll: true }); }
+    });
+    const cam = document.createElement('a');
+    cam.className = 'btn'; cam.textContent = 'Cámara en vivo'; cam.href = RUNDE_LIVE_URL;
+    cam.target = '_blank'; cam.rel = 'noopener noreferrer';
+    cam.style.cssText = 'margin-left:8px;background:#fff;color:#8e1b1b;border-color:#fff;font-weight:600';
+    b.replaceChildren(txt, go, cam);
     b.style.display = 'block';
   }
+
+  // ---- Estado de cascos (ultimo heartbeat; el agente lo envia cada 5 min) ----
+  const OFFLINE_MS = 12 * 60 * 1000;
+  const devState = new Map();   // device_id -> { at, battery }
+  const ago = ms => {
+    const m = Math.max(0, Math.round(ms / 60000));
+    return m < 1 ? 'hace menos de 1 min' : m < 60 ? 'hace ' + m + ' min' : 'hace ' + Math.round(m / 60) + ' h';
+  };
+  function renderDevices() {
+    const box = $('devList');
+    if (!devState.size) { box.className = 'mute'; box.textContent = 'Sin datos de cascos todavía.'; return; }
+    box.className = '';
+    const rows = [...devState.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([id, s]) => {
+      const row = mk('div', 'dev');
+      const age = Date.now() - new Date(s.at).getTime();
+      const on = age <= OFFLINE_MS;
+      const dot = mk('span', 'dot ' + (on ? 'on' : 'off')); dot.setAttribute('aria-hidden', 'true');
+      row.append(dot, mk('strong', '', 'Casco ' + id),
+        mk('span', on ? '' : 'state bad', on ? 'En línea' : 'Sin señal'),
+        mk('span', 'mute', ago(age) + (s.battery != null ? ' · batería ' + s.battery + '%' : '')));
+      return row;
+    });
+    box.replaceChildren(...rows);
+  }
+  function noteDevice(id, at, battery) {
+    const cur = devState.get(id);
+    if (!cur || new Date(at) >= new Date(cur.at)) devState.set(id, { at, battery: battery ?? (cur && cur.battery) ?? null });
+  }
+  async function loadDevices() {
+    const { data, error } = await sb.from('events').select('device_id,created_at,battery,type')
+      .eq('type', 'heartbeat').order('created_at', { ascending: false }).limit(200);
+    if (error || !data) return;
+    for (const e of data) noteDevice(e.device_id, e.created_at, e.battery);
+    renderDevices();
+  }
+  setInterval(renderDevices, 30000);
 
   function renderAction(ev) {
     const li = cards.get(ev.id); if (!li) return;
@@ -271,10 +347,11 @@
     // Video en vivo: lo sirve la plataforma Runde (el casco solo transmite alli). Abre su Centro de video.
     const live = document.createElement('a');
     live.className = 'btn'; live.textContent = 'Cámara en vivo';
-    live.href = 'https://caps.runde.pro/index/spyl'; live.target = '_blank'; live.rel = 'noopener noreferrer';
+    live.href = RUNDE_LIVE_URL; live.target = '_blank'; live.rel = 'noopener noreferrer';
+    live.setAttribute('aria-label', 'Cámara en vivo del casco ' + (devOf.get(ev.id) || '') + ' en la plataforma Runde (abre otra pestaña)');
     box.append(live);
     const devId = devOf.get(ev.id);
-    if (LIVE_HOST && DEV_RE.test(devId || '')) {
+    if (OWN_LIVE && DEV_RE.test(devId || '')) {
       const see = document.createElement('button'); see.type = 'button'; see.className = 'ghost';
       see.textContent = 'Ver en vivo'; see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
       see.addEventListener('click', () => {
@@ -370,13 +447,16 @@
       const r = await sb.from('event_acks').select('*').in('event_id', ids);
       if (!r.error) for (const a of r.data) acks.set(a.event_id, a);
     }
-    for (const ev of data) await render(ev, false);
+    for (const ev of data) { noteDevice(ev.device_id, ev.created_at, ev.battery); await render(ev, false); }
+    loadDevices();
     if (!data.length) { const li = document.createElement('li'); li.className = 'mute'; li.textContent = 'Sin eventos todavía.'; $('feed').append(li); }
 
     if (channel) sb.removeChannel(channel);
     channel = sb.channel('events-feed')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'events' }, p => {
         const ev = p.new;
+        noteDevice(ev.device_id, ev.created_at, ev.battery);
+        renderDevices();
         if (ev.type === 'heartbeat') return;
         if (needsAttention(ev)) alertSos(ev);
         render(ev, true);
