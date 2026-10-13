@@ -80,3 +80,7 @@
 - Video: cortes RTMP por uplink 4G inestable (RSRP -104 dBm): casco bajado a 480x360 @12 fps @300 kbps. Revisar si hace falta mas ajuste o ABR.
 - Ver en vivo ante alerta: espera 120 s, reenvia start cada 20 s, boton Reintentar.
 - Pendiente: ver prueba hablada de comandos y llamada; sitio .sslip.io; cerrar SSH a IP admin cuando haya llave propia del usuario.
+
+## PWA / service worker (deploy)
+- En CADA deploy de web/: subir `CACHE_VERSION` en web/sw.js (ej. `vigia-2026-10-13a` -> `vigia-2026-10-14a`) y el `?v=` de app.css/config.js/app.js en index.html. Sin eso los usuarios pueden ver el shell viejo.
+- El SW no cachea supabase.co, sslip.io, /auth, /storage ni cross-origin (CDN leaflet/supabase-js/fuentes/tiles).

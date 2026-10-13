@@ -1,0 +1,16 @@
+{
+  "name": "Vigía · Casco Inteligente",
+  "short_name": "Vigía",
+  "description": "Panel de alertas SOS, fotos y video en vivo de cascos inteligentes.",
+  "lang": "es-AR",
+  "dir": "ltr",
+  "display": "standalone",
+  "start_url": "./",
+  "scope": "./",
+  "theme_color": "#0e1a20",
+  "background_color": "#0e1a20",
+  "icons": [
+    { "src": "img/vigia-logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "img/vigia-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

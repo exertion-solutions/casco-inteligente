@@ -58,8 +58,12 @@
   const evAt = new Map();          // event_id -> created_at [UI: regla de estacion del historial]
   let token = null;
   let manualLogout = false;
+  // Salud de la conexion con las alertas: canal Realtime caido, ultima lectura fallida o sin internet.
+  let rtDown = false, syncFail = false, netOff = typeof navigator !== 'undefined' && navigator.onLine === false, connWasDown = false;
+  const connDown = () => rtDown || syncFail || netOff;
   sb.auth.onAuthStateChange((e, s) => {
     token = s ? s.access_token : null;
+    if ((e === 'TOKEN_REFRESHED' || e === 'SIGNED_IN') && s) clearExpired();   // sesion recuperada: baja el aviso de "vencida"
     if (e === 'TOKEN_REFRESHED' && s) { try { sb.realtime.setAuth(s.access_token); } catch (_) {} }
     else if (e === 'SIGNED_OUT' && !manualLogout) setTimeout(sessionExpired, 0);
   });
@@ -956,6 +960,7 @@
   }
   function renderDevices() {
     const box = $('devList');
+    const fa = document.activeElement;   // las barras de comandos se reutilizan: al moverlas el foco se pierde y se devuelve abajo
     const now = Date.now();
     let on = 0, off = 0;
     for (const s of devState.values()) { if (now - new Date(s.at).getTime() <= OFFLINE_MS) on++; else off++; }
@@ -966,7 +971,7 @@
     $('kpiDevOff').textContent = off + ' sin señal';
     $('kpiDevOff').className = off ? 'bad' : 'mute';
     fillDest();
-    if (!devState.size && !never.length) { box.className = 'mute'; box.textContent = 'Sin datos de cascos todavía.'; return; }
+    if (!devState.size && !never.length) { box.className = 'mute'; box.textContent = 'Sin datos de cascos todavía.'; pruneCmdBars(new Set()); return; }
     box.className = '';
     const ghosts = never.map(id => [id, null]);
     const rows = [...devState.entries(), ...ghosts].sort((a, b) => a[0].localeCompare(b[0])).map(([id, s]) => {
@@ -974,7 +979,7 @@
         const r0 = mk('div', 'dev2 off'), h0 = mk('div', 'dev');
         const d0 = mk('span', 'dot off'); d0.setAttribute('aria-hidden', 'true');
         h0.append(d0, dlEl('strong', id, ''), mk('span', 'state bad', 'Sin señal'), mk('span', 'mute', 'nunca conectó'));
-        r0.append(h0, cmdBar(id));
+        r0.append(h0, cmdBar(id, true));
         return r0;
       }
       const age = now - new Date(s.at).getTime();
@@ -1016,10 +1021,12 @@
         b.addEventListener('click', () => showOnMap(lp.lat, lp.lng, label(id)));
         dl.append(metric('Ubicación', mk('span', pi.fresh ? '' : 'bad', coordTxt(lp.lat, lp.lng) + ' · ' + pi.txt + pi.acc), b));
       } else dl.append(metric('Ubicación', mk('span', 'bad', 'Sin posición GPS válida todavía')));
-      row.append(head, dl, cmdBar(id));
+      row.append(head, dl, cmdBar(id, true));
       return row;
     });
     keepFocus(() => box.replaceChildren(...rows));
+    if (fa && fa.dataset && fa.dataset.fk && fa.isConnected && document.activeElement !== fa) fa.focus({ preventScroll: true });
+    pruneCmdBars(new Set([...devState.keys(), ...never]));   // sin barras de cascos que ya no estan
   }
   function noteDevice(id, at, battery, payload) {
     const cur = devState.get(id);
@@ -1064,7 +1071,7 @@
     const o = oldestPending();
     $('kpiPendN').textContent = String(pending.size);
     $('kpiPend').classList.toggle('alert', pending.size > 0);
-    $('kpiPendAge').textContent = o ? 'La más antigua: hace ' + clock((Date.now() - new Date(o.created_at).getTime()) / 1000) : 'Sin alertas pendientes';
+    $('kpiPendAge').textContent = o ? 'La más antigua: hace ' + clock((Date.now() - new Date(o.created_at).getTime()) / 1000) : connDown() ? 'Sin conexión: no se puede confirmar' : 'Sin alertas pendientes';
     $('pendList').querySelectorAll('.age').forEach(el => {
       el.textContent = 'hace ' + clock((Date.now() - Number(el.dataset.t)) / 1000);
     });
@@ -1122,7 +1129,9 @@
     const have = [...ul.children];
     if (want.length !== have.length || want.some((n, i) => n !== have[i])) ul.replaceChildren(...want);
     if (!want.length) {   // [UI] estado vacio
-      const e = mk('li', 'empty empty-ok'); e.append(icon('ok', 28), document.createTextNode('Sin alertas pendientes. Todo en orden.'));
+      const down = connDown();   // sin conexion no se puede afirmar "todo en orden"
+      const e = mk('li', down ? 'empty bad' : 'empty empty-ok');
+      e.append(icon(down ? 'sos' : 'ok', 28), document.createTextNode(down ? 'Sin conexión con alertas: no se puede confirmar que no haya alertas pendientes.' : 'Sin alertas pendientes. Todo en orden.'));
       ul.append(e);
     }
     renderKpiAge();
@@ -1130,19 +1139,40 @@
   let tickN = 0;
   setInterval(() => { if (document.hidden) return; tickN++; renderKpiAge(); if (tickN % 10 === 0) { renderDevices(); evalHealth(); renderBroadcasts(); } }, 1000);   // oculta: sin trabajo (al volver se repinta)
 
+  // Error de "Atender": visible junto a la tarjeta (role=alert) y en un aviso flotante, en español y completo.
+  function attendError(btn, msg) {
+    const act = btn.parentElement;
+    if (act) {
+      let p = act.parentElement && act.parentElement.querySelector(':scope > .a-err');
+      if (!p) { p = mk('p', 'a-err bad'); p.setAttribute('role', 'alert'); act.after(p); }
+      p.textContent = msg;
+    }
+    toast(msg);
+  }
   async function attend(ev, btn, noteEl) {
     btn.disabled = true;
+    const lbl = btn.textContent; btn.textContent = 'Atendiendo…';
+    const done = () => { btn.disabled = false; btn.textContent = lbl; };
     const row = { event_id: ev.id };
     const t = noteEl ? noteEl.value.trim() : '';
     if (t) row.note = t;
-    const { error } = await sb.from('event_acks').insert(row);
+    let error = null;
+    try { error = (await sb.from('event_acks').insert(row)).error; } catch (e) { error = { message: String((e && e.message) || e) }; }
     if (error && error.code !== '23505') {
-      btn.disabled = false;
-      if (isAuthErr(error)) { sessionExpired(); return; }
-      $('status').textContent = 'No se pudo atender: ' + error.message; return;
+      done();
+      if (isAuthErr(error)) { sessionExpired(); attendError(btn, 'Sesión vencida: ingresá de nuevo para atender la alerta.'); return; }
+      const m = String(error.message || ''), c = String(error.code || '');
+      attendError(btn, c === '42501' || /row-level|permission/i.test(m)
+        ? 'No tenés permiso para atender esta alerta.'
+        : /fetch|network|timeout|conexi/i.test(m)
+          ? 'No se pudo atender la alerta: sin conexión con el servidor. Probá de nuevo; si sigue, avisá por radio.'
+          : 'No se pudo atender la alerta. Probá de nuevo; si sigue, avisá por radio.');
+      return;
     }
-    const { data } = await sb.from('event_acks').select(ACK_COLS).eq('event_id', ev.id).maybeSingle();
-    if (data) applyAck(data); else btn.disabled = false;
+    let data = null;
+    try { data = (await sb.from('event_acks').select(ACK_COLS).eq('event_id', ev.id).maybeSingle()).data; } catch (_) {}
+    // El acuse ya quedo guardado: si no se pudo releer, se muestra como atendida igual.
+    applyAck(data || { event_id: ev.id, acked_by_email: $('who').dataset.email || null, acked_at: new Date().toISOString(), note: t || null });
   }
 
   // ---- Escalamiento (solo lectura de public.escalation_rules) ----
@@ -1150,10 +1180,11 @@
     const el = $('escState');
     try {
       const { data, error } = await sb.from('escalation_rules').select('after_seconds,enabled').limit(10);
-      if (error || !Array.isArray(data) || !data.length) { el.textContent = 'Escalamiento no configurado'; return; }
+      if (error) { if (isAuthErr(error)) sessionExpired(); el.textContent = 'No se pudo leer el escalamiento (se reintenta solo)'; return; }
+      if (!Array.isArray(data) || !data.length) { el.textContent = 'Escalamiento no configurado'; return; }
       const on = data.filter(r => r.enabled === true && num(r.after_seconds) != null).map(r => r.after_seconds);
       el.textContent = on.length ? 'Escalamiento: activo en ' + Math.min(...on) + ' s' : 'Escalamiento: inactivo';
-    } catch (_) { el.textContent = 'Escalamiento no configurado'; }
+    } catch (_) { el.textContent = 'No se pudo leer el escalamiento (se reintenta solo)'; }
   }
 
   // ---- Evacuacion y mensajes a cascos (public.broadcasts / broadcast_acks; docs/PROTOCOLO-CENTRO.md seccion 4) ----
@@ -1253,7 +1284,8 @@
   function bcError(error) {
     const m = String(error.message || ''), c = String(error.code || '');
     if (c === '54000' || /rate limit/i.test(m)) return 'Demasiadas órdenes en poco tiempo (máximo 6 por minuto). Esperá unos segundos y probá de nuevo.';
-    if (c === '42501' || c === 'PGRST301' || /permission|row-level|not authorized|jwt|rol no autorizado/i.test(m)) return 'No tenés permiso para enviar órdenes a los cascos.';
+    if (isAuthErr(error)) { sessionExpired(); return 'Sesión vencida: ingresá de nuevo y reenviá la orden.'; }
+    if (c === '42501' || /permission|row-level|not authorized|rol no autorizado/i.test(m)) return 'No tenés permiso para enviar órdenes a los cascos.';
     return 'No se pudo enviar la orden: ' + m;
   }
   async function sendBroadcast(kind, message, dest, rep, errEl, btn) {
@@ -1590,7 +1622,11 @@
       : sb.from('people').select(PPL_COLS).is('deleted_at', null).order('full_name'));
     const g = await pull('groups', () => sb.from('groups').select(GRP_COLS).is('deleted_at', null).order('name'));
     const a = await pull('assigns', () => sb.from('assignments').select(ASG_COLS).order('starts_at', { ascending: false }).limit(1000));
-    EQ.devices = d || []; EQ.people = p || []; EQ.groups = g || []; EQ.assigns = a || [];
+    // Un fallo de lectura (null) no borra lo ya cargado: el error queda en EQ.err.
+    if (d !== null) EQ.devices = d;
+    if (p !== null) EQ.people = p;
+    if (g !== null) EQ.groups = g;
+    if (a !== null) EQ.assigns = a;
     EQ.loaded = true;
     if (rebuildPersonOf()) refreshLabels(); else { fillDest(); renderMapLists(); }
     if (!$('panelEq').classList.contains('hidden')) renderEq();
@@ -2517,11 +2553,31 @@
   function ensureAudio() {
     try {
       audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      audioCtx.onstatechange = () => { if (pending.size) syncAlarm(); };
-      if (audioCtx.state === 'suspended') { const r = audioCtx.resume(); if (r && r.catch) r.catch(() => {}); }
+      audioCtx.onstatechange = () => { syncAudioBar(); if (pending.size) syncAlarm(); };
+      if (audioCtx.state === 'suspended') {   // el navegador lo bloquea hasta un gesto: se reintenta en cada gesto y en alarmTick
+        const r = audioCtx.resume();
+        if (r && r.then) r.then(() => { syncAudioBar(); if (pending.size) pumpSiren(); }, () => {});
+      }
     } catch (_) {}
+    syncAudioBar();
     return audioOn();
   }
+  // Aviso fijo mientras el audio siga bloqueado: sin sonido, una alerta pasaria inadvertida.
+  function syncAudioBar() {
+    const inApp = !$('app').classList.contains('hidden');
+    setBar('audBar', inApp && !audioOn() ? 'Sirena silenciada: tocá para activar' : '', 'Activar sirena', () => { ensureAudio(); sirenBurst(); });
+  }
+  // Pantalla encendida mientras haya sesion (un monitor de sala que se apaga no avisa nada).
+  let wakeLock = null, wakeBusy = false;
+  async function holdWake() {
+    if (!navigator.wakeLock || wakeLock || wakeBusy || document.hidden || $('app').classList.contains('hidden')) return;
+    wakeBusy = true;
+    try {
+      const w = await navigator.wakeLock.request('screen');
+      wakeLock = w; w.addEventListener('release', () => { if (wakeLock === w) wakeLock = null; });
+    } catch (_) {} finally { wakeBusy = false; }
+  }
+  function dropWake() { const w = wakeLock; wakeLock = null; if (w) { try { w.release(); } catch (_) {} } }
   // Permiso de notificaciones: solo desde un gesto del usuario (boton "Probar sirena" o primer clic ya dentro del panel).
   function askNotif() {
     if (notifAsked || !('Notification' in window) || Notification.permission !== 'default' || $('app').classList.contains('hidden')) return;
@@ -2534,6 +2590,8 @@
     renderKpiAge();
     ensureAudio();
     if (pending.size) syncAlarm();
+    holdWake();      // el navegador suelta el wake lock al ocultarse la pestaña
+    resyncNow();     // la pestaña pudo estar dormida: releer eventos y cascos
   });
   function sirenBurst() {   // una rafaga suelta (boton "Probar sirena")
     if (!audioOn()) return;
@@ -2639,6 +2697,7 @@
     autoRecSync();
     if (!pending.size) {
       clearInterval(sirenT); sirenT = null; sirenMuted = false; overlayHidden = false;
+      document.title = 'Vigía · Casco Inteligente';
       stopSiren(); setOverlay(false); ovMute.disabled = false; closeNotifs(); return;
     }
     const last = lastPending();
@@ -3046,6 +3105,11 @@
   const CMD_WAIT_MS = 40000, CMD_POLL_MS = 2000, CMD_KEEP = 40;
   const CMD = { avail: 'unknown', items: new Map(), last: new Map(), torch: new Map(), ch: null, timer: null, polling: false, seq: 0 };
   const cmdViews = new Set();
+  // Barra de comandos de la lista "Cascos": una por casco, reutilizada en cada repintado (antes se recreaba en cada heartbeat).
+  const cmdBars = new Map();   // device_id -> vista
+  function pruneCmdBars(keep) {
+    for (const [id, v] of cmdBars) if (!keep.has(id)) { cmdBars.delete(id); cmdViews.delete(v); }
+  }
   const ACTION_LBL = { photo: 'Foto', torch_on: 'Linterna encendida', torch_off: 'Linterna apagada', restart_agent: 'Reinicio del agente', ping: 'Enlace' };
   function announce(t) { const el = $('cmdLive'); if (el) el.textContent = t; }
   function cmdText(it) {
@@ -3064,7 +3128,8 @@
   function cmdRefresh(id) {
     for (const v of [...cmdViews]) { if (!v.box.isConnected) { cmdViews.delete(v); continue; } if (!id || v.id === id) v.update(); }
   }
-  function cmdBar(id) {
+  function cmdBar(id, shared) {
+    if (shared && cmdBars.has(id)) { const c = cmdBars.get(id); c.update(); return c.box; }
     const box = mk('div', 'cmdbar'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Comandos a pedido del casco ' + id);
     const mkb = (txt, k, aria) => { const b = mk('button', 'ghost', txt); b.type = 'button'; b.dataset.fk = id + '|' + k; b.setAttribute('aria-label', aria); return b; };
     const bPhoto = mkb('Sacar foto', 'photo', 'Sacar una foto con el casco ' + id);
@@ -3098,6 +3163,7 @@
       fillThumbs(strip, id);
     } };
     v.update(); cmdViews.add(v);
+    if (shared) cmdBars.set(id, v);
     return box;
   }
   const cmdBusy = (dev, actions) => [...CMD.items.values()].some(x => x.dev === dev && x.state === 'pending' && actions.includes(x.action));
@@ -3780,7 +3846,7 @@
     CMD.items.clear(); CMD.last.clear(); CMD.torch.clear(); CMD.avail = 'unknown';
     clearInterval(CMD.timer); CMD.timer = null; CMD.polling = false;
     if (CMD.ch) { try { sb.removeChannel(CMD.ch); } catch (_) {} CMD.ch = null; }
-    photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear(); IMG.clear(); delSel.clear();
+    photos.clear(); evAlerts.clear(); signedCache.clear(); cmdViews.clear(); cmdBars.clear(); IMG.clear(); delSel.clear();
     for (const a of frames.values()) a.forEach(f => { try { URL.revokeObjectURL(f.url); } catch (_) {} });
     frames.clear();
     QR.view = 'unknown'; repQ.reset(); histQ.reset();
@@ -3794,18 +3860,86 @@
     if (expired || manualLogout) return;
     expired = true;
     $('status').textContent = 'Sesión vencida';
+    setBar('connBar', '');   // el aviso de sesion vencida manda
     const bar = mk('div', 'sess-bar'); bar.id = 'sessBar'; bar.setAttribute('role', 'alert');
     const go = mk('button', '', 'Volver al login'); go.type = 'button';
     bar.append(mk('span', '', 'Sesión vencida, ingresá de nuevo. Los datos que ves pueden estar desactualizados.'), go);
     go.addEventListener('click', () => {
       bar.remove(); overlayHidden = true; setOverlay(false);
+      teardownSession();   // sirena, intervalos, paneles en vivo y rol de la sesion anterior
       $('app').classList.add('hidden'); $('login').classList.remove('hidden');
       $('loginErr').textContent = 'Sesión vencida, ingresá de nuevo';
       $('password').value = ''; $('password').focus();
     });
-    document.body.prepend(bar);
+    sysBars().prepend(bar);
   }
-  const clearExpired = () => { expired = false; const b = $('sessBar'); if (b) b.remove(); };
+  const clearExpired = () => { expired = false; const b = $('sessBar'); if (b) b.remove(); updateConnBar(); };
+
+  // ---- Avisos fijos arriba (conexion, audio) y aviso flotante de errores de accion ----
+  function sysBars() {
+    let c = $('sysBars');
+    if (!c) { c = mk('div'); c.id = 'sysBars'; document.body.prepend(c); }
+    return c;
+  }
+  // text vacio = quitar el aviso. role=alert se anuncia al crearse; los cambios de texto no se repiten.
+  function setBar(id, text, btnLabel, onClick) {
+    let b = $(id);
+    if (!text) { if (b) b.remove(); return; }
+    if (!b) {
+      b = mk('div', 'sess-bar'); b.id = id; b.setAttribute('role', 'alert');
+      b.append(mk('span'));
+      if (btnLabel) { const x = mk('button', '', btnLabel); x.type = 'button'; x.addEventListener('click', onClick); b.append(x); }
+      sysBars().append(b);
+    }
+    const sp = b.firstChild; if (sp.textContent !== text) sp.textContent = text;
+  }
+  let toastT = null;
+  function toast(msg) {
+    let t = $('vigToast');
+    if (!t) { t = mk('div', 'vig-toast'); t.id = 'vigToast'; t.setAttribute('role', 'alert'); document.body.append(t); }
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 15000);
+  }
+  function updateConnBar() {
+    const inApp = !$('app').classList.contains('hidden');
+    const down = inApp && connDown();
+    setBar('connBar', down && !expired ? 'Sin conexión con alertas: puede haber alertas sin mostrar' : '', 'Reintentar', () => resyncNow());
+    if (down !== connWasDown) { connWasDown = down; if (inApp) renderPending(); }   // "Todo en orden" no puede quedar en pantalla sin canal
+  }
+  // Resultado de cada lectura de eventos: marca la salud de la conexion y avisa de lo recuperado.
+  function noteSync(r) {
+    syncFail = !!(r.error || r.truncated);
+    if (!r.error && !netOff && !rtDown && channel && channel.state === 'joined' && $('status').textContent !== 'En vivo') $('status').textContent = 'En vivo';
+    updateConnBar();
+    if (r.error && isAuthErr(r.error)) sessionExpired();
+    if (r.recovered) toast(r.recovered === 1 ? 'Se recuperó 1 alerta pendiente que no había llegado en vivo.' : 'Se recuperaron ' + r.recovered + ' alertas pendientes que no habían llegado en vivo.');
+  }
+  // Red de seguridad: Realtime es "como mucho una vez", asi que se relee cada ~30 s, al volver visible y al volver la red.
+  const RESYNC_MS = 30000;
+  let resyncT = null;
+  function resyncNow() {
+    if ($('app').classList.contains('hidden') || expired) return;
+    if (channel && (channel.state === 'closed' || channel.state === 'errored')) { rtDown = true; updateConnBar(); }
+    syncEvents();   // noteSync() procesa el resultado (error, recuperados, sirena via alertSos)
+    loadDevices();
+  }
+  // Salir de la sesion (vencida o nueva): sirena, intervalos, paneles en vivo y rol no pueden sobrevivir en el login.
+  function teardownSession() {
+    clearInterval(resyncT); resyncT = null; clearInterval(escTimer); escTimer = null;
+    pending.clear(); syncAlarm();   // sin pendientes: apaga sirena, cartel, titulo e intervalo
+    dropWake();
+    rtDown = syncFail = false; connWasDown = false;
+    setBar('connBar', ''); setBar('audBar', '');
+    for (const L of [...lives.values()]) {
+      try { if (L.stop) Promise.resolve(L.stop()).catch(() => {}); } catch (_) {}
+      if (L.sec) L.sec.remove();
+    }
+    lives.clear();
+    const lv = $('lives'); if (lv) { lv.replaceChildren(); lv.classList.add('hidden'); }
+    ROLE = 'viewer';
+    for (const c of [channel, chOrders, chGeo]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
+    channel = chOrders = chGeo = null;
+  }
 
   // ---- Sincronizacion de eventos: carga inicial y resync tras reconexion (dedupe por id) ----
   const PEND_DAYS = 7;
@@ -3819,15 +3953,29 @@
     }
     return { error: null, rows: out };
   }
+  // Alertas de los ultimos 7 dias, paginadas (antes: limit 500 fijo que dejaba afuera los SOS mas viejos sin avisar).
+  const OLD_PAGE = 500, OLD_PAGES = 6;
+  async function fetchOlds(since) {
+    const rows = [];
+    for (let p = 0; p < OLD_PAGES; p++) {
+      const r = await sb.from('events').select(EV_COLS).in('type', ['sos', 'fall', 'geofence', 'not_worn', 'inactive']).gte('created_at', since)
+        .order('created_at', { ascending: false }).range(p * OLD_PAGE, (p + 1) * OLD_PAGE - 1);
+      if (r.error) return { error: r.error, rows };
+      const d = Array.isArray(r.data) ? r.data : [];
+      rows.push(...d);
+      if (d.length < OLD_PAGE) return { error: null, rows };
+    }
+    return { error: null, rows, truncated: true };
+  }
   async function doSyncEvents() {
     const since = new Date(Date.now() - PEND_DAYS * 86400000).toISOString();
     const [recent, olds] = await Promise.all([
       sb.from('events').select(EV_COLS).neq('type', 'heartbeat').neq('type', 'location').order('created_at', { ascending: false }).limit(50),
-      sb.from('events').select(EV_COLS).in('type', ['sos', 'fall', 'geofence', 'not_worn', 'inactive']).gte('created_at', since).order('created_at', { ascending: false }).limit(500),
+      fetchOlds(since),
     ]);
     if (recent.error) return { error: recent.error };
     const byId = new Map(recent.data.map(e => [e.id, e]));
-    const extra = olds.error || !Array.isArray(olds.data) ? [] : olds.data.filter(needsAttention);
+    const extra = olds.rows.filter(needsAttention);
     const cand = new Map();
     for (const e of [...recent.data, ...extra]) if (needsAttention(e)) cand.set(e.id, e);
     const ar = cand.size ? await fetchAcks([...cand.keys()]) : { error: null, rows: [] };
@@ -3838,21 +3986,25 @@
     // Pendientes viejos (hasta 7 dias) que quedaron fuera de los ultimos 50: solo si el ack se pudo consultar entero.
     if (!ar.error) for (const e of extra) if (!acks.has(e.id)) byId.set(e.id, e);
     const list = [...byId.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    let recovered = 0;
     for (const ev of list) {
       noteDevice(ev.device_id, ev.created_at, ev.battery);
       if (ev.lat != null && ev.lng != null) noteLoc(ev);
-      if (evLoaded && !cards.has(ev.id) && needsAttention(ev) && !acks.has(ev.id)) alertSos(ev);   // llego mientras el canal estaba caido
+      if (evLoaded && !cards.has(ev.id) && needsAttention(ev) && !acks.has(ev.id)) { recovered++; alertSos(ev); }   // llego mientras el canal estaba caido: suena la sirena
       render(ev);
     }
     evLoaded = true;
     syncEmpty(); renderPending();
-    return { error: null };
+    // Si falto la lectura de viejos o de acuses, lo cargado se muestra igual pero se devuelve el error (aviso fijo + reintento).
+    const err = olds.error || ar.error || null;
+    return { error: err, partial: !!err, recovered, truncated: !!olds.truncated };
   }
   // Una sola consulta a la vez; si piden otra mientras corre, se repite al terminar.
   function syncEvents() {
     if (syncing) { syncAgain = true; return syncing; }
     syncing = (async () => {
-      try { return await doSyncEvents(); } catch (e) { return { error: e }; }
+      try { const r = await doSyncEvents(); noteSync(r); return r; }
+      catch (e) { const r = { error: e }; noteSync(r); return r; }
       finally { syncing = null; if (syncAgain) { syncAgain = false; syncEvents(); } }
     })();
     return syncing;
@@ -3877,6 +4029,7 @@
 
   async function start(session) {
     const gen = ++startGen;
+    teardownSession();   // sesion anterior (o reintento): sin sirena, paneles en vivo ni rol heredados
     $('login').classList.add('hidden');
     $('app').classList.remove('hidden');
     $('logout').classList.remove('hidden');
@@ -3895,6 +4048,9 @@
     cards.clear(); pending.clear(); acks.clear(); pendEls.clear(); devOf.clear(); evAt.clear();
     devState.clear(); hAlerts.clear(); hSig = ''; posLoaded = false; lastPos.clear(); trail.clear(); geoInfos.clear(); lastEv = null;
     evLoaded = false;
+    netOff = navigator.onLine === false;
+    ensureAudio();   // sin gesto previo queda bloqueado: syncAudioBar muestra "Sirena silenciada" hasta el primer toque
+    holdWake();
 
     // 1) Canal Realtime PRIMERO: lo que entre durante la carga inicial no se pierde (se deduplica por id).
     if (channel) sb.removeChannel(channel);
@@ -3918,10 +4074,14 @@
           // Tras una caida (o recien suscripto): releer eventos y acuses desde Supabase; lo repetido se descarta por id.
           const was = lostCh; lostCh = false;
           if (evLoaded || was) {
-            syncEvents();
+            // el aviso de "sin conexion" baja recien cuando termina la relectura (si falla, sigue por syncFail)
+            syncEvents().then(() => { if (channel && channel.state === 'joined') { rtDown = false; updateConnBar(); } });
             if (was) { loadDevices(); loadLocations(); loadBroadcasts(); }
-          }
-        } else if (s === 'CLOSED' || s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') lostCh = true;
+          } else { rtDown = false; updateConnBar(); }
+        } else {
+          if (s === 'CLOSED' || s === 'CHANNEL_ERROR' || s === 'TIMED_OUT') lostCh = true;
+          rtDown = true; updateConnBar();
+        }
       });
     // Canales aparte: si una tabla nueva todavia no esta publicada en Realtime, no se cae el feed principal.
     for (const c of [chOrders, chGeo]) if (c) sb.removeChannel(c);
@@ -3939,15 +4099,17 @@
     // 2) Carga inicial (los medios se piden en segundo plano dentro de render).
     const r = await syncEvents();
     if (gen !== startGen) return;
-    if (r.error) {   // [UI] estado de error con reintento
+    if (r.error && !r.partial) {   // [UI] estado de error con reintento (si fue parcial, lo cargado se ve y el aviso fijo + resync siguen)
       if (isAuthErr(r.error)) { $('pendBox').removeAttribute('aria-busy'); sessionExpired(); return; }
-      $('status').textContent = 'Sin permiso o error: ' + r.error.message;
+      $('status').textContent = 'Sin conexión con alertas';
+      if (!resyncT) resyncT = setInterval(resyncNow, RESYNC_MS);
       const eb = mk('li', 'err-state'), rb = mk('button', '', 'Reintentar'); rb.type = 'button';
       rb.addEventListener('click', () => start(session));
-      eb.append(mk('strong', '', 'No se pudieron cargar las alertas'), mk('span', '', r.error.message || 'Error de conexión'), rb);
+      eb.append(mk('strong', '', 'No se pudieron cargar las alertas'), mk('span', '', 'Puede haber alertas sin mostrar. Revisá la conexión y tocá Reintentar.'), rb);
       $('pendList').replaceChildren(eb); $('pendBox').removeAttribute('aria-busy');
       return;
     }
+    if (!resyncT) resyncT = setInterval(resyncNow, RESYNC_MS);
     loadEscalation(); loadBroadcasts(); loadGeo(); loadArchive();
     (async () => {   // cascos y posiciones por casco: primero se conocen los registrados
       await Promise.allSettled([loadEquipos()]);
@@ -4002,12 +4164,12 @@
   // Limpieza al cerrar la pagina (no si va a bfcache): timers y canales.
   window.addEventListener('pagehide', e => {
     if (e.persisted) return;
-    for (const t of [escTimer, sirenT, CMD.timer, eqTimer, geoTimer, mapTimer, rqT, armTimer]) { clearInterval(t); clearTimeout(t); }
+    for (const t of [escTimer, resyncT, sirenT, CMD.timer, eqTimer, geoTimer, mapTimer, rqT, armTimer]) { clearInterval(t); clearTimeout(t); }
     stopSiren(); closeNotifs();
     for (const c of [channel, chOrders, chGeo, CMD.ch]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
   });
-  window.addEventListener('offline', () => { $('status').textContent = 'Sin conexión a internet'; });
-  window.addEventListener('online', () => { $('status').textContent = 'Reconectando…'; });
+  window.addEventListener('offline', () => { netOff = true; $('status').textContent = 'Sin conexión a internet'; updateConnBar(); });
+  window.addEventListener('online', () => { netOff = false; $('status').textContent = 'Reconectando…'; updateConnBar(); resyncNow(); });
 
   sb.auth.getSession().then(({ data }) => { if (data.session) start(data.session); });
 })();

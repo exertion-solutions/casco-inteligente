@@ -417,7 +417,7 @@ fieldset.layers legend { font-size: var(--fs-2); color: var(--mute); padding: 0 
 @media print {
   :root, :root[data-theme] { --bg: #fff; --surface: #fff; --surface-2: #fff; --ink: #000; --mute: #333; --line: #999; --line-strong: #666; --sos: #000; --pend: #000; --ok: #000; --accent: #000; }
   body { background: #fff; color: #000; }
-  .nav, header.top, #sos, .toolbar, .qform, .pager, #sosOverlay, #saveOverlay, .sess-bar, .skip { display: none !important; }
+  .nav, header.top, #sos, .toolbar, .qform, .pager, #sosOverlay, #saveOverlay, .sess-bar, #sysBars, .vig-toast, .skip { display: none !important; }
   #app { display: block; }
   .content { padding: 0; }
   .print-only { display: block !important; font-weight: 700; margin-bottom: 8px; }
@@ -463,6 +463,12 @@ fieldset.layers legend { font-size: var(--fs-2); color: var(--mute); padding: 0 
 .sess-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 1100; display: flex; flex-wrap: wrap; gap: var(--sp-3); align-items: center; justify-content: center;
   padding: var(--sp-3) var(--sp-4); background: var(--sos-solid); color: var(--on-sos); font-weight: 700; }
 .sess-bar button { min-height: 44px; background: var(--on-sos); color: var(--sos-solid); border: 0; border-radius: var(--r); padding: 0 var(--sp-4); font-weight: 700; cursor: pointer; }
+#sysBars { position: fixed; top: 0; left: 0; right: 0; z-index: 1100; display: flex; flex-direction: column; }   /* avisos fijos apilados: sesion, conexion, sirena */
+#sysBars .sess-bar { position: static; }
+.vig-toast { position: fixed; left: 50%; bottom: calc(var(--bar-h, 64px) + var(--sp-3)); transform: translateX(-50%); z-index: 1100; max-width: min(92vw, 560px);
+  padding: var(--sp-3) var(--sp-4); background: var(--sos-solid); color: var(--on-sos); border-radius: var(--r); font-weight: 700; }
+.vig-toast[hidden] { display: none; }
+.a-err { margin: 0; font-weight: 700; }
 
 /* ---------- Marcador de casco en el mapa + enlace a comandos ---------- */
 .hm { background: none; border: 0; }
