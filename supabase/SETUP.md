@@ -320,6 +320,30 @@ Permite que el **admin** borre una foto o video del almacenamiento desde el viso
 
 **16.3** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
 
+## 17. Avisos por correo de alertas (opcional, despues del paso 16)
+
+Manda un correo a los responsables cuando entra un SOS, una caida, una zona o un "sin movimiento", aunque nadie mire el panel, y un recordatorio si nadie lo atiende.
+Viene **apagado**. Contrato y detalles: `docs/PROTOCOLO-AVISOS.md`.
+
+**17.1 Crear las tablas.** **SQL Editor** > **New query**, pega TODO `supabase/migrations/014_avisos_correo.sql`, **Run**. Debe decir `Success`
+(si dice que `pg_net` o `pg_cron` no estan disponibles: **Database** > **Extensions** > activarlas y volver a ejecutar). Se puede repetir.
+
+**17.2 Publicar la funcion `notify`.**
+1. **Edge Functions** > **Deploy a new function** > **Via Editor**, nombre `notify`; pega TODO `supabase/functions/notify/index.ts` > **Deploy**.
+2. Abri la funcion > **Details** y **desactiva "Verify JWT"**. Guarda. (No hay que cargar ninguna variable ni secreto: la funcion lee la clave y el canal de la base.)
+
+**17.3 Crear el canal de correo** (Power Automate / Make / Zapier): un flujo con desencadenador "Cuando se recibe una solicitud HTTP" y accion "Enviar un correo (V2)". Para: `join(triggerBody()?['to'], ';')`, Asunto: `subject`, Cuerpo: `html` (es HTML = si). Copia la URL del desencadenador.
+
+**17.4 Configurar desde el visor** (admin): **Constancias** > **Empleador** > **Avisos por correo**. Pega la URL del flujo > **Guardar canal** (no se vuelve a mostrar). Agrega los destinatarios y su nivel minimo (Critica: SOS y caida; Alta: + peligro e inmovilidad; Media: + sin usar y zonas restringidas). La clave interna se genera sola.
+
+**17.5 Probar y activar.** **Enviar correo de prueba**: tiene que llegar. Despues **Activar avisos**.
+
+**17.6 Opcional: Resend** en vez de Power Automate: variable `RESEND_API_KEY` en la funcion y `update public.notify_config set resend_from = 'Avisos <avisos@tu-dominio>';`.
+
+**17.7 Ver que paso.** `select * from public.notify_log order by sent_at desc;` (una fila por alerta y tipo: `ok` o `error` con el motivo). Apagar: boton **Desactivar avisos** o `update public.notify_config set enabled = false;`.
+
+**17.8** Volve a correr `supabase/tests/rls_test.sql` (paso 7): todo en `true`.
+
 ## Si algo falla
 
 | Sintoma | Causa probable |

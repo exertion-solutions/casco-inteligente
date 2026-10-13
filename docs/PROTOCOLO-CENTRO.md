@@ -18,6 +18,7 @@ estado de cada casco (ver 3) y accesos a Evacuacion y Mensaje. Sonido y titulo c
   y registra en `escalations`. Reintento 1 vez; no loguea la URL.
 - Disparo: `pg_cron` + `pg_net` cada 1 minuto (idempotente; extension habilitada en la migracion si no lo esta).
 - Tambien aviso inmediato opcional (`after_seconds = 0`) a un segundo webhook.
+- Aviso por **correo** (independiente de Teams; inmediato y recordatorio si nadie atiende): ver `docs/PROTOCOLO-AVISOS.md` (migracion 014, Edge Function `notify`).
 
 ## 3. Salud del equipo
 - El agente agrega a cada heartbeat (5 min; 30 s mientras hay alerta o video) `payload`:

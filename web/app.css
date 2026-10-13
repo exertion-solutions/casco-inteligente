@@ -667,3 +667,7 @@ button.trash.icon-only { min-width: 44px; padding: 0; }
 }
 /* 10 pestañas en celular: la barra se desliza; cada una conserva >= 48 px de ancho para tocar */
 @media (max-width: 1023px) { .nav [role="tab"] { min-width: 52px; } }
+/* Avisos por correo (Constancias > Empleador, solo admin) */
+.nf-box { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
+.nf-list { list-style: none; padding: 0; margin: var(--sp-3) 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.nf-list li { overflow-wrap: anywhere; }

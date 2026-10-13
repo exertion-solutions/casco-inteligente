@@ -1285,17 +1285,39 @@
     t.focus({ preventScroll: false });
   }
 
-  // ---- Escalamiento (solo lectura de public.escalation_rules) ----
+  // ---- Aviso a responsables: por correo (rpc notify_status, migracion 014; docs/PROTOCOLO-AVISOS.md) y por Teams (escalation_rules, solo lectura) ----
+  // viewer/auditor solo saben si el aviso por correo esta activado; el detalle (destinatarios, recordatorio) lo ve el admin.
+  const NOTIFY = { st: null };   // ultima respuesta de notify_status (null = migracion 014 sin aplicar o error)
+  const secTxt = n => (n >= 60 && n % 60 === 0 ? (n / 60) + ' min' : n + ' s');
   async function loadEscalation() {
     const el = $('escState');
+    let rules = null, teamsErr = false;
     try {
       const { data, error } = await sb.from('escalation_rules').select('after_seconds,enabled').limit(10);
-      if (error) { if (isAuthErr(error)) sessionExpired(); el.textContent = 'No se pudo leer el aviso a responsables (se reintenta solo)'; return; }
-      if (!Array.isArray(data) || !data.length) { el.textContent = 'Aviso a responsables: sin configurar'; return; }
-      const on = data.filter(r => r.enabled === true && num(r.after_seconds) != null).map(r => r.after_seconds);
-      const n = on.length ? Math.min(...on) : 0, t = n >= 60 && n % 60 === 0 ? (n / 60) + ' min' : n + ' s';
-      el.textContent = on.length ? 'Aviso a responsables: si nadie atiende una alerta en ' + t + ', se avisa a los responsables' : 'Aviso a responsables: desactivado';
-    } catch (_) { el.textContent = 'No se pudo leer el aviso a responsables (se reintenta solo)'; }
+      if (error) { if (isAuthErr(error)) sessionExpired(); teamsErr = true; } else rules = Array.isArray(data) ? data : [];
+    } catch (_) { teamsErr = true; }
+    const on = (rules || []).filter(r => r.enabled === true && num(r.after_seconds) != null).map(r => r.after_seconds);
+    const r = await tryQ(() => sb.rpc('notify_status'));
+    if (r.error && isAuthErr(r.error)) sessionExpired();
+    const s = !r.error && r.data && typeof r.data === 'object' ? r.data : null;
+    NOTIFY.st = s;
+    if (!s) {   // sin migracion 014 (o sin permiso): se mantiene el texto de Teams de siempre
+      if (teamsErr) { el.textContent = 'No se pudo leer el aviso a responsables (se reintenta solo)'; return; }
+      if (!rules || !rules.length) { el.textContent = 'Aviso a responsables: sin configurar'; return; }
+      el.textContent = on.length ? 'Aviso a responsables: si nadie atiende una alerta en ' + secTxt(Math.min(...on)) + ', se avisa a los responsables' : 'Aviso a responsables: desactivado';
+      return;
+    }
+    let mail;
+    if (s.ready === true) {
+      mail = 'por correo activado';
+      if (isAdmin() && s.channel_ok === false) mail = 'por correo activado, pero falta el canal de envío (no sale ningún aviso)';
+      else if (isAdmin() && num(s.recipients) != null) {
+        mail = s.recipients === 0 ? 'por correo activado, pero sin destinatarios (no sale ningún aviso)'
+          : 'por correo activado (' + (s.recipients === 1 ? '1 destinatario' : s.recipients + ' destinatarios') + (num(s.remind_after_s) ? ', recordatorio a los ' + secTxt(s.remind_after_s) : '') + ')';
+      }
+    } else if (isAdmin() && s.enabled === true && s.secret_ok === false) mail = 'por correo: falta cargar la clave en el servidor (no sale ningún aviso)';
+    else mail = 'por correo desactivado';
+    el.textContent = 'Aviso a responsables: ' + mail + (on.length ? ' · por Teams si nadie atiende en ' + secTxt(Math.min(...on)) : '');
   }
 
   // ---- Evacuacion y mensajes a cascos (public.broadcasts / broadcast_acks; docs/PROTOCOLO-CENTRO.md seccion 4) ----
@@ -4791,6 +4813,162 @@
     if (CN.trunc.trn) out.push(mk('p', 'mute', 'Se muestran las primeras ' + CONST_MAX + ' capacitaciones: acotá las fechas para ver el resto.'));
     return out;
   }
+  // ---- Avisos por correo (admin): destinatarios, activar/desactivar y correo de prueba. Migracion 014; docs/PROTOCOLO-AVISOS.md ----
+  // notify_config / notify_recipients solo las lee y escribe un admin (RLS). La clave (webhook_secret) NO se ve ni se cambia desde aqui.
+  const NF = { avail: 'unknown', cfg: null, rec: [], err: null, p: null, host: null, msg: '', msgBad: false, busy: false };
+  const NF_SEV = [['critica', 'Crítica: SOS y caída'], ['alta', 'Alta: + peligro e inmovilidad'], ['media', 'Media: + sin usar y zonas restringidas']];
+  const MAIL_RE = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+  function loadNotify(force) {
+    if (NF.p && !force) return NF.p;
+    const p = (async () => {
+      const c = await tryQ(() => sb.from('notify_config').select('enabled,remind_after_s,cooldown_s').eq('id', 1).maybeSingle());
+      if (tableMissing(c)) { NF.avail = 'missing'; return; }
+      if (!c.error && c.data) {   // idempotente: genera la clave en la base si todavia no existe (nunca la devuelve)
+        const b = await tryQ(() => sb.rpc('notify_bootstrap'));
+        if (!b.error && NOTIFY.st && NOTIFY.st.secret_ok === false) loadEscalation();
+      }
+      const r = c.error ? null : await tryQ(() => sb.from('notify_recipients').select('email,active,min_severity').order('created_at'));
+      if (c.error || r.error) { NF.avail = 'error'; NF.err = c.error || r.error; if (NF.p === p) NF.p = null; return; }
+      NF.avail = 'ok'; NF.err = null; NF.cfg = c.data || null; NF.rec = Array.isArray(r.data) ? r.data : [];
+    })();
+    NF.p = p;
+    return p;
+  }
+  function notifyRender() { if (NF.host && NF.host.isConnected) keepFocus(() => NF.host.replaceChildren(...notifyBody())); }
+  function notifySay(msg, bad) { NF.msg = msg; NF.msgBad = !!bad; announce(msg); notifyRender(); }
+  function notifyErr(e) {
+    if (isAuthErr(e)) { sessionExpired(); return 'Sesión vencida: ingresá de nuevo.'; }
+    if (noPerm(e)) return 'Solo un administrador puede cambiar los avisos por correo.';
+    return 'No se pudo guardar: ' + errEs(e);
+  }
+  async function notifyTest() {
+    if (NF.busy) return;
+    NF.busy = true; notifySay('Enviando el correo de prueba…');
+    let text = '', bad = true;
+    try {
+      const { data, error } = await sb.functions.invoke('notify', { body: { test: true } });
+      if (!error) { bad = false; text = 'Prueba enviada a ' + (data && data.recipients === 1 ? '1 destinatario' : ((data && data.recipients) || '') + ' destinatarios') + '. Revisá la bandeja de entrada (y el correo no deseado).'; }
+      else {
+        const st = error.context && error.context.status;
+        text = st === 503 ? 'La función de avisos no tiene ningún canal de correo configurado (falta NOTIFY_WEBHOOK_URL o Resend en el servidor).'
+          : st === 409 ? 'No hay destinatarios activos: agregá al menos uno.'
+          : st === 401 ? 'El servidor no reconoció tu sesión de administrador: ingresá de nuevo.'
+          : st === 502 ? 'El canal de correo rechazó el envío: revisá la configuración del servidor.'
+          : 'No se pudo llamar a la función de avisos (¿está publicada?).';
+      }
+    } catch (_) { text = 'No se pudo llamar a la función de avisos (sin conexión o no publicada).'; }
+    NF.busy = false; notifySay(text, bad);
+  }
+  async function notifyChannel(url) {
+    const r = await tryQ(() => sb.rpc('notify_set_channel', { p_url: url }));
+    if (r.error) return notifySay(r.error.code === '22023' ? 'La URL tiene que empezar con https:// y tener hasta 500 caracteres.' : notifyErr(r.error), true);
+    logAccess('config_change', 'notify_config', { claves: ['webhook_url'] });
+    await loadEscalation();
+    notifySay(url ? 'Canal de envío guardado.' : 'Canal de envío quitado.');
+  }
+  async function notifyToggle() {
+    const next = !(NF.cfg && NF.cfg.enabled);
+    const r = await tryQ(() => sb.from('notify_config').update({ enabled: next }).eq('id', 1).select('enabled,remind_after_s,cooldown_s'));
+    if (r.error) return notifySay(notifyErr(r.error), true);
+    if (!Array.isArray(r.data) || !r.data.length) return notifySay('Falta la configuración inicial de los avisos: ejecutá la migración 014 completa.', true);
+    NF.cfg = r.data[0];
+    logAccess('config_change', 'notify_config', { claves: ['enabled'] });
+    loadEscalation();
+    notifySay(next ? 'Avisos por correo ACTIVADOS.' : 'Avisos por correo desactivados.');
+  }
+  async function notifyAdd(email, sev) {
+    const r = await tryQ(() => sb.from('notify_recipients').insert({ email, min_severity: sev, active: true }).select('email,active,min_severity'));
+    if (r.error) return notifySay(r.error.code === '23505' ? 'Ese correo ya está en la lista.' : notifyErr(r.error), true);
+    NF.rec = NF.rec.concat(Array.isArray(r.data) && r.data.length ? r.data : [{ email, active: true, min_severity: sev }]);
+    logAccess('config_change', 'notify_recipients', { accion: 'alta' });
+    loadEscalation();
+    notifySay('Destinatario agregado.');
+  }
+  async function notifySetSev(email, sev) {
+    const r = await tryQ(() => sb.from('notify_recipients').update({ min_severity: sev }).eq('email', email).select('email'));
+    if (r.error || !(r.data || []).length) return notifySay(r.error ? notifyErr(r.error) : 'No se pudo cambiar: actualizá la lista.', true);
+    const x = NF.rec.find(v => v.email === email); if (x) x.min_severity = sev;
+    logAccess('config_change', 'notify_recipients', { accion: 'nivel' });
+    notifySay('Nivel de aviso actualizado.');
+  }
+  async function notifyDel(email) {
+    const r = await tryQ(() => sb.from('notify_recipients').delete().eq('email', email).select('email'));
+    if (r.error) return notifySay(notifyErr(r.error), true);
+    NF.rec = NF.rec.filter(v => v.email !== email);
+    logAccess('config_change', 'notify_recipients', { accion: 'baja' });
+    loadEscalation();
+    notifySay('Destinatario quitado.');
+  }
+  function notifyBody() {
+    const out = [mk('h3', 'sec', 'Avisos por correo'),
+      mk('p', 'mute', 'Cuando entra una alerta, se manda un correo a estas personas aunque nadie esté mirando el panel. Si nadie la atiende, se manda un recordatorio. Los correos de los destinatarios solo los ve un administrador.')];
+    if (NF.avail === 'missing') { out.push(mk('p', 'state bad migration', 'Falta aplicar la migración 014 en el servidor: los avisos por correo todavía no están disponibles.')); return out; }
+    if (NF.avail === 'error') { out.push(errLine(NF.err, 'No se pudieron leer los avisos por correo')); return out; }
+    if (NF.avail !== 'ok') { out.push(mk('p', 'state', 'Consultando…')); return out; }
+    const on = !!(NF.cfg && NF.cfg.enabled);
+    const st = mk('p', 'okmsg', 'Estado: ' + (on ? 'ACTIVADO' : 'desactivado') + (NF.cfg ? ' · recordatorio a los ' + secTxt(NF.cfg.remind_after_s) + ' sin atender, un aviso por casco cada ' + secTxt(NF.cfg.cooldown_s) : ''));
+    const tg = mk('button', on ? 'ghost' : '', on ? 'Desactivar avisos' : 'Activar avisos'); tg.type = 'button'; tg.dataset.fk = 'nf-toggle';
+    tg.addEventListener('click', notifyToggle);
+    const stN = NOTIFY.st || {};
+    const faltan = [];
+    if (stN.channel_ok === false) faltan.push('la URL del canal de envío');
+    if (stN.secret_ok === false) faltan.push('la clave interna (se genera sola; recargá)');
+    if (!NF.rec.some(r => r.active)) faltan.push('al menos un destinatario');
+    out.push(st, rowOf(tg));
+    if (faltan.length) { const w = mk('p', 'state bad', 'Para que salgan avisos falta: ' + faltan.join(', ') + '.'); w.setAttribute('role', 'status'); out.push(w); }
+    // Canal de envio (flujo de Power Automate / Make / Zapier): la URL se guarda pero NUNCA se vuelve a mostrar ni a leer.
+    const cf = mk('form', 'noprint'); cf.noValidate = true;
+    const cu = inp('password', '', { maxLength: 500, autocomplete: 'off', placeholder: stN.channel_ok ? 'Configurado: pegá una URL nueva para cambiarla' : 'https://...' });
+    cu.setAttribute('aria-label', 'URL del canal de envío (Power Automate / Make / Zapier)');
+    const cs = mk('button', '', 'Guardar canal'); cs.type = 'submit';
+    cf.append(mk('p', 'state ' + (stN.channel_ok ? '' : 'bad'), 'Canal: ' + (stN.channel_ok ? 'configurado' : 'sin configurar')),
+      fld('URL del canal de envío (Power Automate / Make / Zapier)', cu), rowOf(cs));
+    if (stN.channel_ok) cf.lastChild.append(btn('Quitar canal', 'ghost', () => notifyChannel(''), 'Quitar el canal de envío'));
+    cf.addEventListener('submit', e => {
+      e.preventDefault();
+      const v = cu.value.trim();
+      if (!v.startsWith('https://') || /\s/.test(v) || v.length > 500) return notifySay('Pegá la URL completa del flujo (empieza con https://).', true);
+      cu.value = '';
+      notifyChannel(v);
+    });
+    out.push(cf);
+    const list = mk('ul', 'nf-list');
+    if (!NF.rec.length) list.append(mk('li', 'mute', 'Todavía no hay destinatarios.'));
+    for (const r of NF.rec) {
+      const li = mk('li', 'row');
+      const s = sel(NF_SEV, r.min_severity); s.setAttribute('aria-label', 'Avisar a ' + r.email + ' desde qué nivel'); s.dataset.fk = 'nf-sev-' + r.email;
+      s.addEventListener('change', () => notifySetSev(r.email, s.value));
+      const del = btn('Quitar', 'ghost', () => notifyDel(r.email), 'Quitar a ' + r.email + ' de los avisos'); del.dataset.fk = 'nf-del-' + r.email;
+      li.append(mk('span', 'mono', r.email + (r.active ? '' : ' (pausado)')), s, del);
+      list.append(li);
+    }
+    out.push(list);
+    const f = mk('form', 'noprint'); f.noValidate = true;
+    const em = inp('email', '', { maxLength: 254, autocomplete: 'off', placeholder: 'nombre@empresa.com' }); em.setAttribute('aria-label', 'Correo del nuevo destinatario');
+    const sv = sel(NF_SEV, 'alta'); sv.setAttribute('aria-label', 'Nivel desde el que se le avisa');
+    const add = mk('button', '', 'Agregar destinatario'); add.type = 'submit';
+    const g = mk('div', 'grid2'); g.append(fld('Correo', em), fld('Nivel mínimo de aviso', sv));
+    f.append(mk('h4', '', 'Agregar destinatario'), g, mk('p', 'mute', 'Nivel mínimo: recibe las alertas de ese nivel y de los más graves. Crítica: SOS y caída. Alta: además peligro e inmovilidad. Media: además casco sin usar y zonas restringidas.'), rowOf(add));
+    f.addEventListener('submit', e => {
+      e.preventDefault();
+      const v = em.value.trim().toLowerCase();
+      if (!MAIL_RE.test(v) || v.length > 254) return notifySay('Escribí un correo válido (nombre@empresa.com).', true);
+      notifyAdd(v, sv.value);
+    });
+    out.push(f);
+    const t = mk('button', 'ghost', 'Enviar correo de prueba'); t.type = 'button'; t.dataset.fk = 'nf-test'; t.disabled = NF.busy;
+    t.addEventListener('click', notifyTest);
+    out.push(rowOf(t), mk('p', 'mute', 'La prueba llega a todos los destinatarios activos y no depende de que los avisos estén activados.'));
+    if (NF.msg) { const m = mk('p', NF.msgBad ? 'err' : 'okmsg', NF.msg); m.setAttribute('role', NF.msgBad ? 'alert' : 'status'); out.push(m); }
+    return out;
+  }
+  function notifyBox() {
+    const host = mk('section', 'section noprint nf-box');
+    NF.host = host; NF.msg = '';
+    host.append(...notifyBody());
+    loadNotify().then(notifyRender);
+    return host;
+  }
   function orgView() {
     if (CN.avail.org === 'missing') return [missingBox()];
     const out = [];
@@ -4842,6 +5020,7 @@
       announce('Datos del empleador guardados.');
     });
     out.push(f);
+    out.push(notifyBox());   // avisos por correo (solo admin; el rol no admin ya salio arriba)
     return out;
   }
   function renderConst() {

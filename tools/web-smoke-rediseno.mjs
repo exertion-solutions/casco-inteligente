@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
+if (process.env.ONLYAVISOS) { process.env.ONLY4 = '1'; process.env.ONLYFIX = '1'; }   // solo la seccion 14 (avisos por correo)
 const WEB = process.env.WEBDIR || 'C:/CASCO INTELIGENTE/web';
 const OUT = 'C:/CASCO INTELIGENTE/out';
 const TAG = process.argv[2] || 'a';
@@ -75,6 +76,10 @@ const groups = [{ id: 'g1', name: 'Cuadrilla Norte', site: 'Yacimiento Sur', not
 const assigns = [{ id: 'a1', device_id: '4132', person_id: 'p1', starts_at: iso(86400000), ends_at: null }];
 // ---- Tanda C: tablas de la migracion 013 ----
 const NEW013 = ['assist_sessions', 'epp_deliveries', 'training_records', 'training_attendees', 'training_attendees_audit', 'access_log', 'org_settings', 'rpc/log_access', 'rpc/create_training'];
+// ---- Avisos por correo: migracion 014 ----
+const NEW014 = ['notify_config', 'notify_recipients', 'rpc/notify_status', 'rpc/notify_bootstrap', 'rpc/notify_set_channel'];
+const SEED_NREC = [{ email: 'nombre@ejemplo.com', active: true, min_severity: 'alta' }];
+const SEED_NCFG = { enabled: false, remind_after_s: 180, cooldown_s: 300 };
 const PNG_SHA = crypto.createHash('sha256').update(PNG).digest('hex');
 const P1 = { full_name: 'Marcos Peralta', legajo: '1042', job_title: 'Operario', sector: 'Pozo 12' };
 const SEED_ASSIST = { id: 'as-seed', device_id: '4132', started_at: iso(7200000), ended_at: iso(7200000 - 600000), topic: 'Calibrar la bomba', outcome: 'derivado', note: 'Pasa a mantenimiento', photos: 2,
@@ -113,6 +118,12 @@ async function mock(ctx, opts = {}) {
     const role = opts.role || 'admin', S = opts.state || (opts.state = {});
     if (u.pathname.includes('/auth/v1/token')) return json({ access_token: jwtOf(role), token_type: 'bearer', expires_in: 3600, refresh_token: 'r', user: { id: 'u1', email: 'supervisor@demo.test', app_metadata: { role }, aud: 'authenticated', created_at: iso(0) } });
     if (u.pathname.includes('/auth/v1/user')) return json({ id: 'u1', email: 'supervisor@demo.test', app_metadata: { role } });
+    if (u.pathname.includes('/functions/v1/notify')) {   // Edge Function de avisos: prueba del admin
+      let b = null; try { b = JSON.parse(req.postData() || 'null'); } catch {}
+      (S.fn = S.fn || []).push({ body: b, auth: req.headers()['authorization'] || '' });
+      const st = S.fnStatus || 200;
+      return json(st === 200 ? { ok: true, test: true, channel: 'webhook', recipients: (S.nrec = S.nrec || SEED_NREC.map(x => ({ ...x }))).filter(r => r.active).length } : { ok: false, error: 'x' }, st);
+    }
     if (u.pathname.includes('/storage/')) {
       if (req.method() === 'DELETE') {
         let b = {}; try { b = JSON.parse(req.postData() || '{}'); } catch {}
@@ -128,9 +139,33 @@ async function mock(ctx, opts = {}) {
     const t = u.pathname.split('/rest/v1/')[1] || '';
     if (opts.noNew && NEWT.includes(t)) { S.hits = (S.hits || []).concat(t); return json({ code: 'PGRST205', message: "Could not find the table 'public." + t + "' in the schema cache" }, 404); }
     if (opts.noNew && NEW013.includes(t)) { S.hits013 = (S.hits013 || []).concat(t); return json({ code: t.startsWith('rpc/') ? 'PGRST202' : 'PGRST205', message: t.startsWith('rpc/') ? 'Could not find the function public.' + t.slice(4) + ' in the schema cache' : "Could not find the table 'public." + t + "' in the schema cache" }, 404); }
+    if ((opts.noNew || opts.no014) && NEW014.includes(t)) { S.hits014 = (S.hits014 || []).concat(t); return json({ code: t.startsWith('rpc/') ? 'PGRST202' : 'PGRST205', message: t.startsWith('rpc/') ? 'Could not find the function public.' + t.slice(4) + ' in the schema cache' : "Could not find the table 'public." + t + "' in the schema cache" }, 404); }
+    const NR = (S.nrec = S.nrec || SEED_NREC.map(x => ({ ...x }))), NC = (S.ncfg = S.ncfg || { ...SEED_NCFG });
     if (req.method() !== 'GET' && req.method() !== 'HEAD') {
       let body = null; try { body = JSON.parse(req.postData() || 'null'); } catch {}
       (S.posts = S.posts || []).push({ t, method: req.method(), body });
+      if (t === 'rpc/notify_status') {
+        return json(role === 'admin' ? { ready: NC.enabled, enabled: NC.enabled, secret_ok: true, channel_ok: !!S.nchan, recipients: NR.filter(r => r.active).length, remind_after_s: NC.remind_after_s, cooldown_s: NC.cooldown_s } : { ready: NC.enabled });
+      }
+      if (t === 'rpc/notify_bootstrap') return json(true);
+      if (t === 'rpc/notify_set_channel') {
+        const v = String((body && body.p_url) || '').trim();
+        if (v && !v.startsWith('https://')) return json({ code: '22023', message: 'notify_set_channel: la URL debe empezar con https://' }, 400);
+        S.nchan = v || null; return json(!!v);
+      }
+      if (t === 'notify_config') { Object.assign(NC, body); return json([NC]); }
+      if (t === 'notify_recipients') {
+        const em = decodeURIComponent((u.searchParams.get('email') || '').replace(/^eq\./, ''));
+        if (req.method() === 'POST') {
+          if (NR.some(r => r.email === body.email)) return json({ code: '23505', message: 'duplicate key value violates unique constraint' }, 409);
+          const row = { email: body.email, active: body.active !== false, min_severity: body.min_severity || 'alta' };
+          NR.push(row); return json([row], 201);
+        }
+        const row = NR.find(r => r.email === em);
+        if (req.method() === 'DELETE') { if (row) NR.splice(NR.indexOf(row), 1); return json(row ? [{ email: em }] : []); }
+        if (row) Object.assign(row, body);
+        return json(row ? [row] : []);
+      }
       if (t === 'rpc/log_access') {
         if (S.logFail > 0) { S.logFail--; return json({ code: 'XX000', message: 'boom' }, 500); }
         (S.logs = S.logs || []).push(body);
@@ -193,6 +228,8 @@ async function mock(ctx, opts = {}) {
       return json(t === 'training_attendees' ? rows : rows.map(a => ({ training_id: a.training_id, person_id: a.observation ? null : a.person_id, ack: a.ack, observation: a.observation })));
     }
     if (t === 'org_settings') return json(S.org ? [S.org] : []);
+    if (t === 'notify_config') return json([NC]);
+    if (t === 'notify_recipients') { S.nrecReads = (S.nrecReads || 0) + 1; return json(NR.slice()); }
     if (t === 'access_log') {
       let rows = ACCESS.slice();
       const g = k => u.searchParams.get(k);
@@ -491,7 +528,7 @@ if (!process.env.ONLY4) {
 }
 
 // 4) grabacion automatica por alerta + cartel de guardado (con y sin permiso de microfono)
-for (const deny of [false, true]) {
+for (const deny of process.env.ONLYAVISOS ? [] : [false, true]) {
   const [ctx, page] = await newPage({ whep: true }, deny);
   const tag = deny ? '[sin micro] ' : '[con micro] ';
   const ping = async n => { const t = Date.now(); const ok = await Promise.race([page.evaluate(() => 1), new Promise(r => setTimeout(() => r('HUNG'), 4000))]); if (process.env.DBG) console.log('ping', n, ok, Date.now() - t); };
@@ -1093,7 +1130,7 @@ if (!process.env.ONLY4) {
     check(await page.locator('#tabAud').isVisible(), 'tandaC: admin ve Auditoría');
     await page.click('#tabAsis');
     check(await waitFor(async () => /Sesiones abiertas \(0\)/.test(await page.locator('#asisHost').innerText())), 'asis: la pestaña carga sin sesiones abiertas');
-    check(/Calibrar la bomba/.test(await page.locator('#asisHost').innerText()), 'asis: la lista del día muestra la sesión cerrada con su tema');
+    check(await waitFor(async () => /Calibrar la bomba/.test(await page.locator('#asisHost').innerText())), 'asis: la lista del día muestra la sesión cerrada con su tema');
     const sf = page.locator('#asisHost form', { hasText: 'Iniciar una sesión de asistencia' });
     await sf.locator('button[type=submit]').click();
     check(/Elegí un casco/.test(await sf.innerText()), 'asis: validación al iniciar sin casco');
@@ -1215,10 +1252,10 @@ if (!process.env.ONLY4) {
     await page.click('#constTabOrg');
     await page.locator('#constBody input').nth(0).fill('Petrolera Sur S.A.');
     await page.locator('#constBody input').nth(1).fill('123');
-    await page.locator('#constBody button[type=submit]').click();
-    check(/CUIT/.test(await page.locator('#constBody .err').innerText()), 'org: valida el CUIT');
+    await page.locator('#constBody form[data-org] button[type=submit]').click();
+    check(/CUIT/.test(await page.locator('#constBody form[data-org] .err').innerText()), 'org: valida el CUIT');
     await page.locator('#constBody input').nth(1).fill('30123456789');
-    await page.locator('#constBody button[type=submit]').click();
+    await page.locator('#constBody form[data-org] button[type=submit]').click();
     check(await waitFor(() => posts(state, 'org_settings').some(x => x.method === 'POST' && x.body.id === 1 && x.body.legal_name === 'Petrolera Sur S.A.' && x.body.cuit === '30-12345678-9')), 'org: guarda con id = 1 y CUIT normalizado');
     await page.click('#tabAsis');
     await printStub(page);
@@ -1363,6 +1400,80 @@ if (!process.env.ONLY4) {
     }
     await ctx.close();
   }
+}
+
+// ---- 14) Avisos por correo (migracion 014): estado real en el encabezado, formulario admin, prueba, rol viewer, sin migracion ----
+{
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, state });
+  await closeOv(page);
+  check(await waitFor(async () => /por correo desactivado/.test(await page.locator('#escState').innerText())), 'avisos: el encabezado muestra el estado real (desactivado) en vez del texto fijo');
+  await page.click('#tabConst');
+  await page.click('#constTabOrg');
+  const box = page.locator('.nf-box');
+  check(await waitFor(async () => /nombre@ejemplo\.com/.test(await box.innerText())) && /Estado: desactivado/.test(await box.innerText()), 'avisos: el admin ve la lista de destinatarios y el estado');
+  check(await unnamed(page, '.nf-box') === 0, 'a11y: campos de avisos con nombre accesible');
+  check(/Canal: sin configurar/.test(await box.innerText()) && /falta: la URL del canal de envío/.test(await box.innerText()), 'avisos: sin canal el estado dice que falta la URL del canal');
+  const chIn = box.locator('input[type=password]');
+  await chIn.fill('http://inseguro.example.test/x');
+  await box.getByRole('button', { name: 'Guardar canal' }).click();
+  check(/empieza con https/.test(await box.innerText()) && !posts(state, 'rpc/notify_set_channel').length, 'avisos: rechaza una URL que no es https antes de enviar');
+  await chIn.fill('https://hooks.example.test/flujo?sig=ABC');
+  await box.getByRole('button', { name: 'Guardar canal' }).click();
+  check(await waitFor(() => posts(state, 'rpc/notify_set_channel').some(x => x.body && x.body.p_url === 'https://hooks.example.test/flujo?sig=ABC')), 'avisos: guarda la URL del canal por rpc notify_set_channel');
+  check(await waitFor(async () => /Canal: configurado/.test(await box.innerText())) && (await box.locator('input[type=password]').inputValue()) === '' && !/hooks.example.test/.test(await box.innerText()), 'avisos: el canal queda "configurado" y la URL no se vuelve a mostrar');
+  check((await box.locator('input[type=password]').getAttribute('aria-label') || '').includes('Power Automate'), 'avisos: el campo del canal tiene nombre accesible');
+  check(/Crítica: SOS y caída/.test(await box.innerText()) || (await box.locator('option', { hasText: 'Crítica: SOS y caída' }).count()) > 0, 'avisos: selector de nivel con la explicacion de cada nivel');
+  await box.locator('button', { hasText: 'Activar avisos' }).click();
+  check(await waitFor(() => posts(state, 'notify_config').some(x => x.method === 'PATCH' && x.body.enabled === true)) && await waitFor(async () => /Estado: ACTIVADO/.test(await box.innerText())), 'avisos: Activar avisos actualiza notify_config.enabled');
+  check(await waitFor(async () => /por correo activado \(1 destinatario, recordatorio a los 3 min\)/.test(await page.locator('#escState').innerText())), 'avisos: el encabezado pasa a "activado" con destinatarios y recordatorio');
+  await box.locator('input[type=email]').fill('no-es-un-correo');
+  await box.locator('form:has(input[type=email]) button[type=submit]').click();
+  check(/correo válido/.test(await box.innerText()) && !posts(state, 'notify_recipients').length, 'avisos: valida el correo antes de enviar');
+  await box.locator('input[type=email]').fill('  Otro@Ejemplo.com ');
+  await box.locator('select').last().selectOption('critica');
+  await box.locator('form:has(input[type=email]) button[type=submit]').click();
+  check(await waitFor(() => posts(state, 'notify_recipients').some(x => x.method === 'POST' && x.body.email === 'otro@ejemplo.com' && x.body.min_severity === 'critica' && x.body.active === true)), 'avisos: agrega el destinatario en minusculas y con su nivel');
+  check(await waitFor(async () => /otro@ejemplo\.com/.test(await box.innerText())), 'avisos: el nuevo destinatario aparece en la lista');
+  await box.locator('input[type=email]').fill('otro@ejemplo.com');
+  await box.locator('form:has(input[type=email]) button[type=submit]').click();
+  check(await waitFor(async () => /ya está en la lista/.test(await box.innerText())), 'avisos: duplicado -> mensaje claro');
+  await box.locator('li select').first().selectOption('media');
+  check(await waitFor(() => posts(state, 'notify_recipients').some(x => x.method === 'PATCH' && x.body.min_severity === 'media')), 'avisos: cambia el nivel de un destinatario');
+  await box.locator('button', { hasText: 'Enviar correo de prueba' }).click();
+  check(await waitFor(() => (state.fn || []).length === 1 && state.fn[0].body && state.fn[0].body.test === true && /^Bearer /.test(state.fn[0].auth)), 'avisos: la prueba llama a la funcion notify con {test:true} y el JWT del admin');
+  check(await waitFor(async () => /Prueba enviada a 2 destinatarios/.test(await box.innerText())), 'avisos: informa a cuantos se envio la prueba');
+  state.fnStatus = 503;
+  await box.locator('button', { hasText: 'Enviar correo de prueba' }).click();
+  check(await waitFor(async () => /ningún canal de correo/.test(await box.innerText())), 'avisos: sin canal configurado (503) lo dice claro');
+  state.fnStatus = 409;
+  await box.locator('button', { hasText: 'Enviar correo de prueba' }).click();
+  check(await waitFor(async () => /No hay destinatarios activos/.test(await box.innerText())), 'avisos: sin destinatarios (409) lo dice claro');
+  await box.getByRole('button', { name: 'Quitar a nombre@ejemplo.com' }).click();
+  check(await waitFor(() => posts(state, 'notify_recipients').some(x => x.method === 'DELETE')) && await waitFor(async () => !/nombre@ejemplo\.com/.test(await box.innerText())), 'avisos: quita un destinatario');
+  check(await unnamed(page, '.nf-box') === 0, 'a11y: lista y formulario de avisos con nombre accesible');
+  await shot(page, TAG + '-avisos-1440');
+  check(!posts(state, 'notify_config').some(x => 'webhook_secret' in (x.body || {})) && !posts(state, 'notify_config').some(x => 'webhook_url' in (x.body || {})), 'avisos: la clave interna no viaja desde el visor y la URL solo por la rpc');
+  await ctx.close();
+
+  const st2 = { ncfg: { enabled: true, remind_after_s: 180, cooldown_s: 300 } };
+  const [c2, p2] = await newPage({ t4: true, role: 'viewer', state: st2 });
+  await closeOv(p2);
+  check(await waitFor(async () => /por correo activado/.test(await p2.locator('#escState').innerText())) && !/destinatario/.test(await p2.locator('#escState').innerText()), 'avisos viewer: ve "activado" sin el detalle de destinatarios');
+  await p2.click('#tabConst');
+  await p2.click('#constTabOrg');
+  await p2.waitForTimeout(600);
+  check((await p2.locator('.nf-box').count()) === 0 && !(st2.nrecReads > 0), 'avisos viewer: no ve el formulario ni lee los destinatarios');
+  await c2.close();
+
+  const st3 = {};
+  const [c3, p3] = await newPage({ t4: true, no014: true, state: st3 });
+  await closeOv(p3);
+  check(await waitFor(async () => /Aviso a responsables: si nadie atiende una alerta en 2 min/.test(await p3.locator('#escState').innerText())), 'avisos sin migracion 014: el encabezado mantiene el texto de Teams');
+  await p3.click('#tabConst');
+  await p3.click('#constTabOrg');
+  check(await waitFor(async () => /Falta aplicar la migración 014/.test(await p3.locator('#constBody').innerText())), 'avisos sin migracion 014: el admin ve "Falta aplicar la migración 014"');
+  await c3.close();
 }
 
 await browser.close();

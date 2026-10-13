@@ -6,7 +6,7 @@
  *  - Cross-origin (CDN leaflet/supabase-js, fuentes, tiles): no se tocan.
  *  - NUNCA se cachea: supabase.co, sslip.io (WHEP/video), /auth, /storage, firmadas, no-GET.
  */
-const CACHE_VERSION = 'vigia-2026-10-13c';
+const CACHE_VERSION = 'vigia-2026-10-13e';
 const SHELL = ['./', 'index.html', 'comandos.html', 'config.js', 'app.css', 'app.js',
   'img/vigia-logo-128.png', 'img/vigia-logo-192.png', 'img/vigia-logo.png', 'img/apple-touch-icon.png',
   'img/favicon-32.png', 'img/favicon-64.png', 'manifest.webmanifest'];
