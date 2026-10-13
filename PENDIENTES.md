@@ -100,3 +100,9 @@
 - Para tener rol auditor: crear usuario y setear app_metadata.role='auditor' (ver supabase/promover_admin.sql como modelo).
 - Pendiente: Res. SIC 16/2025 excluye equipos Ex del reglamento electrico; certificado del casco es chino (no IECEx/ATEX) -> aceptacion del cliente; cargador/fuente necesitan certificacion de seguridad electrica; homologacion de radio (ENACOM) y bandas LTE: verificar.
 - Pendiente: ponytail (recortes de tools/ y server/ no aplicados), escalamiento push/email/WhatsApp, usuarios en la UI, informe por turno, pasar lista en evacuacion, grabacion en servidor.
+
+## Avisos de alertas (2026-10-13)
+- Aplicado en la base real: migraciones 013, 014 y 015. Funcion Edge `notify` desplegada (JWT del gateway desactivado: valida su propia clave). Destinatarios cargados por SQL (no estan en el repo).
+- Falta configurar en el visor (Constancias > Empleador > Avisos): proveedor de correo (Brevo o Resend, clave de API write-only), activar push en cada dispositivo, activar los avisos y enviar prueba.
+- Sin probar en real: envio por Brevo/Resend, push real (Android/Windows/iPhone PWA), pg_net/pg_cron en produccion.
+- Nota: el editor de funciones de Supabase se cuelga al pegar codigo grande; desactivar diagnosticos de monaco (setDiagnosticsOptions) antes de setValue.
