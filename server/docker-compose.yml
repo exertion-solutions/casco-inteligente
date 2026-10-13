@@ -2,6 +2,10 @@
 # Variables: se leen del archivo .env (copiar de .env.example). No poner secretos en el repo.
 name: casco-video
 
+x-logging: &log
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
 services:
   mediamtx:
     # Variante -ffmpeg (Alpine + ffmpeg): necesaria para convertir el audio AAC del casco a Opus
@@ -29,9 +33,7 @@ services:
     # El puerto 8889 (WHEP) NO se publica: solo Caddy lo alcanza por la red interna.
     # RTSP (8554) tampoco: escucha solo en 127.0.0.1 dentro del contenedor (uso del relay).
     # API (9997), metrics (9998) y pprof estan desactivados en mediamtx.yml.
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *log
 
   caddy:
     image: caddy:2.8-alpine
@@ -48,9 +50,7 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data      # certificados: NO borrar (limite de emision de Let's Encrypt)
       - caddy_config:/config
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *log
 
   # TURN/STUN para la voz en vivo (4G con CGNAT: sin TURN no hay audio).
   # network_mode host: coturn maneja ~40 puertos UDP de relay y Docker rinde mal con rangos
@@ -77,9 +77,7 @@ services:
           echo "denied-peer-ip=$$PUBLIC_IP"
         } > /tmp/turnserver.conf
         exec turnserver -c /tmp/turnserver.conf
-    logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+    logging: *log
 
 volumes:
   caddy_data:

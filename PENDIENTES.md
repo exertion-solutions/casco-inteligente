@@ -84,3 +84,10 @@
 ## PWA / service worker (deploy)
 - En CADA deploy de web/: subir `CACHE_VERSION` en web/sw.js (ej. `vigia-2026-10-13a` -> `vigia-2026-10-14a`) y el `?v=` de app.css/config.js/app.js en index.html. Sin eso los usuarios pueden ver el shell viejo.
 - El SW no cachea supabase.co, sslip.io, /auth, /storage ni cross-origin (CDN leaflet/supabase-js/fuentes/tiles).
+
+## Estado 2026-10-13: tandas de mejora
+- Tanda A + PWA: HECHA (commit 939e53e).
+- Tanda B: en curso (agente editando web/*).
+- Tanda C: PENDIENTE: push/email de alertas, gestion de usuarios en la UI, SLA de respuesta, informe por turno, pasar lista (evacuacion).
+- Tanda D (limpieza segura fuera de web/): hecha, ver out/tanda-d.md. Sin tocar: mediamtx.yml, activar/desactivar-voz.sh, vps-soporte.sh, rescate-vps.sh, relay-audio.sh, migraciones, android/.
+- IMPORTANTE: subir `CACHE_VERSION` de web/sw.js (y el `?v=` en index.html) en CADA deploy de web/.

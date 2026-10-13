@@ -1,4 +1,10 @@
-import { chromium } from 'file:///C:/Users/jcastro/eia-app/node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core/index.mjs';
+// Smoke visual del visor (mocks de Supabase, PNG en out/). Uso: node tools/web-smoke-rediseno.mjs [tag]
+// Env: WEBDIR (carpeta web). Requiere playwright o playwright-core instalado (npm i -D playwright-core) y Chrome.
+let chromium;
+for (const m of ['playwright', 'playwright-core', 'file:///C:/Users/jcastro/eia-app/node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core/index.mjs']) {
+  try { ({ chromium } = await import(m)); break; } catch {}
+}
+if (!chromium) throw new Error('Falta playwright/playwright-core: npm i -D playwright-core');
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -146,8 +152,8 @@ async function mock(ctx, opts = {}) {
       if (q.includes('type=eq.heartbeat')) return json(opts.t4 ? [...hbs, T4_HB] : hbs);
       if (q.includes('type=eq.location')) return json(locs);
       const ex = opts.t4 ? T4_EVENTS : [];
-      if (q.includes('type=in.')) return json([...events, ...ex, ...(opts.old || [])]);
-      return json([...((opts.state && opts.state.extra) || []), ...events, ...ex]);
+      if (q.includes('type=in.')) return json([...(opts.evs || events), ...ex, ...(opts.old || [])]);
+      return json([...((opts.state && opts.state.extra) || []), ...(opts.evs || events), ...ex]);
     }
     if (t === 'event_acks') {
       const one = (q.match(/event_id=eq\.([^&]+)/) || [])[1];   // maybeSingle() tras Atender
@@ -389,7 +395,9 @@ if (!process.env.ONLY4) {
   const inside = await page.evaluate(() => document.getElementById('sosOverlay').contains(document.activeElement));
   check(inside, 'la trampa de foco mantiene el foco dentro del cartel SOS');
   await page.keyboard.press('Escape');
-  check(!(await page.locator('#sosOverlay').isVisible()), 'Escape cierra el cartel SOS (Ver el panel)');
+  check(await page.locator('#sosOverlay').isVisible(), 'Escape NO descarta el cartel de una alerta critica');
+  await page.locator('.sos-ov-btns button').last().click();
+  check(!(await page.locator('#sosOverlay').isVisible()), 'Ver el panel cierra el cartel SOS');
   const inert = await page.evaluate(() => document.getElementById('app').inert);
   check(!inert, 'el panel deja de estar inerte al cerrar el cartel');
   await ctx.close();
@@ -521,7 +529,7 @@ if (!process.env.ONLY4) {
   await page.click('#tabLive');
   const sec = page.locator('#lives .live', { hasText: '4132' });
   const stat = sec.locator('.cmdstat');
-  await sec.getByRole('button', { name: 'Sacar una foto con el casco 4132' }).click();
+  await sec.getByRole('button', { name: 'Sacar foto, casco 4132' }).click();
   check(await waitFor(() => posts(state, 'device_commands').some(x => x.body && x.body.device_id === '4132' && x.body.action === 'photo')), 't4: Sacar foto inserta device_commands(photo)');
   check(/pendiente/.test(await stat.innerText()), 't4: estado pendiente tras el pedido');
   state.acks = [{ command_id: 'cmd-1', device_id: '4132', ok: true, detail: '', created_at: new Date().toISOString() }];
@@ -535,16 +543,16 @@ if (!process.env.ONLY4) {
   await shot(page, `${TAG}-t4-foto`);
   await page.keyboard.press('Escape');
   check(await page.locator('dialog[open]').count() === 0, 't4: Escape cierra el dialogo');
-  await sec.getByRole('button', { name: /Encender la linterna del casco 4132/ }).click();
+  await sec.getByRole('button', { name: /Linterna: encender, casco 4132/ }).click();
   await waitFor(() => posts(state, 'device_commands').length >= 2);
   state.acks.push({ command_id: 'cmd-2', device_id: '4132', ok: true, detail: '', created_at: new Date().toISOString() });
   check(await waitFor(async () => /Linterna: apagar/.test(await sec.locator('[data-fk="4132|torch"]').innerText()), 9000), 't4: la linterna pasa a "Linterna: apagar" tras el ack');
-  await sec.getByRole('button', { name: /Probar el enlace con el casco 4132/ }).click();
+  await sec.getByRole('button', { name: /Probar enlace, casco 4132/ }).click();
   await waitFor(() => posts(state, 'device_commands').length >= 3);
   state.acks.push({ command_id: 'cmd-3', device_id: '4132', ok: false, detail: 'camara ocupada', created_at: new Date().toISOString() });
   check(await waitFor(async () => /camara ocupada/.test(await stat.innerText()), 9000), 't4: error del ack muestra el detail');
   // configuracion (admin)
-  await sec.getByRole('button', { name: /Configuración remota del casco 4132/ }).click();
+  await sec.getByRole('button', { name: /Configuración del casco 4132/ }).click();
   await page.waitForSelector('dialog[open] #cfg_inactivity_s');
   await waitFor(async () => !(await page.locator('dialog[open] button[type=submit]').isDisabled()));
   await page.fill('#cfg_inactivity_s', '10');
@@ -559,7 +567,7 @@ if (!process.env.ONLY4) {
   const cfgBody = (posts(state, 'device_config')[0] || {}).body || {};
   check(cfgBody.device_id === '4132' && JSON.stringify(cfgBody.config) === JSON.stringify({ fall_g_threshold: 3.5, inactivity_s: 300, location_s: 30, location_s_alert: 10, torch_allowed: true }), 't4: upsert device_config con las claves validadas: ' + JSON.stringify(cfgBody));
   await page.keyboard.press('Escape');
-  await sec.getByRole('button', { name: /Reiniciar el agente del casco 4132/ }).click();
+  await sec.getByRole('button', { name: /Reiniciar agente, casco 4132/ }).click();
   await page.locator('dialog[open] button', { hasText: 'Sí, reiniciar' }).click();
   check(await waitFor(() => posts(state, 'device_commands').some(x => x.body && x.body.action === 'restart_agent')), 't4: Reiniciar agente pide confirmacion y envia restart_agent');
   // reportes
@@ -575,8 +583,9 @@ if (!process.env.ONLY4) {
   await page.selectOption('#repHost select >> nth=1', 'sos');
   await page.selectOption('#repHost select >> nth=2', 'pend');
   await page.locator('#repHost button[type=submit]').click();
-  await waitFor(async () => /Página 1/.test(await page.locator('#repHost .pager').innerText()));
+  await waitFor(async () => /Página 1/.test(await page.locator('#repHost .pager').innerText()) && (await page.locator('#repHost tbody tr').count()) !== 50);   // espera la respuesta filtrada (no la pagina vieja)
   const cells = await page.evaluate(() => [...document.querySelectorAll('#repHost tbody tr')].map(r => [r.children[3].textContent, r.children[6].textContent]));
+  if (process.env.DBG) console.log('CELLS', JSON.stringify(cells.slice(0, 6)));
   check(cells.length > 0 && cells.every(c => c[0] === 'SOS' && c[1] === 'Pendiente'), 't4: filtros tipo=SOS y estado=pendientes (' + cells.length + ' filas)');
   await page.selectOption('#repHost select >> nth=2', '');
   await page.selectOption('#repHost select >> nth=1', '');
@@ -647,8 +656,8 @@ if (!process.env.ONLY4) {
   check((await page.locator('#eqBody button', { hasText: /Asignar|Cerrar asignación/ }).count()) === 0, 't4 viewer: sin asignaciones');
   await page.click('#tabLive');
   const sec = page.locator('#lives .live', { hasText: '4132' });
-  check((await sec.getByRole('button', { name: /Configuración remota|Reiniciar el agente/ }).count()) === 0, 't4 viewer: sin Configuracion ni Reiniciar agente');
-  await sec.getByRole('button', { name: /Probar el enlace/ }).click();
+  check((await sec.getByRole('button', { name: /Configuración del casco|Reiniciar agente/ }).count()) === 0, 't4 viewer: sin Configuracion ni Reiniciar agente');
+  await sec.getByRole('button', { name: /Probar enlace/ }).click();
   check(await waitFor(() => posts(state, 'device_commands').some(x => x.body.action === 'ping')), 't4 viewer: Probar enlace permitido');
   await ctx.close();
 }
@@ -662,13 +671,13 @@ if (!process.env.ONLY4) {
   await closeOv(page);
   await page.click('#tabLive');
   const sec = page.locator('#lives .live', { hasText: '4132' });
-  await sec.getByRole('button', { name: /Sacar una foto/ }).click();
+  await sec.getByRole('button', { name: /Sacar foto/ }).click();
   check(await waitFor(async () => /cuando se aplique la actualización/.test(await sec.locator('.cmdstat').innerText())), 't4 sin tablas: Sacar foto avisa "disponible cuando se aplique la actualización"');
   await page.click('#tabRep');
   check(await waitFor(async () => (await page.locator('#repHost tbody td.mono').count()) > 0), 't4 sin tablas: Reportes cae a events + event_acks');
   check(await waitFor(async () => /todavía no está disponible/.test(await page.locator('#repHost').innerText())), 't4 sin tablas: Reportes avisa que la vista no existe');
   await page.click('#tabLive');
-  await sec.getByRole('button', { name: /Configuración remota del casco 4132/ }).click();
+  await sec.getByRole('button', { name: /Configuración del casco 4132/ }).click();
   check(await waitFor(async () => /cuando se aplique la actualización/.test(await page.locator('dialog[open]').innerText())), 't4 sin tablas: Configuracion avisa lo mismo y no rompe');
   await page.keyboard.press('Escape');
   const bad = cerr.filter(x => !/Failed to load resource.*404|tile\.openstreetmap|fonts\.g|ERR_|favicon|sslip\.io\/live/.test(x));
@@ -842,16 +851,16 @@ if (!process.env.ONLY4) {
   check(!(await page.locator('#sosOverlay').isVisible()), 'live: el cartel se cierra');
   check(await page.locator('#panelMain').getAttribute('data-view') === 'live' && await page.locator('#lives .live').first().isVisible(), 'live: el panel de video queda visible con alertas pendientes');
   check(await waitFor(() => posts(state, 'stream_commands').some(x => x.body && x.body.action === 'start')), 'live: se envia stream_commands start');
-  const sec = page.locator('#lives .live', { hasText: '4133' });
+  const sec = page.locator('#lives .live', { hasText: '4132' });
   check(await waitFor(async () => /Esperando al casco… \d+ s/.test(await sec.locator('.state').first().innerText()), 4000), 'live: estado con segundos transcurridos');
   check(await waitFor(async () => /En vivo/.test(await sec.locator('.state').first().innerText()), 20000), 'live: reintenta ante 404 hasta que WHEP responde y conecta (' + state.whepHits + ' intentos)');
   check((state.whepHits || 0) >= 2, 'live: hubo reintentos (' + state.whepHits + ')');
-  // desde la tarjeta de otro casco: tambien reinicia el ciclo y muestra el panel
+  // (el cartel abre la alerta mas grave y vieja: el SOS del 4132) desde la tarjeta de otro casco: tambien reinicia el ciclo y muestra el panel
   await page.click('#tabMain');
   const n0 = posts(state, 'stream_commands').length;
-  await page.locator('#pendList .pitem', { hasText: '4132' }).first().locator('button', { hasText: 'Ver en vivo' }).click();
+  await page.locator('#pendList .pitem', { hasText: '4133' }).first().locator('button', { hasText: 'Ver en vivo' }).click();
   check(await waitFor(() => posts(state, 'stream_commands').length > n0), 'live: "Ver en vivo" de la tarjeta envia start');
-  check(await page.locator('#lives .live', { hasText: '4132' }).isVisible(), 'live: panel del casco 4132 visible');
+  check(await page.locator('#lives .live', { hasText: '4133' }).isVisible(), 'live: panel del casco 4133 visible');
   await ctx.close();
 }
 
@@ -865,7 +874,7 @@ if (!process.env.ONLY4) {
   await sec.locator('button', { hasText: 'Iniciar' }).first().click();
   check(await waitFor(async () => /En vivo/.test(await sec.locator('.state').first().innerText()), 15000), 'foto: video en vivo del 4132');
   await waitFor(() => page.evaluate(() => { const v = document.querySelector('#lives video'); return !!(v && v.videoWidth); }), 8000);
-  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }).catch(() => null), sec.getByRole('button', { name: /Sacar una foto con el casco 4132/ }).click()]);
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }).catch(() => null), sec.getByRole('button', { name: /Sacar foto, casco 4132/ }).click()]);
   check(!!dl && /^vigia-4132_.*\.png$/.test(dl.suggestedFilename()), 'foto: con video en vivo toma el cuadro y lo descarga: ' + (dl && dl.suggestedFilename()));
   check(posts(state, 'device_commands').length === 0, 'foto: no se envia comando al casco mientras transmite');
   check(/Cuadro del video guardado/.test(await page.locator('dialog[open]').innerText()), 'foto: cartel de confirmacion');
@@ -879,10 +888,10 @@ if (!process.env.ONLY4) {
   await closeOv(page);
   await page.click('#tabLive');
   const sec = page.locator('#lives .live', { hasText: '4132' });
-  await sec.getByRole('button', { name: /Sacar una foto con el casco 4132/ }).click();
+  await sec.getByRole('button', { name: /Sacar foto, casco 4132/ }).click();
   await waitFor(() => posts(state, 'device_commands').length === 1);
   state.acks = [{ command_id: 'cmd-1', device_id: '4132', ok: false, detail: 'camara ocupada', created_at: new Date().toISOString() }];
-  const bf = sec.getByRole('button', { name: /Tomar un cuadro del video en vivo del casco 4132/ });
+  const bf = sec.getByRole('button', { name: /Tomar cuadro del video, casco 4132/ });
   check(await waitFor(async () => await bf.isVisible(), 9000), 'foto: ante "camara ocupada" ofrece "Tomar cuadro del video"');
   const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }).catch(() => null), bf.click()]);
   check(!!dl && /^vigia-4132_.*\.png$/.test(dl.suggestedFilename()), 'foto: arranca el video y toma el cuadro: ' + (dl && dl.suggestedFilename()));
@@ -934,6 +943,64 @@ if (!process.env.ONLY4) {
   }
   await ctx.close();
 }
+
+// ---- 12) Tanda B: severidad, Atender en un paso, encabezado compacto, paneles colapsados ----
+if (!process.env.ONLY4) {
+  // a) el cartel muestra la alerta mas grave (luego la mas vieja) con contador; Atender atiende en un paso
+  {
+    const state = {};
+    const [ctx, page] = await newPage({ state });
+    check(/SOS/.test(await page.locator('#sosOvT').innerText()) && /4132/.test(await page.locator('#sosOvWho').innerText()), 'sev: el cartel abre con el SOS mas viejo (4132), no con el mas nuevo');
+    check(/otras 2 alertas/.test(await page.locator('.sos-ov-more').innerText()), 'sev: contador de otras alertas pendientes en el cartel');
+    check(/1 alerta|3 alertas/.test(await page.locator('#sos').innerText()) && !/alerta\(s\)/.test(await page.locator('#sos').innerText()), 'copy: plural correcto en el banner');
+    await shot(page, `${TAG}-cartel-1440-dark`);
+    await page.emulateMedia({ colorScheme: 'light' }); await page.setViewportSize({ width: 375, height: 812 }); await page.waitForTimeout(250);
+    await shot(page, `${TAG}-cartel-375-light`);
+    await page.emulateMedia({ colorScheme: 'dark' }); await page.setViewportSize({ width: 1440, height: 900 }); await page.waitForTimeout(250);
+    await page.locator('#sosOverlay textarea').fill('Voy para allá');
+    await page.locator('.sos-ov-go').click();
+    check(await waitFor(() => posts(state, 'event_acks').some(x => x.body && x.body.event_id === 'e-sos' && x.body.note === 'Voy para allá')), 'atender: el boton del cartel inserta el acuse con la nota');
+    check(await waitFor(async () => /4133/.test(await page.locator('#sosOvWho').innerText())), 'atender: el cartel pasa a la siguiente alerta (4133)');
+    check(await page.locator('#sosOverlay').isVisible(), 'atender: el cartel sigue visible mientras haya criticas');
+    await page.locator('.sos-ov-go').click();
+    await waitFor(() => posts(state, 'event_acks').length >= 2);
+    await page.waitForTimeout(500);
+    // queda la geocerca de peligro (alta): sigue en el cartel
+    await page.locator('.sos-ov-go').click();
+    await waitFor(() => posts(state, 'event_acks').length >= 3);
+    check(await waitFor(async () => !(await page.locator('#sosOverlay').isVisible())), 'atender: sin pendientes el cartel se cierra');
+    check(await page.evaluate(() => document.activeElement && document.activeElement.id === 'pendH'), 'foco: tras atender la ultima, el foco va al titulo de Pendientes');
+    check(/Todo en orden/.test(await page.locator('#pendList').innerText()), 'estado vacio con conexion: "Todo en orden"');
+    await ctx.close();
+  }
+  // b) solo nivel medio (casco sin usar): sin cartel, banner ambar en role=status, etiqueta AVISO
+  {
+    const evs = [{ id: 'e-nw', device_id: '4140', type: 'not_worn', created_at: iso(50000), lat: null, lng: null, battery: 50, payload: null, media_path: null }];
+    const [ctx, page] = await newPage({ evs });
+    check(!(await page.locator('#sosOverlay').isVisible()), 'sev: casco sin usar solo no abre cartel a pantalla completa');
+    check((await page.locator('#sos').getAttribute('role')) === 'status' && (await page.locator('#sos').getAttribute('class')) === 'med', 'sev: banner de nivel medio es role=status y ambar');
+    check(/AVISO/.test(await page.locator('#pendList .pitem').first().innerText()), 'sev: tarjeta de nivel medio lleva la etiqueta AVISO');
+    check(await page.locator('#navPend').evaluate(e => e.classList.contains('med')), 'sev: insignia de pestaña en estilo medio');
+    check(!(await page.locator('#navPend').getAttribute('aria-hidden')) && /pendiente/.test(await page.locator('#tabMain').getAttribute('aria-label')), 'a11y: la insignia no es aria-hidden y la pestaña la nombra');
+    await ctx.close();
+  }
+  // c) paneles de video colapsados en el Centro; header compacto y 7 pestañas completas en 375
+  {
+    const [ctx, page] = await newPage({});
+    await closeOv(page);
+    const lv = page.locator('#lives .live').first();
+    check(await lv.evaluate(e => e.classList.contains('collapsed')) && !(await lv.locator('.live-body').isVisible()), 'video: los paneles inactivos nacen colapsados en el Centro');
+    check(/^Ver en vivo/.test(await lv.locator('.bview').innerText()) && (await lv.locator('.bview').getAttribute('aria-expanded')) === 'false', 'video: boton "Ver en vivo" del panel colapsado');
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.waitForTimeout(300);
+    const m = await page.evaluate(() => ({ hh: document.querySelector('header.top').getBoundingClientRect().height, tabs: [...document.querySelectorAll('#mainNav [role=tab]')].map(b => { const r = b.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }), who: document.getElementById('who').innerText.replace(/\s+/g, ' '), role: !!document.querySelector('.who-role') }));
+    check(m.hh <= 96, 'responsive: encabezado <= 96 px en 375 (' + Math.round(m.hh) + ' px)');
+    check(m.tabs.length === 7 && m.tabs.every(t => t[0] >= 0 && t[1] <= 376), 'responsive: las 7 pestañas entran en 375 sin cortarse ' + JSON.stringify(m.tabs[6]));
+    check(m.role && /supervisor/.test(m.who), 'header: el rol se ve completo (' + m.who + ')');
+    await ctx.close();
+  }
+}
+
 await browser.close();
 server.close();
 log('ERRORS:', errors.length);

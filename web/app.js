@@ -5,7 +5,7 @@
   const sb = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
   let audioCtx = null, channel = null, chOrders = null, chGeo = null, escTimer = null;
   const TZ = 'America/Argentina/Buenos_Aires';
-  const fmt = iso => new Date(iso).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' });
+  const fmt = iso => new Date(iso).toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium', hourCycle: 'h23' });   // 24 h, como el reloj del encabezado
 
   // dd/mm/aaaa HH:mm en hora de Argentina (reportes y CSV)
   const fmtAR = iso => {
@@ -29,6 +29,22 @@
   const EV_COLS = 'id,created_at,device_id,type,press_ms,media_path,lat,lng,battery,payload';
   const ACK_COLS = 'event_id,acked_by_email,acked_at,note';
   const SIG_COLS = 'id,call_id,from_role,kind,payload,created_at';
+  // Mensajes crudos de Supabase/red -> frases cortas en español (el detalle técnico queda en la consola).
+  function errEs(e) {
+    const m = String((e && e.message) || e || ''), c = String((e && e.code) || '');
+    try { console.warn('[vigia] error:', c, m); } catch (_) {}
+    if (/invalid login credentials/i.test(m)) return 'Correo o contraseña incorrectos.';
+    if (/email not confirmed/i.test(m)) return 'El correo todavía no fue confirmado.';
+    if (/failed to fetch|networkerror|load failed|network request|sin conexi/i.test(m)) return 'No hay conexión con el servidor. Revisá tu internet y probá de nuevo.';
+    if (/jwt|token.*(expired|invalid)|session.*(expired|missing)/i.test(m) || c === 'PGRST301') return 'Tu sesión venció. Ingresá de nuevo.';
+    if (c === '42501' || /permission denied|row-level security|not authorized|rol no autorizado|no autorizado/i.test(m)) return 'No tenés permiso para hacer esto.';
+    if (c === '23505' || /duplicate key/i.test(m)) return 'Ese dato ya existe.';
+    if (/rate limit|too many requests|over_.*rate/i.test(m)) return 'Demasiados intentos seguidos. Esperá un momento y probá de nuevo.';
+    if (/timeout|timed out|statement timeout/i.test(m) || c === '57014') return 'El servidor tardó demasiado en responder. Probá de nuevo.';
+    if (/could not find the (table|relation)|schema cache|does not exist/i.test(m)) return 'Esta función todavía no está disponible en el servidor.';
+    if (/violates|constraint|invalid input/i.test(m)) return 'El servidor rechazó el dato. Revisalo y probá de nuevo.';
+    return 'El servidor devolvió un error. Probá de nuevo; si sigue, avisá a un administrador.';
+  }
   const isAuthErr = e => !!e && (e.status === 401 || e.code === 'PGRST301' || e.code === 'PGRST303' || /jwt expired|invalid jwt|jwt.*expir/i.test(String(e.message || '')));
 
   async function mediaEl(path, type, desc) {
@@ -138,19 +154,31 @@
   function ensureLive(id) {
     if (!OWN_LIVE || !DEV_RE.test(id)) return null;
     if (lives.has(id)) return lives.get(id);
-    const sec = mk('section', 'card live');
+    const sec = mk('section', 'card live collapsed');   // colapsado por defecto en el Centro (ver CSS .live.collapsed)
     sec.setAttribute('aria-label', 'Video en vivo del casco ' + id);
-    sec.append(dlEl('h2', id, 'Video en vivo · '));
+    const head = mk('div', 'live-head'), body = mk('div', 'live-body');
+    head.append(dlEl('h2', id, 'Video en vivo · '));
+    sec.append(head, body);
     const row = mk('div', 'row');
     const bStart = mk('button', '', 'Iniciar'); bStart.type = 'button';
     const bStop = mk('button', 'ghost', 'Detener'); bStop.type = 'button'; bStop.disabled = true;
     const state = mk('span', 'state', 'Detenido'); state.setAttribute('role', 'status'); state.setAttribute('aria-live', 'polite');
+    bStart.setAttribute('aria-label', 'Iniciar el video del casco ' + id); bStop.setAttribute('aria-label', 'Detener el video del casco ' + id);
+    const bView = mk('button', 'ghost bview', 'Ver en vivo'); bView.type = 'button'; bView.setAttribute('aria-expanded', 'false');
+    const syncView = () => {
+      const open = !sec.classList.contains('collapsed');
+      bView.textContent = open ? 'Ocultar video' : 'Ver en vivo';
+      bView.setAttribute('aria-expanded', String(open));
+      bView.setAttribute('aria-label', bView.textContent + ', casco ' + id);
+    };
+    syncView();
     const stats = mk('span', 'mute');
-    const bRetry = mk('button', 'attend hidden', 'Reintentar'); bRetry.type = 'button';
+    const bRetry = mk('button', 'attend hidden', 'Reintentar');   // accion segura: acento, no rojo bRetry.type = 'button';
     bRetry.setAttribute('aria-label', 'Reintentar la conexión de video con el casco ' + id);
     const bTalk = mk('button', '', 'Hablar'); bTalk.type = 'button';
     bTalk.setAttribute('aria-label', 'Hablar con el casco ' + id + ' (llamada de voz en vivo)');
-    row.append(bStart, bStop, bTalk, state, bRetry, stats);
+    row.append(bStart, bStop, bTalk, bRetry, stats);
+    head.append(state, bView);   // el estado queda visible aunque el panel este colapsado
     if (cfg.VOICE_ENABLED === false) bTalk.classList.add('hidden');   // voz en vivo apagada hasta desplegar TURN/senalizacion
     const video = mk('video'); video.autoplay = true; video.muted = true; video.playsInline = true;
     video.setAttribute('aria-label', 'Video en vivo del casco ' + id);
@@ -171,13 +199,14 @@
       bRot.textContent = 'Girar (' + (auto ? 'Auto' : 'Manual') + ' ' + r + '°)';
       bAuto.textContent = auto ? 'Auto (activo)' : 'Auto';
       bAuto.setAttribute('aria-pressed', String(auto));
+      // el nombre accesible empieza con el texto visible (control por voz)
+      bRot.setAttribute('aria-label', bRot.textContent + ', casco ' + id + ': gira la imagen 90 grados y pasa a modo manual');
+      bAuto.setAttribute('aria-label', bAuto.textContent + ', casco ' + id + ': orientación automática de la imagen');
     };
     const saveRot = () => { try { localStorage.setItem(ROT_KEY, String(rot)); localStorage.setItem(MODE_KEY, auto ? 'auto' : 'manual'); } catch (_) {} };
     const bRot = mk('button', 'ghost', 'Girar'); bRot.type = 'button';
-    bRot.setAttribute('aria-label', 'Girar la imagen del casco ' + id + ' 90 grados (pasa a modo manual)');
     bRot.addEventListener('click', () => { rot = (curRot() + 90) % 360; auto = false; applyRot(); saveRot(); });
     const bAuto = mk('button', 'ghost', 'Auto'); bAuto.type = 'button';
-    bAuto.setAttribute('aria-label', 'Orientación automática de la imagen del casco ' + id);
     bAuto.addEventListener('click', () => { auto = true; applyRot(); saveRot(); });
     row.append(bRot, bAuto);
     // Recorte opcional para ocultar el texto que el procesador de camara del casco graba en la imagen (TM/ID/BT/TP/SS).
@@ -217,7 +246,7 @@
     if (hasCrop) { row.append(bCrop); applyCrop(); }
     // Pantalla completa: se pone el contenedor (no el <video>) para conservar el giro de la imagen.
     const bFull = mk('button', 'ghost', 'Pantalla completa'); bFull.type = 'button';
-    bFull.setAttribute('aria-label', 'Ver el video del casco ' + id + ' en pantalla completa');
+    bFull.setAttribute('aria-label', 'Pantalla completa, casco ' + id);
     const bExit = mk('button', 'fsexit', 'Salir de pantalla completa'); bExit.type = 'button';
     wrap.append(bExit);
     const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
@@ -241,7 +270,7 @@
     const syncSound = () => {
       bSound.textContent = 'Sonido del casco: ' + (soundOn ? 'sí' : 'no');
       bSound.setAttribute('aria-pressed', String(soundOn));
-      bSound.setAttribute('aria-label', 'Escuchar el audio del casco ' + id + ': ' + (soundOn ? 'encendido' : 'apagado'));
+      bSound.setAttribute('aria-label', bSound.textContent + ', casco ' + id);
       bSound.classList.toggle('hidden', !hasAudio());
       video.muted = !(soundOn && hasAudio());
     };
@@ -261,7 +290,7 @@
     const vline = mk('span', 'vline'); vline.append(vstate, ' ', vtime);
     const bMute = mk('button', 'ghost', 'Silenciar'); bMute.type = 'button'; bMute.setAttribute('aria-pressed', 'false');
     bMute.setAttribute('aria-label', 'Silenciar mi micrófono en la llamada con el casco ' + id);
-    const bHang = mk('button', 'attend', 'Colgar'); bHang.type = 'button';
+    const bHang = mk('button', 'danger', 'Colgar'); bHang.type = 'button';
     bHang.setAttribute('aria-label', 'Colgar la llamada con el casco ' + id);
     const meter = lbl => { const m = mk('meter'); m.min = 0; m.max = 1; m.value = 0; m.setAttribute('aria-label', lbl); return m; };
     const mMic = meter('Nivel de mi micrófono'), mIn = meter('Nivel del audio del casco');
@@ -274,7 +303,7 @@
     const bRec = mk('button', '', 'Grabar'); bRec.type = 'button'; bRec.disabled = true;
     bRec.setAttribute('aria-label', 'Grabar el video del casco ' + id + ' en mi PC');
     const bShot = mk('button', 'ghost', 'Captura'); bShot.type = 'button'; bShot.disabled = true;
-    bShot.setAttribute('aria-label', 'Guardar una captura de la imagen del casco ' + id + ' como PNG');
+    bShot.setAttribute('aria-label', 'Captura, casco ' + id + ': guarda la imagen como PNG');
     const bAgain = mk('button', 'ghost hidden', 'Descargar de nuevo'); bAgain.type = 'button';
     const chk = (txt, on) => { const l = mk('label', 'chk'); const i = mk('input'); i.type = 'checkbox'; i.checked = on; l.append(i, txt); return [l, i]; };
     const [lMicRec, cMic] = chk('Incluir mi micrófono', true), [lCasRec, cCasco] = chk('Incluir audio del casco', true);
@@ -282,12 +311,23 @@
     const recTime = mk('span', 'mute', '');
     const recNote = mk('p', 'mute', ''); recNote.style.margin = '0';
     rrow.append(bRec, bShot, bAgain, lMicRec, lCasRec, recTime, recState);
-    sec.append(row, rrow, recNote, cmdBar(id), vrow, wrap);
+    body.append(row, rrow, recNote, cmdBar(id), vrow, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
     L.syncSound = syncSound;
-    const setState = (t, bad) => { state.textContent = t; state.classList.toggle('bad', !!bad); };
+    const setState = (t, bad) => { state.textContent = t; state.classList.toggle('bad', !!bad); state.dataset.w = ''; };
+    // El contador de segundos va en un span aria-hidden: el lector anuncia el cambio de estado, no cada segundo.
+    const cnt = mk('span', 'mute'); cnt.setAttribute('aria-hidden', 'true');
+    const setWait = secs => {
+      if (state.dataset.w !== '1') { setState('Esperando al casco…'); state.dataset.w = '1'; state.append(cnt); }
+      cnt.textContent = ' ' + secs + ' s';
+    };
+    L.expand = () => { sec.classList.remove('collapsed'); syncView(); };
+    bView.addEventListener('click', () => {
+      if (sec.classList.contains('collapsed')) { L.expand(); if (!L.isLive() && !bStart.disabled) L.start(); bStop.focus({ preventScroll: true }); }
+      else { sec.classList.add('collapsed'); syncView(); bView.focus({ preventScroll: true }); }
+    });
     const base = 'https://' + LIVE_HOST + '/live/' + encodeURIComponent(id) + '/whep';
 
     function closePc() {
@@ -359,7 +399,7 @@
     async function run(gen) {
       const t0 = Date.now(), deadline = t0 + RETRY_WINDOW_MS;
       let n = 0, last = '', resent = 0, lastStart = t0;
-      const tick = () => { if (gen === L.gen) setState('Esperando al casco… ' + Math.floor((Date.now() - t0) / 1000) + ' s'); };
+      const tick = () => { if (gen === L.gen) setWait(Math.floor((Date.now() - t0) / 1000)); };
       const timer = setInterval(tick, 1000);
       try {
         while (gen === L.gen) {
@@ -384,13 +424,14 @@
     L.isLive = () => !!(L.pc && L.ms && L.pc.connectionState === 'connected');
     L.start = async () => {
       const gen = ++L.gen;
+      L.expand();
       closePc();   // reinicia el ciclo en un clic: se cierra cualquier intento anterior
       bRetry.classList.add('hidden');
       bStart.disabled = true; bStop.disabled = false;
       setState('Solicitando…');
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'start' });
       if (gen !== L.gen) return;
-      if (error) { fail('no se pudo solicitar: ' + error.message); return; }
+      if (error) { fail('no se pudo solicitar: ' + errEs(error)); return; }
       run(gen);
     };
     L.stop = async () => {
@@ -400,7 +441,7 @@
       setState('Deteniendo…');
       await deleteSession();
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'stop' });
-      if (error) setState('Error: no se pudo enviar stop: ' + error.message, true); else setState('Detenido');
+      if (error) setState('Error: no se pudo enviar stop: ' + errEs(error), true); else setState('Detenido');
     };
     bStart.addEventListener('click', L.start);
     bStop.addEventListener('click', L.stop);
@@ -419,7 +460,7 @@
     let wmSec = 0, wmTxt = '';
     const wmText = () => {
       const s = Math.floor(Date.now() / 1000);
-      if (s !== wmSec) { wmSec = s; wmTxt = 'Vigía · Casco ' + id + ' · ' + new Date().toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium' }); }
+      if (s !== wmSec) { wmSec = s; wmTxt = 'Vigía · Casco ' + id + ' · ' + new Date().toLocaleString('es-AR', { timeZone: TZ, dateStyle: 'short', timeStyle: 'medium', hourCycle: 'h23' }); }
       return wmTxt;
     };
     const frameInfo = () => {
@@ -807,6 +848,20 @@
   const TYPE_LBL = { sos: 'SOS', fall: 'CAÍDA', geofence: 'GEOCERCA', not_worn: 'CASCO SIN USAR', inactive: 'SIN MOVIMIENTO',
     equip: 'EQUIPO', fall_cancel: 'CAÍDA CANCELADA', photo: 'FOTO', video: 'VIDEO' };
   const typeLbl = t => TYPE_LBL[t] || String(t || '').toUpperCase();
+  // Severidad: 3 critica (sos, caida), 2 alta (zona de peligro, sin movimiento), 1 media (casco sin usar, zona restringida/permitida, equipo).
+  // Sirena y cartel a pantalla completa solo desde nivel 2; nivel 1 = aviso silencioso (banner ambar, insignia y tono corto).
+  const SEV_LOUD = 2;
+  const sevOf = ev => {
+    if (ev.type === 'sos' || ev.type === 'fall') return 3;
+    if (ev.type === 'inactive') return 2;
+    if (ev.type === 'geofence') { const p = ev.payload; return p && typeof p === 'object' && p.kind === 'peligro' ? 2 : 1; }
+    return 1;
+  };
+  const SEV_NAME = { 3: 'crítica', 2: 'alta', 1: 'media' };
+  // La mas grave primero; a igual gravedad, la que lleva mas tiempo esperando.
+  const topPending = () => [...pending.values()].sort((a, c) => sevOf(c) - sevOf(a) || a.created_at.localeCompare(c.created_at))[0];
+  const loudCount = () => { let n = 0; for (const e of pending.values()) if (sevOf(e) >= SEV_LOUD) n++; return n; };
+  const nAlertas = n => n + (n === 1 ? ' alerta' : ' alertas');
   const alertLabel = ev => {
     if (ev.type === 'fall') return 'CAÍDA';
     if (ev.type === 'not_worn') return 'CASCO SIN USAR';
@@ -826,9 +881,12 @@
     document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Vigía · Casco Inteligente';
     renderPending();
     if (!pending.size) { b.style.display = 'none'; syncAlarm(); return; }
-    const last = [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
+    const last = topPending();
+    const loud = loudCount() > 0;
+    b.classList.toggle('med', !loud);   // solo avisos de nivel medio: banner ambar y sin anuncio asertivo
+    b.setAttribute('role', loud ? 'alert' : 'status'); b.setAttribute('aria-live', loud ? 'assertive' : 'polite');
     const txt = document.createElement('span');
-    txt.textContent = pending.size + ' alerta(s) sin atender — última: ' +
+    txt.textContent = (pending.size === 1 ? '1 alerta sin atender: ' : nAlertas(pending.size) + ' sin atender. La más grave: ') +
       alertLabel(last) + (isManDown(last) ? ' · HOMBRE CAÍDO' : '') + ' · ' + label(last.device_id) + ' · ' + fmt(last.created_at);
     const go = document.createElement('button'); go.type = 'button'; go.textContent = 'Ver alerta';
     go.addEventListener('click', () => {
@@ -836,11 +894,16 @@
       const li = pendEls.get(last.id) || cards.get(last.id);
       if (li) { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); const inp = li.querySelector('input'); if (inp) inp.focus({ preventScroll: true }); }
     });
-    b.replaceChildren(txt, go);
+    let cam = null;
     if (OWN_LIVE) {
-      const cam = document.createElement('button'); cam.type = 'button'; cam.textContent = 'Ver en vivo';
+      cam = document.createElement('button'); cam.type = 'button'; cam.textContent = 'Ver en vivo';
       cam.addEventListener('click', () => openLive(last.device_id, true));
-      b.append(cam);
+    }
+    // Solo se reemplaza el contenido si el texto cambio (un re-render sin cambios no vuelve a anunciar el aviso).
+    const sig = txt.textContent + '|' + last.id;
+    if (b.dataset.sig !== sig || b.style.display !== 'block') {
+      b.dataset.sig = sig;
+      b.replaceChildren(txt, go, ...(cam ? [cam] : []));
     }
     b.style.display = 'block';
     syncAlarm();
@@ -859,6 +922,13 @@
     const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
     return (h ? h + ':' + pad2(m) : pad2(m)) + ':' + pad2(s % 60);
   };
+  // Transcurrido legible: "16 s", "3 min 16 s", "1 h 05 min" (antes "03:16", ambiguo entre h:min y min:s).
+  const elapsed = s => {
+    s = Math.max(0, Math.floor(s));
+    if (s < 60) return s + ' s';
+    if (s < 3600) return Math.floor(s / 60) + ' min ' + pad2(s % 60) + ' s';
+    return Math.floor(s / 3600) + ' h ' + pad2(Math.floor(s % 3600 / 60)) + ' min';
+  };
   const ago = ms => {
     const m = Math.max(0, Math.round(ms / 60000));
     return m < 1 ? 'hace menos de 1 min' : m < 60 ? 'hace ' + m + ' min' : 'hace ' + Math.round(m / 60) + ' h';
@@ -876,7 +946,7 @@
   function healthOf(id, s, now) {
     const out = [], age = now - new Date(s.at).getTime();
     const tag = label(id) + ': ';
-    if (age > OFFLINE_MS) out.push({ key: 'off', sev: 'warn', text: tag + 'sin señal, último heartbeat ' + ago(age) });
+    if (age > OFFLINE_MS) out.push({ key: 'off', sev: 'warn', text: tag + 'sin señal: el casco avisó por última vez ' + ago(age) });
     const bat = batOf(s);
     if (bat != null && bat < BAT_CRIT) out.push({ key: 'bat-crit', sev: 'crit', text: tag + 'batería crítica (' + n1(bat) + ' %)' });
     else if (bat != null && bat < BAT_WARN) out.push({ key: 'bat-warn', sev: 'warn', text: tag + 'batería baja (' + n1(bat) + ' %)' });
@@ -886,8 +956,8 @@
     if (fr != null && fr < FREE_MIN_MB) out.push({ key: 'free', sev: 'warn', text: tag + 'almacenamiento casi lleno (' + n1(fr / 1024) + ' GB libres)' });
     if (age <= OFFLINE_MS && posLoaded) {   // casco en linea pero sin fix GPS nuevo
       const lp = lastPos.get(id);
-      if (!lp) out.push({ key: 'gps', sev: 'warn', text: tag + 'GPS sin fix: todavía no mandó una posición válida' });
-      else if (now - lp.fixT > NOFIX_MS) out.push({ key: 'gps', sev: 'warn', text: tag + 'GPS sin fix: sin ubicación nueva ' + ago(now - lp.fixT) });
+      if (!lp) out.push({ key: 'gps', sev: 'warn', text: tag + 'GPS sin posición: todavía no mandó una posición válida' });
+      else if (now - lp.fixT > NOFIX_MS) out.push({ key: 'gps', sev: 'warn', text: tag + 'GPS sin posición nueva ' + ago(now - lp.fixT) });
     }
     return out;
   }
@@ -945,7 +1015,7 @@
       const d = mk('div', 'halert' + (a.sev === 'crit' ? ' crit' : ''));
       d.append(mk('span', 'tag ' + (a.sev === 'crit' ? 'sos' : 'warn'), a.sev === 'crit' ? 'CRÍTICA' : 'AVISO DE EQUIPO'), mk('span', '', a.text));
       const b = mk('button', 'ghost', 'Entendido'); b.type = 'button';
-      b.setAttribute('aria-label', 'Ocultar el aviso: ' + a.text);
+      b.setAttribute('aria-label', 'Entendido, ocultar el aviso: ' + a.text);
       b.addEventListener('click', () => { a.dismissed = true; evalHealth(); });
       d.append(b);
       return d;
@@ -964,13 +1034,19 @@
     const now = Date.now();
     let on = 0, off = 0;
     for (const s of devState.values()) { if (now - new Date(s.at).getTime() <= OFFLINE_MS) on++; else off++; }
-    // Cascos activos registrados que nunca mandaron heartbeat: tambien cuentan como "sin señal".
+    // Cascos activos registrados que nunca mandaron señal de vida: tambien cuentan como "sin señal".
     const never = EQ.devices.filter(d => !d.deleted_at && (d.status || 'activo') === 'activo' && DEV_RE.test(d.device_id) && !devState.has(d.device_id)).map(d => d.device_id);
     off += never.length;
-    $('kpiDevN').textContent = on + ' en línea';
-    $('kpiDevOff').textContent = off + ' sin señal';
-    $('kpiDevOff').className = off ? 'bad' : 'mute';
     fillDest();
+    if (!devLoaded && !devState.size) {   // antes de la primera lectura: "—", no "0 en línea"
+      $('kpiDevN').textContent = '—'; $('kpiDevOff').textContent = devErr ? 'No se pudieron leer' : 'Cargando…'; $('kpiDevOff').className = devErr ? 'bad' : 'mute';
+      box.className = devErr ? 'bad' : 'mute'; box.textContent = devErr ? 'No se pudieron leer los cascos. Se reintenta solo.' : 'Cargando cascos…';
+      pruneCmdBars(new Set()); return;
+    } else {
+      $('kpiDevN').textContent = on + ' en línea';
+      $('kpiDevOff').textContent = off + ' sin señal';
+      $('kpiDevOff').className = off ? 'bad' : 'mute';
+    }
     if (!devState.size && !never.length) { box.className = 'mute'; box.textContent = 'Sin datos de cascos todavía.'; pruneCmdBars(new Set()); return; }
     box.className = '';
     const ghosts = never.map(id => [id, null]);
@@ -1017,7 +1093,7 @@
       if (lp) {
         const pi = posInfo(lp, now);
         const b = mk('button', 'ghost', 'Ver en el mapa'); b.type = 'button';
-        b.setAttribute('aria-label', 'Ver el casco ' + id + ' en el mapa');
+        b.setAttribute('aria-label', 'Ver en el mapa, casco ' + id);
         b.addEventListener('click', () => showOnMap(lp.lat, lp.lng, label(id)));
         dl.append(metric('Ubicación', mk('span', pi.fresh ? '' : 'bad', coordTxt(lp.lat, lp.lng) + ' · ' + pi.txt + pi.acc), b));
       } else dl.append(metric('Ubicación', mk('span', 'bad', 'Sin posición GPS válida todavía')));
@@ -1039,18 +1115,20 @@
       if (cur.battery == null && battery != null) cur.battery = battery;
     }
   }
+  let devLoaded = false, devErr = false;   // devLoaded: hubo al menos una lectura de cascos terminada (con o sin datos)
   async function loadDevices() {
     const HB = 'device_id,created_at,battery,type,payload';
     const hb = () => sb.from('events').select(HB).eq('type', 'heartbeat');
     try {
       const { data, error } = await hb().order('created_at', { ascending: false }).limit(200);
-      if (!error && Array.isArray(data)) for (const e of data) noteDevice(e.device_id, e.created_at, e.battery, e.payload);
+      if (!error && Array.isArray(data)) { devErr = false; devLoaded = true; for (const e of data) noteDevice(e.device_id, e.created_at, e.battery, e.payload); }
       else if (error && isAuthErr(error)) { sessionExpired(); return; }
+      else if (error) devErr = true;
       // Un casco muy parlanchin llena la ventana global: los que faltan se piden uno por uno (ultimos 5 heartbeats).
       const missing = knownDevices().filter(id => !devState.has(id));
       const rs = await Promise.all(missing.map(id => hb().eq('device_id', id).order('created_at', { ascending: false }).limit(5)));
       for (const r of rs) if (!r.error && Array.isArray(r.data)) for (const e of r.data) noteDevice(e.device_id, e.created_at, e.battery, e.payload);
-    } catch (_) {}
+    } catch (_) { devErr = true; }
     renderDevices(); evalHealth();
   }
 
@@ -1069,14 +1147,25 @@
   };
   function renderKpiAge() {
     const o = oldestPending();
-    $('kpiPendN').textContent = String(pending.size);
-    $('kpiPend').classList.toggle('alert', pending.size > 0);
-    $('kpiPendAge').textContent = o ? 'La más antigua: hace ' + clock((Date.now() - new Date(o.created_at).getTime()) / 1000) : connDown() ? 'Sin conexión: no se puede confirmar' : 'Sin alertas pendientes';
     $('pendList').querySelectorAll('.age').forEach(el => {
-      el.textContent = 'hace ' + clock((Date.now() - Number(el.dataset.t)) / 1000);
+      el.textContent = 'hace ' + elapsed((Date.now() - Number(el.dataset.t)) / 1000);
     });
     $('pendList').querySelectorAll('.rulebox').forEach(b => ruleSet(b, (Date.now() - Number(b.dataset.t)) / 60000));
+    // Antes de la primera lectura no se afirma "0 / Sin alertas": los KPI muestran "—" y quedan aria-busy.
+    if (!evLoaded) {
+      $('kpiPendN').textContent = '—'; $('kpiPend').classList.remove('alert'); $('kpiPend').setAttribute('aria-busy', 'true');
+      $('kpiPendAge').textContent = syncFail ? 'No se pudieron cargar las alertas' : 'Cargando…';
+      return;
+    }
+    $('kpiPend').removeAttribute('aria-busy');
+    $('kpiPendN').textContent = String(pending.size);
+    $('kpiPend').classList.toggle('alert', pending.size > 0);
+    $('kpiPendAge').textContent = o ? 'La más antigua: hace ' + elapsed((Date.now() - new Date(o.created_at).getTime()) / 1000) : connDown() ? 'Sin conexión: no se puede confirmar' : 'Sin alertas pendientes';
     const nb = $('navPend'); nb.textContent = String(pending.size); nb.classList.toggle('hidden', !pending.size);
+    nb.classList.toggle('med', pending.size > 0 && loudCount() === 0);
+    // La insignia es visible para lectores de pantalla: el nombre de la pestaña incluye el conteo.
+    const tl = pending.size ? 'Centro, ' + nAlertas(pending.size) + ' pendientes' + (loudCount() ? '' : ' (avisos de nivel medio)') : 'Centro';
+    if ($('tabMain').getAttribute('aria-label') !== tl) $('tabMain').setAttribute('aria-label', tl);
   }
   const pendEls = new Map();   // event_id -> <li>
   // Abre el panel de video del casco en "En vivo" y lo inicia (un solo camino para banner, tarjetas y cartel).
@@ -1095,12 +1184,13 @@
     return see;
   }
   function buildPending(ev) {   // [UI] tarjeta dominante: icono + texto + contador + regla de estacion
-    const li = mk('li', 'card pitem t-' + ev.type);
+    const li = mk('li', 'card pitem t-' + ev.type + ' sv-' + sevOf(ev));
     const head = mk('div', 'a-head');
     const type = mk('span', 'a-type');
     type.append(icon(ICONS[ev.type] ? ev.type : 'sos', 28), document.createTextNode(alertLabel(ev)));
     head.append(type);
     if (isManDown(ev)) head.append(mk('span', 'tag sos', 'HOMBRE CAÍDO'));
+    if (sevOf(ev) === 1) head.append(mk('span', 'tag warn', 'AVISO'));   // nivel medio: sin sirena ni cartel
     const t0 = new Date(ev.created_at).getTime();
     const age = mk('strong', 'age a-age'); age.dataset.t = String(t0);
     head.append(age);
@@ -1111,7 +1201,7 @@
     const note = mk('input', 'a-note'); note.type = 'text'; note.maxLength = 500; note.placeholder = 'Nota (opcional)';
     note.setAttribute('aria-label', 'Nota de atención del casco ' + ev.device_id);
     const btn = mk('button', 'attend a-go', 'Atender'); btn.type = 'button';
-    btn.setAttribute('aria-label', 'Atender la alerta del casco ' + ev.device_id);
+    btn.setAttribute('aria-label', 'Atender, alerta del casco ' + ev.device_id);
     btn.addEventListener('click', () => attend(ev, btn, note));
     act.append(note, btn);
     const lv = liveAction(ev.device_id); if (lv) act.append(lv);
@@ -1120,7 +1210,7 @@
   }
   function renderPending() {
     const ul = $('pendList');
-    const list = [...pending.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));   // la mas antigua primero
+    const list = [...pending.values()].sort((a, b) => sevOf(b) - sevOf(a) || new Date(a.created_at) - new Date(b.created_at));   // mas grave primero; luego la mas antigua
     const keep = new Set(list.map(e => e.id));
     for (const [id, li] of pendEls) if (!keep.has(id)) { li.remove(); pendEls.delete(id); }
     for (const ev of list) if (!pendEls.has(ev.id)) pendEls.set(ev.id, buildPending(ev));
@@ -1140,17 +1230,19 @@
   setInterval(() => { if (document.hidden) return; tickN++; renderKpiAge(); if (tickN % 10 === 0) { renderDevices(); evalHealth(); renderBroadcasts(); } }, 1000);   // oculta: sin trabajo (al volver se repinta)
 
   // Error de "Atender": visible junto a la tarjeta (role=alert) y en un aviso flotante, en español y completo.
-  function attendError(btn, msg) {
+  function attendError(btn, msg, errEl) {
     const act = btn.parentElement;
-    if (act) {
+    if (errEl) errEl.textContent = msg;   // cartel SOS: el error va dentro del propio cartel
+    else if (act) {
       let p = act.parentElement && act.parentElement.querySelector(':scope > .a-err');
       if (!p) { p = mk('p', 'a-err bad'); p.setAttribute('role', 'alert'); act.after(p); }
       p.textContent = msg;
     }
     toast(msg);
   }
-  async function attend(ev, btn, noteEl) {
+  async function attend(ev, btn, noteEl, errEl) {
     btn.disabled = true;
+    if (errEl) errEl.textContent = '';
     const lbl = btn.textContent; btn.textContent = 'Atendiendo…';
     const done = () => { btn.disabled = false; btn.textContent = lbl; };
     const row = { event_id: ev.id };
@@ -1160,19 +1252,31 @@
     try { error = (await sb.from('event_acks').insert(row)).error; } catch (e) { error = { message: String((e && e.message) || e) }; }
     if (error && error.code !== '23505') {
       done();
-      if (isAuthErr(error)) { sessionExpired(); attendError(btn, 'Sesión vencida: ingresá de nuevo para atender la alerta.'); return; }
+      if (isAuthErr(error)) { sessionExpired(); attendError(btn, 'Sesión vencida: ingresá de nuevo para atender la alerta.', errEl); return; }
       const m = String(error.message || ''), c = String(error.code || '');
       attendError(btn, c === '42501' || /row-level|permission/i.test(m)
         ? 'No tenés permiso para atender esta alerta.'
         : /fetch|network|timeout|conexi/i.test(m)
           ? 'No se pudo atender la alerta: sin conexión con el servidor. Probá de nuevo; si sigue, avisá por radio.'
-          : 'No se pudo atender la alerta. Probá de nuevo; si sigue, avisá por radio.');
+          : 'No se pudo atender la alerta. Probá de nuevo; si sigue, avisá por radio.', errEl);
       return;
     }
     let data = null;
     try { data = (await sb.from('event_acks').select(ACK_COLS).eq('event_id', ev.id).maybeSingle()).data; } catch (_) {}
     // El acuse ya quedo guardado: si no se pudo releer, se muestra como atendida igual.
     applyAck(data || { event_id: ev.id, acked_by_email: $('who').dataset.email || null, acked_at: new Date().toISOString(), note: t || null });
+    done();
+    afterAttend(ev);
+  }
+  // Tras atender: anuncio y foco a algo logico (nada de caer en <body> porque la tarjeta desaparecio).
+  function afterAttend(ev) {
+    announce('Alerta de ' + label(ev.device_id) + ' atendida. ' + (pending.size ? 'Quedan ' + nAlertas(pending.size) + ' sin atender.' : 'No quedan alertas pendientes.'));
+    if (!sosOv.hidden) { ovAtend.focus({ preventScroll: true }); return; }   // el cartel sigue con la proxima alerta
+    if ($('panelMain').classList.contains('hidden')) return;               // el usuario esta en otra pestaña: el foco ya volvio donde estaba
+    const next = $('pendList').querySelector('.pitem input');
+    const t = next || $('pendH');
+    if (t === $('pendH')) t.tabIndex = -1;
+    t.focus({ preventScroll: false });
   }
 
   // ---- Escalamiento (solo lectura de public.escalation_rules) ----
@@ -1180,11 +1284,12 @@
     const el = $('escState');
     try {
       const { data, error } = await sb.from('escalation_rules').select('after_seconds,enabled').limit(10);
-      if (error) { if (isAuthErr(error)) sessionExpired(); el.textContent = 'No se pudo leer el escalamiento (se reintenta solo)'; return; }
-      if (!Array.isArray(data) || !data.length) { el.textContent = 'Escalamiento no configurado'; return; }
+      if (error) { if (isAuthErr(error)) sessionExpired(); el.textContent = 'No se pudo leer el aviso a responsables (se reintenta solo)'; return; }
+      if (!Array.isArray(data) || !data.length) { el.textContent = 'Aviso a responsables: sin configurar'; return; }
       const on = data.filter(r => r.enabled === true && num(r.after_seconds) != null).map(r => r.after_seconds);
-      el.textContent = on.length ? 'Escalamiento: activo en ' + Math.min(...on) + ' s' : 'Escalamiento: inactivo';
-    } catch (_) { el.textContent = 'No se pudo leer el escalamiento (se reintenta solo)'; }
+      const n = on.length ? Math.min(...on) : 0, t = n >= 60 && n % 60 === 0 ? (n / 60) + ' min' : n + ' s';
+      el.textContent = on.length ? 'Aviso a responsables: si nadie atiende una alerta en ' + t + ', se avisa a los responsables' : 'Aviso a responsables: desactivado';
+    } catch (_) { el.textContent = 'No se pudo leer el aviso a responsables (se reintenta solo)'; }
   }
 
   // ---- Evacuacion y mensajes a cascos (public.broadcasts / broadcast_acks; docs/PROTOCOLO-CENTRO.md seccion 4) ----
@@ -1252,7 +1357,7 @@
         for (const t of targets) {
           const at = got.get(t);
           chips.append(mk('span', 'tag' + (at ? ' ok' : ''), label(t) + ': ' + (at
-            ? 'recibido ' + new Date(at).toLocaleTimeString('es-AR', { timeZone: TZ })
+            ? 'recibido ' + new Date(at).toLocaleTimeString('es-AR', { timeZone: TZ, hourCycle: 'h23' })
             : expired ? 'no recibido' : 'esperando')));
         }
         li.append(chips);
@@ -1286,7 +1391,7 @@
     if (c === '54000' || /rate limit/i.test(m)) return 'Demasiadas órdenes en poco tiempo (máximo 6 por minuto). Esperá unos segundos y probá de nuevo.';
     if (isAuthErr(error)) { sessionExpired(); return 'Sesión vencida: ingresá de nuevo y reenviá la orden.'; }
     if (c === '42501' || /permission|row-level|not authorized|rol no autorizado/i.test(m)) return 'No tenés permiso para enviar órdenes a los cascos.';
-    return 'No se pudo enviar la orden: ' + m;
+    return 'No se pudo enviar la orden: ' + errEs(error);
   }
   async function sendBroadcast(kind, message, dest, rep, errEl, btn) {
     errEl.textContent = ''; $('orderOk').textContent = '';
@@ -1442,6 +1547,7 @@
     histNew++;
     const b = $('navHistNew'); b.textContent = String(histNew); b.classList.remove('hidden');
     $('histLive').textContent = histNew === 1 ? 'Hay una novedad nueva en Historial' : 'Hay ' + histNew + ' novedades nuevas en Historial';
+    $('tabDone').setAttribute('aria-label', 'Historial, ' + (histNew === 1 ? '1 novedad nueva' : histNew + ' novedades nuevas'));
   }
   function showTab(name) {
     const act = TABS.find(x => x[0] === name) || TABS[0];
@@ -1458,15 +1564,16 @@
     if (name === 'rep') repQ.show();
     if (name === 'cmd') loadCmdPanel();
     const selTab = $(act[1]); if (selTab && selTab.scrollIntoView) selTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });   // barra deslizable
-    if (name === 'done') { histNew = 0; $('navHistNew').classList.add('hidden'); $('histLive').textContent = ''; }
+    if (name === 'done') { histNew = 0; $('navHistNew').classList.add('hidden'); $('histLive').textContent = ''; $('tabDone').removeAttribute('aria-label'); }
   }
   for (const [k, t] of TABS) $(t).addEventListener('click', () => showTab(k));
   $('mainNav').addEventListener('keydown', e => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
-    const cur = TABS.findIndex(x => $(x[1]).getAttribute('aria-selected') === 'true');
-    const i = e.key === 'Home' ? 0 : e.key === 'End' ? TABS.length - 1 : (cur + (e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : TABS.length - 1)) % TABS.length;
+    const vis = TABS.filter(x => $(x[1]).offsetParent !== null);   // las pestañas ocultas por CSS no entran en la ronda
+    const cur = vis.findIndex(x => $(x[1]).getAttribute('aria-selected') === 'true');
+    const i = e.key === 'Home' ? 0 : e.key === 'End' ? vis.length - 1 : (cur + (e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : vis.length - 1)) % vis.length;
     e.preventDefault();
-    showTab(TABS[i][0]); $(TABS[i][1]).focus();
+    showTab(vis[i][0]); $(vis[i][1]).focus();
   });
 
   function applyAck(ack) {
@@ -1524,7 +1631,7 @@
   function render(ev) {
     if (cards.has(ev.id)) return false;
     const li = document.createElement('li');
-    li.className = 'card ev t-' + ev.type;
+    li.className = 'card ev t-' + ev.type + (needsAttention(ev) ? ' sv-' + sevOf(ev) : '');
     li.dataset.id = ev.id; li.dataset.att = needsAttention(ev) ? '1' : ''; li.dataset.dev = ev.device_id; if (ev.media_path) li.dataset.media = ev.media_path;
     cards.set(ev.id, li);
     if (ev.type === 'equip') noteEquip(ev);
@@ -1582,7 +1689,7 @@
   const ASG_COLS = 'id,device_id,person_id,starts_at,ends_at,created_at';
   const noPerm = e => !!e && (e.code === '42501' || /permission denied|row-level security|not authorized|rol no autorizado|no autorizado/i.test(String(e.message || '')));
   const NO_PERM_TXT = 'Sin permiso para ver este dato';
-  const dbMsg = e => (noPerm(e) ? NO_PERM_TXT : 'No se pudo leer: ' + String((e && e.message) || 'error'));
+  const dbMsg = e => (noPerm(e) ? NO_PERM_TXT : 'No se pudo leer: ' + errEs(e));
   const numOf = v => { if (v == null || v === '') return null; const n = Number(v); return isFinite(n) ? n : null; };
   const personOf = new Map();    // device_id -> nombre de la persona con asignacion vigente
   const label = id => 'Casco ' + id + (personOf.get(id) ? ' · ' + personOf.get(id) : '');
@@ -1646,7 +1753,7 @@
     if (noPerm(e)) return 'Sin permiso para esta operación.';
     if (c === '23503') return 'La referencia (grupo, casco o persona) ya no existe. Actualizá la lista.';
     if (c === '22023') return m.replace(/^assignments: /, '');
-    return 'No se pudo guardar: ' + m;
+    return 'No se pudo guardar: ' + errEs(e);
   };
   // Valida {k, el, label, req, re, max, msg, num}; devuelve {v, errors}
   function collect(spec) {
@@ -1665,7 +1772,7 @@
   function confirmRow(host, text, yes, onYes) {
     const old = host.querySelector(':scope > .confirm'); if (old) old.remove();
     const box = mk('div', 'row confirm'); box.setAttribute('role', 'alert');
-    const ok = mk('button', 'attend', yes); ok.type = 'button';
+    const ok = mk('button', 'danger', yes); ok.type = 'button';
     const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
     ok.addEventListener('click', async () => { ok.disabled = true; await onYes(); box.remove(); });
     no.addEventListener('click', () => box.remove());
@@ -2141,7 +2248,7 @@
     if (!pos) { el.replaceChildren(mk('span', 'mute', 'Sin posición conocida del casco.')); return; }
     kids.push(mk('span', '', (pos.approx ? 'Última posición conocida: ' : 'Posición: ') + coordTxt(pos.lat, pos.lng)));
     const b = mk('button', 'ghost', 'Ver en mapa'); b.type = 'button';
-    b.setAttribute('aria-label', 'Ver en el mapa la posición del casco ' + ev.device_id);
+    b.setAttribute('aria-label', 'Ver en mapa, posición del casco ' + ev.device_id);
     b.addEventListener('click', () => showOnMap(pos.lat, pos.lng, label(ev.device_id)));
     kids.push(b);
     const m = nearestMeet(pos.lat, pos.lng);
@@ -2169,7 +2276,7 @@
       const bat = s ? batOf(s) : (p ? p.battery : null);
       const pi = p ? posInfo(p, Date.now()) : null;
       li.append(head, mk('div', 'mute', p ? 'Ubicación: ' + coordTxt(p.lat, p.lng) + ' · ' + pi.txt + pi.acc + ' · ' + fmt(p.fixT) + (bat != null ? ' · batería ' + n1(bat) + ' %' : '')
-        : 'Sin posición registrada todavía (el casco aún no mandó un fix GPS válido)'));
+        : 'Sin posición registrada todavía (el casco aún no mandó una posición GPS válida)'));
       if (p) li.append(actionRow(btn('Centrar en este casco', 'ghost', () => showOnMap(p.lat, p.lng, label(id)), 'Centrar el mapa en el casco ' + id)));
       return li;
     }) : [mk('li', 'empty mute', 'Sin cascos con posición todavía.')]));
@@ -2281,7 +2388,7 @@
       const pi = posInfo(p, now);
       const stTxt = al ? 'ALERTA sin atender' : on ? 'En línea' : 'Sin señal';
       const pop = mk('div'); pop.append(mk('strong', '', label(id)), mk('div', '', stTxt),
-        mk('div', '', 'Hora del fix: ' + fmt(p.fixT)), mk('div', '', 'Fuente: ' + pi.txt),
+        mk('div', '', 'Hora de la posición: ' + fmt(p.fixT)), mk('div', '', 'Fuente: ' + pi.txt),
         mk('div', '', p.acc != null ? 'Precisión: ' + Math.round(p.acc) + ' m' : 'Precisión: —'), mk('div', '', bat != null ? 'Batería: ' + n1(bat) + ' %' : 'Batería: —'));
       // Icono de casco (norte arriba) con el id; atenuado y con borde punteado si el fix es viejo.
       const dash = pi.fresh ? '' : ' stroke-dasharray="3 2"';
@@ -2604,7 +2711,7 @@
     }
   }
   function pumpSiren() {
-    if (!pending.size || sirenMuted || !audioOn()) return;
+    if (!loudCount() || sirenMuted || !audioOn()) return;
     const now = audioCtx.currentTime;
     if (!sirenOut) {
       sirenOut = audioCtx.createGain(); sirenOut.gain.value = 0.22; sirenOut.connect(audioCtx.destination); sirenNext = 0;
@@ -2631,7 +2738,7 @@
   function notifyAlert(ev) {
     if (!document.hidden || !('Notification' in window) || Notification.permission !== 'granted') return;
     try {
-      const n = new Notification('¡' + alertLabel(ev) + (isManDown(ev) ? ' · HOMBRE CAÍDO' : '') + '! · Vigía', {
+      const n = new Notification((sevOf(ev) >= SEV_LOUD ? '¡' + alertLabel(ev) + (isManDown(ev) ? ' · HOMBRE CAÍDO' : '') + '!' : 'Aviso: ' + alertLabel(ev)) + ' · Vigía', {
         body: label(ev.device_id) + ' · ' + fmt(ev.created_at), tag: 'casco-' + ev.id, requireInteraction: true });
       n.onclick = () => { try { window.focus(); } catch (_) {} n.close(); };
       n.onclose = () => notifs.delete(n);
@@ -2642,15 +2749,23 @@
 
   const sosOv = mk('div', 'sos-overlay');
   sosOv.id = 'sosOverlay'; sosOv.hidden = true;
-  sosOv.setAttribute('role', 'alertdialog'); sosOv.setAttribute('aria-modal', 'true'); sosOv.setAttribute('aria-labelledby', 'sosOvT');
+  sosOv.setAttribute('role', 'alertdialog'); sosOv.setAttribute('aria-modal', 'true'); sosOv.setAttribute('aria-labelledby', 'sosOvT'); sosOv.setAttribute('aria-describedby', 'sosOvWho');
   const ovT = mk('h2', 'sos-ov-t', '¡ALERTA!'); ovT.id = 'sosOvT';
-  const ovWho = mk('p', 'sos-ov-who'), ovWhen = mk('p', 'sos-ov-when mono'), ovMore = mk('p', 'sos-ov-more'), ovHint = mk('p', 'sos-ov-hint', 'Tocá la pantalla para activar el sonido de la alarma.');
+  const ovWho = mk('p', 'sos-ov-who'), ovWhen = mk('p', 'sos-ov-when mono'), ovMore = mk('p', 'sos-ov-more'), ovHint = mk('p', 'sos-ov-hint', 'Hacé clic o tocá la pantalla para activar el sonido de la alarma.');
+  ovWho.id = 'sosOvWho';
+  // Atender en un paso: nota opcional + boton; con la nota vacia atiende directo.
+  const ovNoteL = mk('label', 'sos-ov-note', 'Nota (opcional)');
+  const ovNote = mk('textarea'); ovNote.rows = 2; ovNote.maxLength = 500; ovNote.placeholder = 'Ej.: voy en camino. Enter atiende; Mayús+Enter agrega un renglón.';
+  ovNoteL.append(ovNote);
+  const ovErr = mk('p', 'sos-ov-err'); ovErr.setAttribute('role', 'alert');
   const ovAtend = mk('button', 'sos-ov-go', 'Atender'), ovLive = mk('button', 'sos-ov-b', 'Ver en vivo');
   const ovMute = mk('button', 'sos-ov-b', 'Silenciar sirena'), ovClose = mk('button', 'sos-ov-b', 'Ver el panel');
   for (const b of [ovAtend, ovLive, ovMute, ovClose]) b.type = 'button';
   const ovBtns = mk('div', 'sos-ov-btns'); ovBtns.append(ovAtend, ovLive, ovMute, ovClose);
-  sosOv.append(ovT, ovWho, ovWhen, ovMore, ovHint, ovBtns);
+  const ovPanelHint = mk('p', 'sos-ov-hint2', 'La sirena y el cartel siguen hasta que se atienda la alerta.');
+  sosOv.append(ovT, ovWho, ovWhen, ovMore, ovHint, ovNoteL, ovErr, ovBtns, ovPanelHint);
   document.body.append(sosOv);
+  let ovCur = null;   // id de la alerta que muestra el cartel (la nota escrita no pasa a otra alerta)
   // Mostrar/ocultar el cartel: el panel queda inerte detras, y al cerrar el foco vuelve a donde estaba.
   function setOverlay(show) {
     if (show === !sosOv.hidden) return;
@@ -2667,22 +2782,21 @@
   const closeOverlay = () => { overlayHidden = true; setOverlay(false); };
   sosOv.addEventListener('keydown', e => {   // trampa de foco: Tab no sale del cartel
     if (e.key !== 'Tab') return;
-    const f = [ovAtend, ovLive, ovMute, ovClose].filter(b => !b.disabled && !b.hidden);
+    const f = [ovNote, ovAtend, ovLive, ovMute, ovClose].filter(b => !b.disabled && !b.hidden);
     if (!f.length) return;
     const i = f.indexOf(document.activeElement);
     e.preventDefault();
     f[e.shiftKey ? (i <= 0 ? f.length - 1 : i - 1) : (i < 0 || i === f.length - 1 ? 0 : i + 1)].focus();
   });
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !sosOv.hidden) { e.preventDefault(); closeOverlay(); } });
-  const lastPending = () => [...pending.values()].sort((a, c) => c.created_at.localeCompare(a.created_at))[0];
+  // Escape NO descarta una alerta de nivel alto/critico (una tecla accidental no puede ocultar un SOS): solo "Ver el panel".
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !sosOv.hidden) e.preventDefault(); });
+  ovNote.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ovAtend.click(); } });
   ovAtend.addEventListener('click', () => {
-    const last = lastPending(); closeOverlay();
-    showTab('main');
-    const li = last && (pendEls.get(last.id) || cards.get(last.id));
-    if (li) { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); const i = li.querySelector('input'); if (i) i.focus({ preventScroll: true }); }
+    const top = topPending(); if (!top || ovAtend.disabled) return;
+    attend(top, ovAtend, ovNote, ovErr);
   });
   ovLive.addEventListener('click', () => {
-    const last = lastPending(); closeOverlay();
+    const last = topPending(); closeOverlay();
     if (!last || !OWN_LIVE) return;
     openLive(last.device_id, false);
   });
@@ -2691,27 +2805,47 @@
   function alarmTick() {
     if (!sirenMuted) { ensureAudio(); pumpSiren(); }
     const n = pending.size;
-    document.title = (titleFlip = !titleFlip) ? '🚨 ¡ALERTA! ' + n + ' sin atender · Vigía' : '(' + n + ') Vigía · Casco Inteligente';
+    document.title = (titleFlip = !titleFlip) ? '🚨 ¡ALERTA! ' + nAlertas(n) + ' sin atender · Vigía' : '(' + n + ') Vigía · Casco Inteligente';
   }
   function syncAlarm() {
     autoRecSync();
-    if (!pending.size) {
+    if (!pending.size || !loudCount()) {   // sin pendientes, o solo avisos de nivel medio: ni sirena ni cartel
       clearInterval(sirenT); sirenT = null; sirenMuted = false; overlayHidden = false;
-      document.title = 'Vigía · Casco Inteligente';
-      stopSiren(); setOverlay(false); ovMute.disabled = false; closeNotifs(); return;
+      document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'Vigía · Casco Inteligente';
+      stopSiren(); setOverlay(false); ovMute.disabled = false; closeNotifs(); ovCur = null; return;
     }
-    const last = lastPending();
+    const last = topPending();   // la mas grave; a igual gravedad, la mas vieja
+    if (ovCur !== last.id) { ovCur = last.id; ovNote.value = ''; ovErr.textContent = ''; }
     ovT.textContent = '¡' + alertLabel(last) + (isManDown(last) ? ' · HOMBRE CAÍDO' : '') + '!';
     ovWho.textContent = label(last.device_id);
     ovWhen.textContent = fmt(last.created_at);
-    ovMore.textContent = pending.size > 1 ? 'Hay ' + pending.size + ' alertas sin atender.' : '';
+    const other = pending.size - 1;
+    ovMore.textContent = other > 0 ? (other === 1 ? 'Hay otra alerta más sin atender.' : 'Hay otras ' + other + ' alertas más sin atender.') : '';
     ovHint.hidden = audioOn();   // audio bloqueado: el cartel avisa que hay que tocar la pantalla
     setOverlay(!overlayHidden);
     if (!sirenT) { sirenT = setInterval(alarmTick, 1700); alarmTick(); } else pumpSiren();
   }
+  // Tono corto y distinto (seno, 2 notas) para avisos de nivel medio: no es la sirena.
+  function softBeep() {
+    if (!audioOn()) return;
+    const t0 = audioCtx.currentTime;
+    [[660, 0], [880, 0.16]].forEach(([f, d]) => {
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.18, t0 + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.14);
+      o.connect(g); g.connect(audioCtx.destination);
+      o.start(t0 + d); o.stop(t0 + d + 0.16);
+    });
+  }
   function alertSos(ev) {
-    sirenMuted = false; ovMute.disabled = false; overlayHidden = false;
     ensureAudio();
+    if (ev && sevOf(ev) < SEV_LOUD) {   // nivel medio: aviso silencioso con badge + tono corto; no destapa el cartel ni reactiva la sirena
+      softBeep();
+      if (navigator.vibrate) navigator.vibrate(200);
+      notifyAlert(ev);
+      return;
+    }
+    sirenMuted = false; ovMute.disabled = false; overlayHidden = false;
     if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 600]);
     if (ev) notifyAlert(ev);
   }
@@ -2746,7 +2880,7 @@
     svErr.textContent = it.err || (it.saved ? 'Descarga iniciada. Si no aparece el archivo, revisá que el navegador no haya bloqueado la descarga.' : '');
     svErr.classList.toggle('bad', !!it.err);
     if (it.confirming) { svT.textContent = '¿Descartar sin guardar?'; svErr.textContent = 'El video se pierde y no se puede recuperar.'; svErr.classList.add('bad'); }
-    svQ.textContent = saveQ.length ? 'Hay ' + saveQ.length + ' video(s) más en espera.' : '';
+    svQ.textContent = saveQ.length ? (saveQ.length === 1 ? 'Hay 1 video más en espera.' : 'Hay ' + saveQ.length + ' videos más en espera.') : '';
     svSave.textContent = it.saved ? 'Descargar de nuevo' : 'Guardar en mi PC';
     svSave.hidden = !!it.confirming;
     svDrop.hidden = !!it.saved;
@@ -2916,7 +3050,7 @@
   function askConfirm(title, nodes, yes, danger) {
     return new Promise(res => {
       let out = false;
-      const ok = mk('button', danger ? 'attend' : '', yes); ok.type = 'button';
+      const ok = mk('button', danger ? 'danger' : '', yes); ok.type = 'button';
       const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
       const d = openDlg(title, [...nodes, rowOf(ok, no)]);
       ok.addEventListener('click', () => { out = true; d.close(); });
@@ -3038,7 +3172,7 @@
     strip.replaceChildren(...fkids, ...kids);
     const nSel = arr.filter(p => delSel.has(p.id)).length;
     if (adm && nSel) {
-      const b = mk('button', 'attend', 'Eliminar seleccionadas (' + nSel + ')'); b.type = 'button';
+      const b = mk('button', 'danger', 'Eliminar seleccionadas (' + nSel + ')'); b.type = 'button';
       b.dataset.fk = dev + '|delsel';
       b.addEventListener('click', () => delFlow(arr.filter(p => delSel.has(p.id)).slice(0, delMax).map(p => ({ id: p.id, path: p.media_path, dev }))));
       strip.append(b);
@@ -3067,7 +3201,7 @@
       try { await sb.from('event_archive').delete().eq('event_id', it.id); a = await ins(); } catch (e) { a = asRes(e); }
     }
     if (tableMissing(a)) note = ' (no se pudo registrar en el historial: falta la actualización del servidor)';
-    else if (a.error) note = ' (el archivo se borró pero no se pudo registrar: ' + String(a.error.message || 'error').slice(0, 80) + ')';
+    else if (a.error) note = ' (el archivo se borró pero no se pudo registrar: ' + errEs(a.error) + ')';
     const rec = { by: email, at, reason: why };
     IMG.set(it.id, rec);
     if (!a.error) ARC.ids.set(it.id, rec);
@@ -3132,15 +3266,15 @@
     if (shared && cmdBars.has(id)) { const c = cmdBars.get(id); c.update(); return c.box; }
     const box = mk('div', 'cmdbar'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Comandos a pedido del casco ' + id);
     const mkb = (txt, k, aria) => { const b = mk('button', 'ghost', txt); b.type = 'button'; b.dataset.fk = id + '|' + k; b.setAttribute('aria-label', aria); return b; };
-    const bPhoto = mkb('Sacar foto', 'photo', 'Sacar una foto con el casco ' + id);
-    const bTorch = mkb('Linterna: encender', 'torch', 'Encender la linterna del casco ' + id);
-    const bPing = mkb('Probar enlace', 'ping', 'Probar el enlace con el casco ' + id);
-    const bFrame = mkb('Tomar cuadro del video', 'frame', 'Tomar un cuadro del video en vivo del casco ' + id);
+    const bPhoto = mkb('Sacar foto', 'photo', 'Sacar foto, casco ' + id);
+    const bTorch = mkb('Linterna: encender', 'torch', 'Linterna: encender, casco ' + id);
+    const bPing = mkb('Probar enlace', 'ping', 'Probar enlace, casco ' + id);
+    const bFrame = mkb('Tomar cuadro del video', 'frame', 'Tomar cuadro del video, casco ' + id);
     bFrame.classList.add('hidden');
     const row = rowOf(bPhoto, bTorch, bPing, bFrame);
     if (isAdmin()) {   // configuracion y reinicio: solo admin (RLS lo exige tambien en el servidor)
-      const bCfg = mkb('Configuración del casco', 'cfg', 'Configuración remota del casco ' + id);
-      const bRst = mkb('Reiniciar agente', 'rst', 'Reiniciar el agente del casco ' + id);
+      const bCfg = mkb('Configuración del casco', 'cfg', 'Configuración del casco ' + id);
+      const bRst = mkb('Reiniciar agente', 'rst', 'Reiniciar agente, casco ' + id);
       bCfg.addEventListener('click', () => openConfig(id));
       bRst.addEventListener('click', () => askRestart(id));
       row.append(bCfg, bRst);
@@ -3159,7 +3293,7 @@
       bFrame.classList.toggle('hidden', !(it && it.offerFrame));
       const on = CMD.torch.get(id) === true;
       bTorch.textContent = 'Linterna: ' + (on ? 'apagar' : 'encender');
-      bTorch.setAttribute('aria-label', (on ? 'Apagar' : 'Encender') + ' la linterna del casco ' + id);
+      bTorch.setAttribute('aria-label', bTorch.textContent + ', casco ' + id);
       fillThumbs(strip, id);
     } };
     v.update(); cmdViews.add(v);
@@ -3186,7 +3320,7 @@
         if (isAuthErr(e)) { sessionExpired(); it.detail = 'sesión vencida'; }
         else if (noPerm(e)) it.detail = 'tu rol no puede enviar esta orden';
         else if (e.code === '54000' || /rate limit/i.test(m)) it.detail = 'demasiadas órdenes en poco tiempo (máximo 10 por minuto)';
-        else it.detail = 'no se pudo enviar (' + m.slice(0, 80) + ')';
+        else it.detail = 'no se pudo enviar (' + errEs(e) + ')';
       }
       cmdRefresh(dev); announce(cmdText(it));
       return;
@@ -3291,7 +3425,7 @@
     try { r = await sb.from('device_config').select('config,updated_at').eq('device_id', dev).maybeSingle(); } catch (e) { r = asRes(e); }
     if (!form.isConnected) return;
     if (tableMissing(r)) { msg.textContent = MISSING_TXT; return; }
-    if (r.error) { msg.textContent = ''; err.textContent = noPerm(r.error) ? 'Sin permiso para leer la configuración.' : 'No se pudo leer la configuración: ' + r.error.message; return; }
+    if (r.error) { msg.textContent = ''; err.textContent = noPerm(r.error) ? 'Sin permiso para leer la configuración.' : 'No se pudo leer la configuración: ' + errEs(r.error); return; }
     const cur = r.data && r.data.config && typeof r.data.config === 'object' ? r.data.config : {};
     for (const f of CFG_FIELDS) if (cur[f.k] != null && typeof cur[f.k] !== 'object') ins[f.k].value = String(cur[f.k]).replace('.', f.t === 'dec' ? ',' : '.');
     msg.textContent = r.data ? 'Configuración actual cargada' + (r.data.updated_at ? ' (última actualización: ' + fmt(r.data.updated_at) + ').' : '.') : 'Este casco todavía no tiene configuración remota.';
@@ -3308,7 +3442,7 @@
       if (tableMissing(res)) { err.textContent = MISSING_TXT; return; }
       if (res.error) {
         if (isAuthErr(res.error)) { sessionExpired(); return; }
-        err.textContent = noPerm(res.error) ? 'Sin permiso: solo un administrador puede cambiar la configuración.' : 'No se pudo guardar: ' + res.error.message;
+        err.textContent = noPerm(res.error) ? 'Sin permiso: solo un administrador puede cambiar la configuración.' : 'No se pudo guardar: ' + errEs(res.error);
         return;
       }
       msg.textContent = 'Guardado. El casco la aplica al iniciar el agente y cada 5 minutos.';
@@ -3450,7 +3584,7 @@
     if (tableMissing(res)) { ARC.avail = 'missing'; arcUi(); return MISSING_TXT; }
     if (res.error) {
       if (isAuthErr(res.error)) { sessionExpired(); return 'Sesión vencida.'; }
-      return noPerm(res.error) ? 'Sin permiso: solo un administrador puede archivar.' : 'El servidor no permitió archivar: ' + String(res.error.message || 'error').slice(0, 120);
+      return noPerm(res.error) ? 'Sin permiso: solo un administrador puede archivar.' : 'El servidor no permitió archivar: ' + errEs(res.error);
     }
     const email = $('who').dataset.email || '', at = new Date().toISOString();
     ids.forEach(id => ARC.ids.set(id, { by: email, at, reason: reason || '' }));
@@ -3470,7 +3604,7 @@
     let res;
     try { res = await sb.from('event_archive').delete().eq('event_id', id); } catch (e) { res = asRes(e); }
     if (tableMissing(res)) { ARC.avail = 'missing'; arcUi(); return MISSING_TXT; }
-    if (res.error) return noPerm(res.error) ? 'Sin permiso: solo un administrador puede desarchivar.' : 'No se pudo desarchivar: ' + String(res.error.message || 'error').slice(0, 120);
+    if (res.error) return noPerm(res.error) ? 'Sin permiso: solo un administrador puede desarchivar.' : 'No se pudo desarchivar: ' + errEs(res.error);
     ARC.ids.delete(id); arcUi(); announce('Evento desarchivado.');
     return '';
   }
@@ -3631,7 +3765,7 @@
       } catch (e) {
         if (isAuthErr(e)) { sessionExpired(); setStat('Sesión vencida.', true); }
         else {
-          setStat('No se pudo cargar: ' + (noPerm(e) ? 'sin permiso para ver estos datos' : String((e && e.message) || 'error')) + '.', true);
+          setStat('No se pudo cargar: ' + (noPerm(e) ? 'sin permiso para ver estos datos' : errEs(e)) + '.', true);
           const rb = mk('button', 'ghost', 'Reintentar'); rb.type = 'button'; rb.addEventListener('click', () => load(page));
           stat.append(' ', rb);
         }
@@ -3673,7 +3807,7 @@
         }
         csvDownload(o.csv + '_' + today() + '.csv', CSV_HEAD, all.map(csvRow));
         setStat('CSV exportado: ' + all.length + ' filas' + (ARC.show ? ' (con archivados)' : '') + (trunc ? ' (tope de ' + CSV_PAGE * CSV_MAX_PAGES + ': acotá las fechas para ver el resto)' : '') + '.');
-      } catch (e) { setStat('No se pudo exportar: ' + String((e && e.message) || 'error') + '.', true); }
+      } catch (e) { setStat('No se pudo exportar: ' + errEs(e) + '.', true); }
       st.busy = false; paint();
     });
     paint();
@@ -3722,7 +3856,7 @@
       cmdState = 'idle';
       const rb = mk('button', 'ghost', 'Reintentar'); rb.type = 'button'; rb.addEventListener('click', loadCmdPanel);
       const a2 = mk('a', 'btn', 'Abrir la guía en otra página'); a2.href = 'comandos.html';
-      host.className = ''; host.replaceChildren(mk('p', 'err', 'No se pudo cargar la guía de comandos (' + ((e && e.message) || 'error') + ').'), rowOf(rb, a2));
+      host.className = ''; host.replaceChildren(mk('p', 'err', 'No se pudo cargar la guía de comandos. ' + errEs(e)), rowOf(rb, a2));
     }
   }
   $('cmdLink').addEventListener('click', e => {
@@ -3832,7 +3966,9 @@
   // ---- Roles en la UI (el servidor tambien lo exige por RLS): admin hace todo; supervisor (viewer) mira, atiende y manda mensajes ----
   function applyRole() {
     const adm = isAdmin();
-    $('who').textContent = (($('who').dataset.email || '') + ' · ' + (adm ? 'admin' : 'supervisor')).replace(/^ · /, '');
+    const who = $('who'), em = who.dataset.email || '', role = adm ? 'admin' : 'supervisor';
+    who.replaceChildren(...(em ? [mk('span', 'who-email', em)] : []), mk('span', 'who-role', role));
+    who.title = (em ? em + ' · ' : '') + 'rol: ' + role;   // tooltip con el texto completo si el correo se recorta
     $('btnEvac').disabled = !adm;
     $('evacRoleNote').classList.toggle('hidden', adm);
     if (!adm) closeEvac();
@@ -4035,18 +4171,20 @@
     $('logout').classList.remove('hidden');
     $('connWrap').classList.remove('hidden');
     $('pendBox').setAttribute('aria-busy', 'true');
-    $('who').textContent = session.user.email;
+    $('navPend').classList.add('hidden'); $('tabMain').removeAttribute('aria-label');
+    $('kpiPendN').textContent = '—'; $('kpiPendAge').textContent = 'Cargando…'; $('kpiDevN').textContent = '—'; $('kpiDevOff').textContent = 'Cargando…'; $('kpiDevOff').className = 'mute';
+    $('kpiPend').classList.remove('alert');
+    $('who').dataset.email = session.user.email;
     $('feed').replaceChildren(); $('feedDone').replaceChildren(); $('pendList').replaceChildren();
     {
       let r = session.user && session.user.app_metadata && session.user.app_metadata.role;
       if (!r) { try { const c = JSON.parse(atob(String(session.access_token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); r = c.app_metadata && c.app_metadata.role; } catch (_) {} }
       ROLE = r === 'admin' ? 'admin' : 'viewer';
     }
-    $('who').dataset.email = session.user.email;
     resetT4(); applyRole();
     // Estado limpio (Reintentar / nuevo ingreso): sin tarjetas fantasma de la sesion anterior.
     cards.clear(); pending.clear(); acks.clear(); pendEls.clear(); devOf.clear(); evAt.clear();
-    devState.clear(); hAlerts.clear(); hSig = ''; posLoaded = false; lastPos.clear(); trail.clear(); geoInfos.clear(); lastEv = null;
+    devState.clear(); hAlerts.clear(); hSig = ''; posLoaded = false; devLoaded = false; devErr = false; lastPos.clear(); trail.clear(); geoInfos.clear(); lastEv = null;
     evLoaded = false;
     netOff = navigator.onLine === false;
     ensureAudio();   // sin gesto previo queda bloqueado: syncAudioBar muestra "Sirena silenciada" hasta el primer toque
@@ -4064,6 +4202,7 @@
         scheduleRender(R_DEV);
         if (ev.lat != null && ev.lng != null) noteLoc(ev);
         if (needsAttention(ev) && !cards.has(ev.id) && !acks.has(ev.id)) alertSos(ev);
+        else if (ev.type === 'equip' && !cards.has(ev.id)) softBeep();   // aviso de equipo: nivel medio, tono corto
         if (!cards.has(ev.id) && !(arcOk() && ARC.ids.has(String(ev.id)))) bumpHist();
         render(ev);
       })
@@ -4127,7 +4266,7 @@
     e.preventDefault();
     $('loginErr').textContent = '';
     const { data, error } = await sb.auth.signInWithPassword({ email: $('email').value.trim(), password: $('password').value });
-    if (error) { $('loginErr').textContent = 'No se pudo ingresar: ' + error.message; return; }
+    if (error) { $('loginErr').textContent = 'No se pudo ingresar: ' + errEs(error); return; }
     manualLogout = false; clearExpired();
     start(data.session);
   });

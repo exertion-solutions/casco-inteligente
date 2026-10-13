@@ -23,7 +23,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610122230">
+<link rel="stylesheet" href="app.css?v=202610130738">
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
@@ -42,8 +42,8 @@
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
       <span>Comandos de voz</span>
     </a>
-    <span id="who" class="mute"></span>
-    <button id="logout" class="ghost hidden">Salir</button>
+    <span id="who" class="mute who"></span>
+    <button id="logout" type="button" class="ghost hidden">Salir</button>
   </div>
 </header>
 <main id="main">
@@ -60,7 +60,7 @@
     <nav class="nav" id="mainNav" role="tablist" aria-label="Secciones del panel" aria-orientation="horizontal">
       <button type="button" role="tab" id="tabMain" aria-selected="true" aria-controls="panelMain">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
-        <span>Centro</span><span id="navPend" class="tab-badge hidden" aria-hidden="true">0</span>
+        <span>Centro</span><span id="navPend" class="tab-badge hidden">0</span>
       </button>
       <button type="button" role="tab" id="tabLive" aria-selected="false" aria-controls="panelMain" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="14" height="12" rx="1"/><path d="M16 10l6-3v10l-6-3z"/></svg>
@@ -76,7 +76,7 @@
       </button>
       <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
-        <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden" aria-hidden="true">0</span>
+        <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden">0</span>
       </button>
       <button type="button" role="tab" id="tabRep" aria-selected="false" aria-controls="panelRep" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></svg>
@@ -94,21 +94,21 @@
         <button id="enableSound" class="ghost">Probar sirena de alerta</button>
         <button id="enableMic" class="ghost hidden" type="button">Habilitar micrófono para grabar</button>
         <button id="testMic" class="ghost" type="button">Probar micrófono</button>
-        <p id="escState" class="mute esc" role="status">Escalamiento: consultando…</p>
+        <p id="escState" class="mute esc">Aviso a responsables: consultando…</p>
       </div>
       <p id="cmdLive" class="sr-only" role="status" aria-live="polite"></p>
 
       <div id="panelMain" role="tabpanel" aria-labelledby="tabMain" data-view="centro">
         <section class="kpis" aria-label="Resumen del centro de mando">
-            <div id="kpiPend" class="kpi"><span class="kl">Alertas pendientes</span><strong id="kpiPendN" class="kn">0</strong><span id="kpiPendAge" class="mute">Sin alertas pendientes</span></div>
-            <div class="kpi"><span class="kl">Cascos</span><strong id="kpiDevN" class="kn">0 en línea</strong><span id="kpiDevOff" class="mute">0 sin señal</span></div>
+            <div id="kpiPend" class="kpi" aria-busy="true"><span class="kl">Alertas pendientes</span><strong id="kpiPendN" class="kn">—</strong><span id="kpiPendAge" class="mute">Cargando…</span></div>
+            <div class="kpi"><span class="kl">Cascos</span><strong id="kpiDevN" class="kn">—</strong><span id="kpiDevOff" class="mute">Cargando…</span></div>
             <div class="kpi"><span class="kl">Último evento</span><strong id="kpiLast" class="kt">—</strong><span id="kpiLastWhen" class="mute"></span></div>
           </section>
 
         <div class="centro-grid">
           <div class="col col-alerts">
             <section id="pendBox" class="block" aria-labelledby="pendH">
-              <h2 id="pendH" class="sec">Pendientes por antigüedad</h2>
+              <h2 id="pendH" class="sec">Pendientes: las más graves primero</h2>
               <ul id="pendList"><li class="skel" aria-hidden="true"></li></ul>
             </section>
             <div id="healthAlerts" class="halerts hidden" role="status" aria-label="Alertas de equipo"></div>
@@ -125,12 +125,12 @@
           <div class="col col-side">
             <section id="devices" class="block" aria-label="Estado de los cascos">
               <h2>Cascos</h2>
-              <div id="devList" class="mute">Sin datos de cascos todavía.</div>
+              <div id="devList" class="mute">Cargando cascos…</div>
             </section>
             <section id="orders" class="block" aria-labelledby="ordersH">
               <h2 id="ordersH" class="sec">Órdenes a los cascos</h2>
               <div class="row">
-                <button id="btnEvac" type="button" class="attend" aria-expanded="false" aria-controls="evacBox" aria-describedby="evacRoleNote">Evacuación</button>
+                <button id="btnEvac" type="button" class="danger" aria-expanded="false" aria-controls="evacBox" aria-describedby="evacRoleNote">Evacuación</button>
                 <button id="btnMsg" type="button" class="ghost" aria-expanded="false" aria-controls="msgBox">Mensaje a cascos</button>
               </div>
               <p id="evacRoleNote" class="mute rolenote hidden">La evacuación la envía un administrador. Tu rol (supervisor) puede mandar mensajes y atender alertas.</p>
@@ -144,7 +144,7 @@
                 </div>
                 <label>Para confirmar escribí EVACUACION <input id="evacType" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false"></label>
                 <div class="row">
-                  <button id="evacGo" type="button" class="attend">Enviar evacuación</button>
+                  <button id="evacGo" type="button" class="danger">Enviar evacuación</button>
                   <button id="evacCancel" type="button" class="ghost">Cancelar</button>
                 </div>
                 <div id="evacErr" class="err" role="alert"></div>
@@ -254,7 +254,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js?v=202610122230"></script>
-<script src="app.js?v=202610130723"></script>
+<script src="app.js?v=202610130738"></script>
 <script>try{if('serviceWorker'in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))addEventListener('load',function(){navigator.serviceWorker.register('sw.js',{scope:'./'}).catch(function(){})})}catch(e){}</script>
 </body>
 </html>
