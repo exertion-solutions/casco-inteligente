@@ -381,6 +381,7 @@ final class CommandAgent {
             return;
         }
         SpanishVoice.say(SpanishVoice.FOTO);
+        Map<String, Object> hash = MediaHash.fields(f, ts); // del archivo exacto que se sube
         String path = null;
         try {
             for (int i = 0; i < 3 && !stopped; i++) {
@@ -394,11 +395,17 @@ final class CommandAgent {
         if (path == null) { ack(id, false, "sin red para subir la foto"); return; }
         if (Supabase.UPLOAD_REJECTED.equals(path)) { ack(id, false, "foto rechazada por el servidor"); return; }
         try {
-            sink.emit("photo", path, new JSONObject().put("cmd", id));
+            sink.emit("photo", path, withHash(new JSONObject().put("cmd", id), hash));
         } catch (Exception e) {
             Log.w(TAG, "photo: payload: " + e);
         }
         ack(id, true, "foto subida");
+    }
+
+    /** Agrega al payload los campos de huella (vacios si el hash fallo). */
+    static JSONObject withHash(JSONObject p, Map<String, Object> hash) throws Exception {
+        for (Map.Entry<String, Object> e : hash.entrySet()) p.put(e.getKey(), e.getValue());
+        return p;
     }
 
     /** Voz (VoiceCommandAgent): linterna. null = ok; si no, el motivo ("camara ocupada", "sin linterna"...). */
@@ -426,6 +433,7 @@ final class CommandAgent {
             f.delete();
             return "no se pudo guardar la foto";
         }
+        Map<String, Object> hash = MediaHash.fields(f, ts); // del archivo exacto que se sube
         String path = null;
         try {
             for (int i = 0; i < 3 && !stopped; i++) {
@@ -439,7 +447,7 @@ final class CommandAgent {
         if (path == null) return "sin red para subir la foto";
         if (Supabase.UPLOAD_REJECTED.equals(path)) return "foto rechazada por el servidor";
         try {
-            sink.emit("photo", path, new JSONObject().put("src", "voz"));
+            sink.emit("photo", path, withHash(new JSONObject().put("src", "voz"), hash));
         } catch (Exception e) {
             Log.w(TAG, "photo voz: payload: " + e);
         }

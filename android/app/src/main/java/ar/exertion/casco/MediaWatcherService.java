@@ -34,6 +34,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -768,6 +769,7 @@ public class MediaWatcherService extends Service {
                 + origName.replaceAll("[^A-Za-z0-9._-]", "_"));
         try {
             copyFile(f, copy);
+            copy.setLastModified(f.lastModified()); // captured_at del evento (tambien tras recoverSpool)
         } catch (Exception e) {
             // el original ya no esta (RundeCap lo borro antes de poder copiarlo): queda al menos el evento
             Log.w(TAG, "no se pudo copiar " + origName + ": " + e);
@@ -798,6 +800,7 @@ public class MediaWatcherService extends Service {
             return;
         }
         hold(upWake, 5 * 60_000L); // wakelock corto solo durante la subida
+        Map<String, Object> hash = MediaHash.fields(copy, copy.lastModified()); // archivo exacto a subir
         String path;
         try {
             path = sb == null ? null : sb.uploadMedia(copy, type, origName);
@@ -819,7 +822,13 @@ public class MediaWatcherService extends Service {
         }
         copy.delete();
         Log.i(TAG, "subida " + origName + " -> " + path);
-        emit(type, null, null, path, null);
+        JSONObject hp = null;
+        try {
+            hp = CommandAgent.withHash(new JSONObject(), hash);
+        } catch (Exception ex) {
+            Log.w(TAG, "payload hash: " + ex);
+        }
+        emit(type, null, null, path, hp);
     }
 
     /** Tope de espacio del spool: borra las copias mas viejas (FIFO) si pasa de 200 MB. */

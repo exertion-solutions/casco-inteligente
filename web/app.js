@@ -152,7 +152,7 @@
   }
 
   function ensureLive(id) {
-    if (!OWN_LIVE || !DEV_RE.test(id)) return null;
+    if (!liveOk() || !DEV_RE.test(id)) return null;
     if (lives.has(id)) return lives.get(id);
     const sec = mk('section', 'card live collapsed');   // colapsado por defecto en el Centro (ver CSS .live.collapsed)
     sec.setAttribute('aria-label', 'Video en vivo del casco ' + id);
@@ -311,7 +311,7 @@
     const recTime = mk('span', 'mute', '');
     const recNote = mk('p', 'mute', ''); recNote.style.margin = '0';
     rrow.append(bRec, bShot, bAgain, lMicRec, lCasRec, recTime, recState);
-    body.append(row, rrow, recNote, cmdBar(id), vrow, wrap);
+    body.append(row, rrow, recNote, asistMini(id), cmdBar(id), vrow, wrap);
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
@@ -423,6 +423,7 @@
 
     L.isLive = () => !!(L.pc && L.ms && L.pc.connectionState === 'connected');
     L.start = async () => {
+      logAccess('view_live', id);
       const gen = ++L.gen;
       L.expand();
       closePc();   // reinicia el ciclo en un clic: se cierra cualquier intento anterior
@@ -443,7 +444,7 @@
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'stop' });
       if (error) setState('Error: no se pudo enviar stop: ' + errEs(error), true); else setState('Detenido');
     };
-    bStart.addEventListener('click', L.start);
+    bStart.addEventListener('click', () => { asistAuto(id); L.start(); });   // "Iniciar": abre sola la sesion de asistencia si no hay una
     bStop.addEventListener('click', L.stop);
     L.applyRot = applyRot;
 
@@ -546,6 +547,7 @@
       bRec.disabled = !(canRec && liveNow());
       recTime.textContent = ''; recTime.className = 'mute';
       const blob = new Blob(r.chunks, { type: r.type });
+      logAccess('record_stop', id, { dur_s: Math.max(0, Math.round((Date.now() - r.t0) / 1000)), size: blob.size, auto: !!r.auto });
       if (!blob.size) { setRec('No se grabó nada.', true); return; }
       // La URL anterior solo se libera si su cartel ya se cerro (si sigue en cola, la libera el propio cartel).
       if (lastItem && lastItem.closed && lastUrl) { try { URL.revokeObjectURL(lastUrl); } catch (_) {} }
@@ -614,6 +616,7 @@
       r.mr.onstop = () => finish(r);
       r.mr.onerror = () => stopRec('Falló el grabador: se conservó lo grabado.', true);
       rec = r;
+      logAccess('record_start', id, { auto: !!auto, mic: !!mic });
       cMic.disabled = true; cCasco.disabled = true;
       bRec.textContent = 'Detener grabación'; bRec.setAttribute('aria-label', 'Detener la grabación del casco ' + id + ' y abrir el cartel para guardarla');
       bAgain.classList.add('hidden');
@@ -644,6 +647,7 @@
       if (!b) { setRec('Todavía no hay imagen del casco para capturar.', true); return; }
       const url = URL.createObjectURL(b), name = 'vigia-' + id + '_' + stampOf(new Date()) + '.png';
       save(url, name); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      logAccess('photo', id, { via: 'captura' }); noteLocalPhoto(id);
       setRec('Captura guardada en tu PC: ' + name);
     });
     L.hasFrame = () => liveNow() && !!frameInfo();
@@ -811,7 +815,7 @@
         endCall(c, 'Error: ' + (e && e.soft ? e.message : 'no se pudo iniciar la llamada' + (e && e.message ? ' (' + e.message + ')' : '')), true, c.offerSent);
       }
     }
-    bTalk.addEventListener('click', startCall);
+    bTalk.addEventListener('click', () => { asistAuto(id); startCall(); });   // "Hablar": idem
     bHang.addEventListener('click', () => { const c = L.call; if (c) endCall(c, 'Colgada', false, true); });
     bMute.addEventListener('click', () => {
       const c = L.call; if (!c) return;
@@ -895,7 +899,7 @@
       if (li) { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); const inp = li.querySelector('input'); if (inp) inp.focus({ preventScroll: true }); }
     });
     let cam = null;
-    if (OWN_LIVE) {
+    if (liveOk()) {
       cam = document.createElement('button'); cam.type = 'button'; cam.textContent = 'Ver en vivo';
       cam.addEventListener('click', () => openLive(last.device_id, true));
     }
@@ -1177,7 +1181,7 @@
     L.bStop.focus({ preventScroll: true });
   }
   function liveAction(devId) {
-    if (!OWN_LIVE || !DEV_RE.test(devId || '')) return null;
+    if (!liveOk() || !DEV_RE.test(devId || '')) return null;
     const see = mk('button', 'ghost', 'Ver en vivo'); see.type = 'button';
     see.setAttribute('aria-label', 'Ver en vivo el casco ' + devId);
     see.addEventListener('click', () => openLive(devId, true));
@@ -1205,7 +1209,8 @@
     btn.addEventListener('click', () => attend(ev, btn, note));
     act.append(note, btn);
     const lv = liveAction(ev.device_id); if (lv) act.append(lv);
-    li.append(head, meta, geoInfoEl('p' + ev.id, ev), rule, act);
+    li.append(head, meta, geoInfoEl('p' + ev.id, ev), rule);
+    if (!isAuditor()) li.append(act);   // el auditor solo mira: sin nota ni Atender
     return li;
   }
   function renderPending() {
@@ -1241,6 +1246,7 @@
     toast(msg);
   }
   async function attend(ev, btn, noteEl, errEl) {
+    if (isAuditor()) return;
     btn.disabled = true;
     if (errEl) errEl.textContent = '';
     const lbl = btn.textContent; btn.textContent = 'Atendiendo…';
@@ -1394,6 +1400,7 @@
     return 'No se pudo enviar la orden: ' + errEs(error);
   }
   async function sendBroadcast(kind, message, dest, rep, errEl, btn) {
+    if (isAuditor()) return false;
     errEl.textContent = ''; $('orderOk').textContent = '';
     const m = cleanMsg(message);
     if (kind === 'mensaje' && !m) { errEl.textContent = 'Escribí el mensaje antes de enviar.'; return false; }
@@ -1419,12 +1426,14 @@
     } catch (e) { res = { error: { message: (e && e.message) || 'sin conexión' } }; }
     btn.disabled = false;
     if (res.error) { errEl.textContent = bcError(res.error); return false; }
+    logAccess('command', dest || 'todos', { orden: kind, repeticiones: r });
     if (res.data) { if (frozen) freezeTargets(res.data.id, frozen); noteBc(res.data); renderBroadcasts(); }
     $('orderOk').textContent = (kind === 'evacuacion' ? 'Evacuación enviada' : 'Mensaje enviado') + ' a ' + (dest ? 'el casco ' + dest : 'todos los cascos') + '.';
     return true;
   }
   // Reenvio a los cascos que no confirmaron: nueva orden solo para esos ids (mismo texto y repeticiones).
   async function resendBroadcast(b, ids) {
+    if (isAuditor()) return;
     $('orderErr').textContent = ''; $('orderOk').textContent = '';
     const ok = await askConfirm('¿Reenviar a los que no confirmaron?',
       [mk('p', '', (b.kind === 'evacuacion' ? 'Evacuación' : 'Mensaje') + (b.message ? ': “' + b.message + '”' : '')), mk('p', 'mute', 'Cascos: ' + ids.map(label).join(', '))], 'Sí, reenviar', b.kind === 'evacuacion');
@@ -1433,6 +1442,7 @@
     try { res = await sb.from('broadcasts').insert({ kind: b.kind, message: b.message, device_ids: ids, repeat: b.repeat }).select(BC_COLS).single(); }
     catch (e) { res = asRes(e); }
     if (res.error) { $('orderErr').textContent = bcError(res.error); return; }
+    logAccess('command', ids.length === 1 ? ids[0] : 'varios', { orden: b.kind, reenvio: true, cascos: ids.length });
     if (res.data) { noteBc(res.data); renderBroadcasts(); }
     $('orderOk').textContent = 'Orden reenviada a ' + ids.length + (ids.length === 1 ? ' casco.' : ' cascos.');
   }
@@ -1516,6 +1526,9 @@
           box.append(mk('span', 'mute', 'Atendida a los ' + clock(sec)), r);
         }
       }
+    } else if (isAuditor()) {
+      li.classList.add('pending');
+      box.append(mk('span', 'tag warn', 'PENDIENTE'));
     } else {
       li.classList.add('pending');
       const note = document.createElement('input');
@@ -1539,7 +1552,7 @@
     $('doneCount').textContent = String($('feedDone').querySelectorAll(':scope > li:not(.empty):not(.arc-hidden)').length);   // los archivados no cuentan
   }
   // [UI] Centro y En vivo comparten el panel principal (data-view cambia el foco del layout).
-  const TABS = [['main', 'tabMain', 'panelMain'], ['live', 'tabLive', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['done', 'tabDone', 'panelDone'], ['rep', 'tabRep', 'panelRep'], ['cmd', 'tabCmd', 'panelCmd']];
+  const TABS = [['main', 'tabMain', 'panelMain'], ['live', 'tabLive', 'panelMain'], ['map', 'tabMap', 'panelMap'], ['eq', 'tabEq', 'panelEq'], ['asis', 'tabAsis', 'panelAsis'], ['const', 'tabConst', 'panelConst'], ['done', 'tabDone', 'panelDone'], ['rep', 'tabRep', 'panelRep'], ['aud', 'tabAud', 'panelAud'], ['cmd', 'tabCmd', 'panelCmd']];
   // Aviso en la insignia de Historial: eventos u ordenes nuevas mientras se mira otra pestaña.
   let histNew = 0;
   function bumpHist() {
@@ -1563,6 +1576,9 @@
     if (name === 'eq') renderEq();
     if (name === 'rep') repQ.show();
     if (name === 'cmd') loadCmdPanel();
+    if (name === 'asis') asisShow();
+    if (name === 'const') constShow();
+    if (name === 'aud') audShow();
     const selTab = $(act[1]); if (selTab && selTab.scrollIntoView) selTab.scrollIntoView({ block: 'nearest', inline: 'nearest' });   // barra deslizable
     if (name === 'done') { histNew = 0; $('navHistNew').classList.add('hidden'); $('histLive').textContent = ''; $('tabDone').removeAttribute('aria-label'); }
   }
@@ -1665,10 +1681,16 @@
       renderAction(ev);
       refreshBanner();
     }
-    if (ev.media_path && !IMG.has(String(ev.id))) {   // en segundo plano: no frena la carga ni el resto de las alertas
+    if (ev.media_path && isAuditor()) {   // el auditor no accede a Storage: ve la huella registrada, no el archivo
+      const h = hashOf(ev.payload);
+      li.append(mk('p', 'mute', h ? 'Archivo con huella SHA-256 registrada: ' + h.sha.slice(0, 16) + '…' : 'Archivo sin huella registrada.'));
+    } else if (ev.media_path && !IMG.has(String(ev.id))) {   // en segundo plano: no frena la carga ni el resto de las alertas
       const kind = ev.type === 'video' ? 'Video' : 'Foto';
       mediaEl(ev.media_path, ev.type, kind + ' del casco ' + ev.device_id + ', ' + fmt(ev.created_at)).then(el => {
-        if (el && li.isConnected !== false && !IMG.has(String(ev.id))) li.insertBefore(el, li.querySelector('.action'));
+        if (el && li.isConnected !== false && !IMG.has(String(ev.id))) {
+          li.insertBefore(el, li.querySelector('.action'));
+          el.after(verifyBox({ path: ev.media_path, hash: hashOf(ev.payload), id: ev.id, dev: ev.device_id, what: kind.toLowerCase() + ' del casco ' + ev.device_id + ', ' + fmt(ev.created_at) }));
+        }
       }).catch(() => {});
     }
     return true;
@@ -1723,7 +1745,7 @@
   async function loadEquipos() {
     let d = await pull('devices', () => sb.from('devices_full').select(DEV_FULL).is('deleted_at', null).order('name'));
     EQ.limited = false;
-    if (d === null) { d = await pull('devices', () => sb.from('devices').select(DEV_COLS).is('deleted_at', null).order('name')); EQ.limited = true; }
+    if (d === null || (d.length === 0 && ROLE === 'auditor')) { d = await pull('devices', () => sb.from('devices').select(DEV_COLS).is('deleted_at', null).order('name')); EQ.limited = true; }
     const p = await pull('people', () => ROLE === 'admin'
       ? sb.from('people_full').select(PPL_FULL).is('deleted_at', null).order('full_name')
       : sb.from('people').select(PPL_COLS).is('deleted_at', null).order('full_name'));
@@ -1785,6 +1807,7 @@
     const url = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
     saveUrl(url, name);
     setTimeout(() => URL.revokeObjectURL(url), 10000);
+    logAccess('export_csv', name, { filas: rows.length });
   }
   const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
 
@@ -2772,7 +2795,7 @@
     sosOv.hidden = !show;
     if (show) closeDlg();   // el cartel SOS manda: se cierran dialogos (foto, configuracion, confirmaciones)
     $('app').inert = show;
-    if (show) { ovPrev = document.activeElement; ovAtend.focus({ preventScroll: true }); }
+    if (show) { ovPrev = document.activeElement; (ovAtend.hidden ? ovClose : ovAtend).focus({ preventScroll: true }); }
     else {
       const p = ovPrev; ovPrev = null;
       if (p && p !== document.body && p.isConnected && typeof p.focus === 'function') p.focus({ preventScroll: true });
@@ -2782,7 +2805,7 @@
   const closeOverlay = () => { overlayHidden = true; setOverlay(false); };
   sosOv.addEventListener('keydown', e => {   // trampa de foco: Tab no sale del cartel
     if (e.key !== 'Tab') return;
-    const f = [ovNote, ovAtend, ovLive, ovMute, ovClose].filter(b => !b.disabled && !b.hidden);
+    const f = [ovNote, ovAtend, ovLive, ovMute, ovClose].filter(b => !b.disabled && !b.hidden && !(b.parentElement && b.parentElement.hidden));
     if (!f.length) return;
     const i = f.indexOf(document.activeElement);
     e.preventDefault();
@@ -2797,7 +2820,7 @@
   });
   ovLive.addEventListener('click', () => {
     const last = topPending(); closeOverlay();
-    if (!last || !OWN_LIVE) return;
+    if (!last || !liveOk()) return;
     openLive(last.device_id, false);
   });
   ovMute.addEventListener('click', () => { sirenMuted = true; stopSiren(); ovMute.disabled = true; ovAtend.focus({ preventScroll: true }); });
@@ -2946,7 +2969,7 @@
   const micBtn = $('enableMic');
   function syncMicBtn() {
     if (!micBtn) return;
-    micBtn.classList.toggle('hidden', !OWN_LIVE || micPerm === 'granted' || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+    micBtn.classList.toggle('hidden', !liveOk() || micPerm === 'granted' || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
     micBtn.textContent = micPerm === 'denied' ? 'Micrófono bloqueado: habilitalo en el navegador' : 'Habilitar micrófono para grabar';
   }
   try {
@@ -2985,7 +3008,7 @@
   // Primer gesto dentro del panel: si el permiso todavia no se decidio, se pide una sola vez.
   let micAutoTried = false;
   document.addEventListener('pointerdown', () => {
-    if (micAutoTried || !OWN_LIVE || micPerm !== 'prompt' || $('app').classList.contains('hidden')) return;
+    if (micAutoTried || !liveOk() || micPerm !== 'prompt' || $('app').classList.contains('hidden')) return;
     micAutoTried = true; primeMic();
   }, { passive: true });
   syncMicBtn();
@@ -3085,7 +3108,7 @@
     let a = photos.get(ev.device_id); if (!a) photos.set(ev.device_id, a = []);
     if (a.some(x => x.id === ev.id)) return;
     const cmd = ev.payload && typeof ev.payload === 'object' && typeof ev.payload.cmd === 'string' ? ev.payload.cmd : '';
-    a.push({ id: ev.id, created_at: ev.created_at, media_path: ev.media_path, cmd });
+    a.push({ id: ev.id, created_at: ev.created_at, media_path: ev.media_path, cmd, hash: hashOf(ev.payload) });
     a.sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
     if (a.length > PHOTO_KEEP) a.length = PHOTO_KEEP;
     const it = cmd ? CMD.items.get(cmd) : null;
@@ -3113,7 +3136,7 @@
     });
     const acts = rowOf(dl);
     if (isAdmin()) acts.append(trashBtn('Eliminar imagen', async () => { closeDlg(); await delFlow([{ id: p.id, path: p.media_path, dev }]); }));
-    openDlg('Foto del casco ' + dev, [img, meta, acts, err]);
+    openDlg('Foto del casco ' + dev, [img, meta, acts, verifyBox({ path: p.media_path, hash: p.hash, id: p.id, dev, what: 'foto del casco ' + dev + ', ' + fmt(p.created_at) }), err]);
   }
   const delSel = new Set();   // ids de fotos marcadas para eliminar (admin)
   const delMax = 20;
@@ -3203,6 +3226,7 @@
     if (tableMissing(a)) note = ' (no se pudo registrar en el historial: falta la actualización del servidor)';
     else if (a.error) note = ' (el archivo se borró pero no se pudo registrar: ' + errEs(a.error) + ')';
     const rec = { by: email, at, reason: why };
+    logAccess('delete_media', it.path, { event_id: it.id, casco: it.dev });
     IMG.set(it.id, rec);
     if (!a.error) ARC.ids.set(it.id, rec);
     const arr = photos.get(it.dev); if (arr) { const i = arr.findIndex(x => x.id === it.id); if (i >= 0) arr.splice(i, 1); }
@@ -3263,6 +3287,7 @@
     for (const v of [...cmdViews]) { if (!v.box.isConnected) { cmdViews.delete(v); continue; } if (!id || v.id === id) v.update(); }
   }
   function cmdBar(id, shared) {
+    if (isAuditor()) return mk('span');   // solo lectura: sin comandos a pedido
     if (shared && cmdBars.has(id)) { const c = cmdBars.get(id); c.update(); return c.box; }
     const box = mk('div', 'cmdbar'); box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Comandos a pedido del casco ' + id);
     const mkb = (txt, k, aria) => { const b = mk('button', 'ghost', txt); b.type = 'button'; b.dataset.fk = id + '|' + k; b.setAttribute('aria-label', aria); return b; };
@@ -3302,7 +3327,7 @@
   }
   const cmdBusy = (dev, actions) => [...CMD.items.values()].some(x => x.dev === dev && x.state === 'pending' && actions.includes(x.action));
   async function sendCmd(dev, action, params) {
-    if (!DEV_RE.test(dev)) return;
+    if (!DEV_RE.test(dev) || isAuditor()) return;
     const kind = action === 'torch_on' || action === 'torch_off' ? ['torch_on', 'torch_off'] : [action];
     if (cmdBusy(dev, kind)) return;   // ya hay uno igual esperando al casco
     const key = 'tmp-' + (++CMD.seq);
@@ -3326,6 +3351,8 @@
       return;
     }
     CMD.avail = 'ok';
+    logAccess(action === 'photo' ? 'photo' : 'command', dev, { action, via: 'orden' });
+    if (action === 'photo') noteLocalPhoto(dev);
     it.id = res.data.id; it.srvAt = res.data.created_at;
     CMD.items.set(it.id, it);
     while (CMD.items.size > CMD_KEEP) {   // tope: se sueltan los resueltos mas viejos
@@ -3445,6 +3472,7 @@
         err.textContent = noPerm(res.error) ? 'Sin permiso: solo un administrador puede cambiar la configuración.' : 'No se pudo guardar: ' + errEs(res.error);
         return;
       }
+      logAccess('config_change', dev, { claves: Object.keys(p.cfg) });
       msg.textContent = 'Guardado. El casco la aplica al iniciar el agente y cada 5 minutos.';
       announce('Configuración del casco ' + dev + ' guardada.');
     });
@@ -3543,7 +3571,7 @@
     li.classList.toggle('arc-hidden', !!rec && !ARC.show);
     li.classList.toggle('archived', !!rec && ARC.show);
     const old = li.querySelector(':scope > .arc-row'); if (old) old.remove();
-    if (img) li.querySelectorAll(':scope > .media').forEach(n => n.remove());
+    if (img) li.querySelectorAll(':scope > .media, :scope > .verify-row').forEach(n => n.remove());
     const row = mk('div', 'row arc-row');
     if (img) row.append(mk('span', 'mute img-gone', imgWho(img)));
     else if (li.dataset.media && isAdmin()) {
@@ -3588,6 +3616,7 @@
     }
     const email = $('who').dataset.email || '', at = new Date().toISOString();
     ids.forEach(id => ARC.ids.set(id, { by: email, at, reason: reason || '' }));
+    logAccess('archive', ids.length === 1 ? ids[0] : 'lote', { cantidad: ids.length, ids: ids.slice(0, 10) });
     arcUi(); announce(ids.length + (ids.length === 1 ? ' evento archivado.' : ' eventos archivados.'));
     return '';
   }
@@ -3605,6 +3634,7 @@
     try { res = await sb.from('event_archive').delete().eq('event_id', id); } catch (e) { res = asRes(e); }
     if (tableMissing(res)) { ARC.avail = 'missing'; arcUi(); return MISSING_TXT; }
     if (res.error) return noPerm(res.error) ? 'Sin permiso: solo un administrador puede desarchivar.' : 'No se pudo desarchivar: ' + errEs(res.error);
+    logAccess('archive', id, { desarchivar: true });
     ARC.ids.delete(id); arcUi(); announce('Evento desarchivado.');
     return '';
   }
@@ -3789,6 +3819,7 @@
     });
     bPrint.addEventListener('click', () => {
       printH.textContent = o.title + ' · ' + describe(st.applied || filters()) + ' · generado ' + fmtAR(new Date().toISOString()) + ' (hora de Argentina) · página ' + (st.page + 1);
+      logAccess('export_pdf', o.csv, { pagina: st.page + 1 });
       window.print();
     });
     bCsv.addEventListener('click', async () => {
@@ -3880,6 +3911,7 @@
     a.unshift(f);
     while (a.length > FRAME_KEEP) { try { URL.revokeObjectURL(a.pop().url); } catch (_) {} }
     try { saveUrl(f.url, f.name); } catch (_) {}
+    logAccess('photo', dev, { via: 'cuadro' }); noteLocalPhoto(dev);
     setFrameNote(dev, 'ok', f.name);
     const img = mk('img', 'photo-big'); img.src = f.url; img.alt = 'Cuadro del video del casco ' + dev + ', ' + fmt(f.created_at);
     const d = openDlg('Cuadro del video guardado', [img,
@@ -3963,10 +3995,1011 @@
   }
   $('testMic').addEventListener('click', testMic);
 
+  // ======================================================================
+  // Tanda C (docs/PROTOCOLO-ASISTENCIA.md, migracion 013): asistencia remota registrada, constancias de EPP y capacitacion,
+  // auditoria de accesos, huella SHA-256 de fotos/videos y rol auditor. Tablas: assist_sessions, epp_deliveries,
+  // training_records, training_attendees(_audit), access_log, org_settings; rpc log_access y create_training.
+  // Mientras el servidor no tenga la migracion: aviso claro "Falta aplicar la migracion 013" y nada se rompe.
+  // ======================================================================
+  const MIG_TXT = 'Falta aplicar la migración 013 en el servidor: esta sección todavía no está disponible.';
+  let MY_ID = '';
+  function isAuditor() { return ROLE === 'auditor'; }
+  function canWrite() { return ROLE === 'admin' || ROLE === 'viewer'; }
+  function roleName() { return ROLE === 'admin' ? 'admin' : ROLE === 'auditor' ? 'auditor' : 'supervisor'; }
+  function liveOk() { return OWN_LIVE && ROLE !== 'auditor'; }   // el auditor no ve video ni manda ordenes
+  const ymdAR = s => (/^\d{4}-\d{2}-\d{2}/.test(String(s || '')) ? String(s).slice(8, 10) + '/' + String(s).slice(5, 7) + '/' + String(s).slice(0, 4) : '');
+  const nowLocalAR = () => {
+    const p = {};
+    new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+      .formatToParts(new Date()).forEach(x => { p[x.type] = x.value; });
+    return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+  };
+  const localToIso = v => new Date(v + ':00-03:00').toISOString();   // Argentina = UTC-3 fijo
+  const isoToLocalAR = iso => { const t = fmtAR(iso); return t ? t.slice(6, 10) + '-' + t.slice(3, 5) + '-' + t.slice(0, 2) + 'T' + t.slice(11) : ''; };
+  const tryQ = async fn => { try { return await fn(); } catch (e) { return asRes(e); } };
+  const missingBox = () => { const d = mk('p', 'state bad migration', MIG_TXT); d.setAttribute('role', 'status'); return d; };
+  const errLine = (e, what) => { const d = mk('p', 'state bad', (what || 'No se pudo leer') + ': ' + (noPerm(e) ? NO_PERM_TXT.toLowerCase() : errEs(e)) + '.'); d.setAttribute('role', 'status'); return d; };
+
+  // Tabla de datos (caption para lectores, columnas con scope). rows: [{ cells: [texto | nodo | {t, cls}], cls }]
+  function dataTable(caption, heads, rows, emptyTxt) {
+    const wrap = mk('div', 'tablewrap'), t = mk('table', 'qtable');
+    t.append(mk('caption', 'sr-only', caption));
+    const hd = mk('thead'), hr = mk('tr');
+    heads.forEach(h => { const o = typeof h === 'object'; const th = mk('th', o ? h.cls : '', o ? h.t : h); th.scope = 'col'; hr.append(th); });
+    hd.append(hr);
+    const tb = mk('tbody');
+    for (const r of rows) {
+      const tr = mk('tr', r.cls || '');
+      for (const c of r.cells) {
+        const o = c && typeof c === 'object' && !(c instanceof Node) ? c : null;
+        const td = mk('td', o ? o.cls || '' : '');
+        if (c instanceof Node) td.append(c); else { const v = o ? o.t : c; td.textContent = v == null || v === '' ? '—' : String(v); }
+        tr.append(td);
+      }
+      tb.append(tr);
+    }
+    if (!rows.length) { const tr = mk('tr'), td = mk('td', 'empty mute', emptyTxt || 'Sin registros para estos filtros.'); td.colSpan = heads.length; tr.append(td); tb.append(tr); }
+    t.append(hd, tb); wrap.append(t);
+    return wrap;
+  }
+  const kpiBox = items => {
+    const k = mk('section', 'kpis'); k.setAttribute('aria-label', 'Resumen');
+    for (const [l, n, sub] of items) { const d = mk('div', 'kpi'); d.append(mk('span', 'kl', l), mk('strong', 'kn', n), mk('span', 'mute', sub)); k.append(d); }
+    return k;
+  };
+  const dateIn = (v, max) => inp('date', v, max ? { max } : {});
+  const roHint = msg => mk('p', 'mute rolenote noprint', msg);
+
+  // ---- Auditoria: log_access (silencioso, no bloquea, 1 reintento) ----
+  const LOGACC = { off: false };
+  function logAccess(action, target, detail) {
+    if (LOGACC.off) return;
+    let d = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail : {};
+    try { if (JSON.stringify(d).length > 900) d = { truncado: true }; } catch (_) { d = {}; }
+    const args = { action, target: target == null ? null : String(target).slice(0, 120), detail: d };
+    (async () => {
+      for (let i = 0; i < 2; i++) {
+        try {
+          const r = await sb.rpc('log_access', args);
+          if (!r.error) return;
+          if (r.status === 404 || tableMissing(r)) { LOGACC.off = true; return; }   // sin migracion: no insiste
+          if (isAuthErr(r.error) || noPerm(r.error)) return;
+        } catch (_) {}
+        if (i === 0) await sleep(1200);
+      }
+    })();
+  }
+
+  // ---- Huella SHA-256 de fotos y videos (docs seccion 7) ----
+  const HEX64 = /^[0-9a-f]{64}$/;
+  const VERIFY_MAX = 300 * 1048576;
+  function hashOf(payload) {   // -> { sha, size, alg, at } | null
+    const p = payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : null;
+    if (!p || typeof p.sha256 !== 'string') return null;
+    return { sha: p.sha256.trim().toLowerCase(), size: numOf(p.size), alg: typeof p.hash_alg === 'string' ? p.hash_alg : 'sha256', at: typeof p.captured_at === 'string' ? p.captured_at : '' };
+  }
+  const toHex = buf => [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  async function verifyMedia(m) {   // -> { state: 'ok' | 'bad' | 'none' | 'error', text }
+    if (!m.hash || !HEX64.test(m.hash.sha)) return { state: 'none', text: 'Sin huella registrada: el casco no la mandó para este archivo (puede ser anterior a esta función).' };
+    if (String(m.hash.alg).toLowerCase().replace('-', '') !== 'sha256') return { state: 'none', text: 'El casco usó un algoritmo de huella que el visor no verifica (' + String(m.hash.alg).slice(0, 20) + ').' };
+    if (!(window.crypto && crypto.subtle)) return { state: 'error', text: 'Este navegador no puede calcular la huella: abrí el visor por HTTPS.' };
+    const u = await signed(m.path);
+    if (!u) return { state: 'error', text: 'No se pudo obtener el archivo para verificarlo (enlace no disponible o sin permiso).' };
+    let buf;
+    try {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const len = Number(r.headers.get('content-length'));
+      if (len > VERIFY_MAX) return { state: 'error', text: 'El archivo es demasiado grande para verificarlo en el navegador (' + mb(len) + ').' };
+      buf = await r.arrayBuffer();
+    } catch (e) { return { state: 'error', text: 'No se pudo descargar el archivo para verificarlo: ' + errEs(e) }; }
+    if (buf.byteLength > VERIFY_MAX) return { state: 'error', text: 'El archivo es demasiado grande para verificarlo en el navegador (' + mb(buf.byteLength) + ').' };
+    const got = toHex(await crypto.subtle.digest('SHA-256', buf));
+    return got === m.hash.sha
+      ? { state: 'ok', text: 'Íntegro: el archivo coincide con la huella SHA-256 que registró el casco (' + got.slice(0, 12) + '…).' }
+      : { state: 'bad', text: 'No coincide: este archivo no es el que registró el casco (calculado ' + got.slice(0, 12) + '… y registrado ' + m.hash.sha.slice(0, 12) + '…).' };
+  }
+  function verifyBox(m) {
+    const box = mk('div', 'row verify-row');
+    const b = mk('button', 'ghost', 'Verificar integridad'); b.type = 'button';
+    b.setAttribute('aria-label', 'Verificar integridad, ' + m.what);
+    const st = mk('span', 'verify-st'); st.setAttribute('role', 'status');
+    box.append(b, st);
+    b.addEventListener('click', async () => {
+      b.disabled = true; st.className = 'verify-st mute'; st.textContent = 'Verificando…';
+      let r;
+      try { r = await verifyMedia(m); } catch (e) { r = { state: 'error', text: 'No se pudo verificar: ' + errEs(e) }; }
+      b.disabled = false;
+      st.className = 'verify-st ' + (r.state === 'ok' ? 'ok' : r.state === 'none' ? 'mute' : 'bad');
+      st.textContent = r.text;
+      logAccess('hash_verify', m.path, { event_id: m.id, casco: m.dev, resultado: r.state });
+    });
+    return box;
+  }
+
+  // ---- Datos del empleador (org_settings): encabezado de lo que se imprime ----
+  const ORG_COLS = 'legal_name,cuit,address,responsible_name,responsible_role,contact';
+  const CN = { sub: 'epp', avail: { epp: 'unknown', trn: 'unknown', org: 'unknown' }, org: null, orgP: null, orgErr: null,
+    epp: [], trn: [], att: new Map(), attErr: null, err: {}, loaded: { epp: false, trn: false }, busy: {}, trunc: {}, f: { from: '', to: '', per: '' } };
+  function loadOrg(force) {
+    if (CN.orgP && !force) return CN.orgP;
+    const p = (async () => {
+      const r = await tryQ(() => sb.from('org_settings').select(ORG_COLS).eq('id', 1).maybeSingle());
+      if (tableMissing(r)) { CN.avail.org = 'missing'; return null; }
+      if (r.error) { CN.avail.org = 'error'; CN.orgErr = r.error; if (CN.orgP === p) CN.orgP = null; return null; }
+      CN.avail.org = 'ok'; CN.orgErr = null; CN.org = r.data || null;
+      return CN.org;
+    })();
+    CN.orgP = p;
+    return p;
+  }
+  async function printPanel(hostId, title, desc) {
+    const host = $(hostId);
+    let org = null;
+    try { org = await loadOrg(); } catch (_) {}
+    const l2 = org ? [org.cuit ? 'CUIT ' + org.cuit : '', org.address || '', org.responsible_name ? 'Responsable: ' + org.responsible_name + (org.responsible_role ? ' (' + org.responsible_role + ')' : '') : '',
+      org.contact ? 'Contacto: ' + org.contact : ''].filter(Boolean).join(' · ') : '';
+    host.replaceChildren(
+      mk('p', 'emp-name', org && org.legal_name ? org.legal_name : 'Empleador: datos sin cargar (Constancias > Empleador)'),
+      ...(l2 ? [mk('p', 'emp-data', l2)] : []),
+      mk('p', 'emp-doc', title + (desc ? ' · ' + desc : '')),
+      mk('p', 'emp-gen', 'Generado el ' + fmtAR(new Date().toISOString()) + ' (hora de Argentina) por ' + ($('who').dataset.email || '—') + '.'));
+    logAccess('export_pdf', title, {});
+    window.print();
+  }
+  // Imprime una sola fila (constancia individual): las demas se ocultan solo para la impresion.
+  function printRow(tr, hostId, title, desc) {
+    const others = [...tr.parentElement.children].filter(x => x !== tr);
+    others.forEach(x => x.classList.add('noprint'));
+    const undo = () => others.forEach(x => x.classList.remove('noprint'));
+    window.addEventListener('afterprint', undo, { once: true });
+    printPanel(hostId, title, desc).finally(() => setTimeout(undo, 1500));
+  }
+
+  // ======================================================================
+  // Asistencia remota (assist_sessions)
+  // ======================================================================
+  const ASSIST_COLS = 'id,device_id,started_at,ended_at,topic,outcome,note,photos,opened_by,opened_by_email,closed_by_email';
+  const ASSIST_MAX = 500;
+  const OUTCOME_LBL = { resuelto: 'Resuelto', derivado: 'Derivado', sin_resolver: 'Sin resolver' };
+  const AS = { avail: 'unknown', open: new Map(), rows: [], trunc: false, f: { from: '', to: '', dev: '' }, loaded: false, busy: false, again: false, err: null,
+    drafts: new Map(), minis: new Map(), opening: new Set(), autoIds: new Set(), autoErr: new Map(), localPh: new Map(), ch: null, ready: null, sig: '',
+    startDraft: { dev: '', topic: '' } };
+  let asReloadT = null;
+  const durS = s => (s.ended_at ? Math.max(0, Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 1000)) : null);
+  function personAt(dev, iso) {   // quien tenia el casco en ese momento (asignaciones cargadas)
+    const t = new Date(iso).getTime();
+    const a = EQ.assigns.find(x => x.device_id === dev && new Date(x.starts_at).getTime() <= t && (x.ends_at == null || new Date(x.ends_at).getTime() > t));
+    const p = a && EQ.people.find(x => x.id === a.person_id);
+    return p ? p.full_name : '';
+  }
+  function noteLocalPhoto(dev) { const s = AS.open.get(dev); if (s) AS.localPh.set(s.id, (AS.localPh.get(s.id) || 0) + 1); }
+  async function countPhotos(s) {
+    let n = AS.localPh.get(s.id) || 0;
+    try {
+      const r = await sb.from('events').select('id', { count: 'exact', head: true }).eq('device_id', s.device_id).eq('type', 'photo').gte('created_at', s.started_at);
+      if (!r.error && typeof r.count === 'number') n = Math.max(n, r.count);
+    } catch (_) {}
+    return Math.min(n, 1000);
+  }
+  function syncAsisBadge() {
+    const n = AS.open.size, b = $('navAsis');
+    b.textContent = String(n); b.classList.toggle('hidden', !n);
+    if (n) $('tabAsis').setAttribute('aria-label', 'Asistencia, ' + (n === 1 ? '1 sesión abierta' : n + ' sesiones abiertas')); else $('tabAsis').removeAttribute('aria-label');
+  }
+  function asisRefresh() {
+    syncAsisBadge();
+    for (const v of AS.minis.values()) v.update();
+    renderAsis();
+  }
+  async function loadAssistOpen() {
+    const r = await tryQ(() => sb.from('assist_sessions').select(ASSIST_COLS).is('ended_at', null).order('started_at', { ascending: false }).limit(100));
+    if (tableMissing(r)) { AS.avail = 'missing'; AS.open = new Map(); asisRefresh(); return; }
+    if (r.error || !Array.isArray(r.data)) { if (isAuthErr(r.error)) sessionExpired(); AS.err = r.error || new Error('sin datos'); asisRefresh(); return; }
+    AS.avail = 'ok'; AS.err = null;
+    const m = new Map();
+    for (const s of r.data) if (!m.has(s.device_id)) m.set(s.device_id, s);   // la mas reciente por casco
+    AS.open = m;
+    ensureAssistChannel();
+    asisRefresh();
+  }
+  async function loadAssistRange() {
+    if (AS.avail === 'missing') return;
+    if (AS.busy) { AS.again = true; return; }
+    AS.busy = true;
+    const f = AS.f.from || today(), t = AS.f.to || today();
+    let q = sb.from('assist_sessions').select(ASSIST_COLS).gte('started_at', dayStartISO(f)).lt('started_at', dayStartISO(t, 1));
+    if (AS.f.dev) q = q.eq('device_id', AS.f.dev);
+    const r = await tryQ(() => q.order('started_at', { ascending: false }).limit(ASSIST_MAX + 1));
+    AS.busy = false;
+    if (tableMissing(r)) AS.avail = 'missing';
+    else if (r.error || !Array.isArray(r.data)) { if (isAuthErr(r.error)) sessionExpired(); AS.err = r.error || new Error('sin datos'); }
+    else { AS.err = null; AS.avail = 'ok'; AS.trunc = r.data.length > ASSIST_MAX; AS.rows = r.data.slice(0, ASSIST_MAX); AS.loaded = true; }
+    asisRefresh();
+    if (AS.again) { AS.again = false; loadAssistRange(); }
+  }
+  const reloadAssistSoon = () => { clearTimeout(asReloadT); asReloadT = setTimeout(() => { loadAssistOpen(); if (AS.loaded) loadAssistRange(); }, 400); };
+  function ensureAssistChannel() {
+    if (AS.ch || AS.avail !== 'ok') return;
+    AS.ch = sb.channel('assist-feed')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assist_sessions' }, reloadAssistSoon)
+      .subscribe(resubscribed(reloadAssistSoon));
+  }
+  const rateOrPerm = (e, what) => e && e.code === '54000' ? 'Demasiadas sesiones en poco tiempo (máximo 20 por minuto). Esperá unos segundos.'
+    : noPerm(e) ? 'Tu rol no puede ' + what + '.' : 'No se pudo ' + what + ': ' + errEs(e);
+  async function assistOpen(devId, topic, auto) {   // -> { row } | { error }
+    if (!canWrite()) return { error: 'Tu rol es de solo lectura: no puede registrar asistencias.' };
+    if (!DEV_RE.test(devId)) return { error: 'Elegí un casco.' };
+    if (AS.avail === 'missing') return { error: MIG_TXT };
+    if (AS.open.has(devId)) return { row: AS.open.get(devId) };
+    if (AS.opening.has(devId)) return { error: '' };
+    AS.opening.add(devId); AS.autoErr.delete(devId);
+    const body = { device_id: devId }; if (topic) body.topic = topic;
+    const r = await tryQ(() => sb.from('assist_sessions').insert(body).select(ASSIST_COLS).single());
+    AS.opening.delete(devId);
+    if (tableMissing(r)) { AS.avail = 'missing'; asisRefresh(); return { error: MIG_TXT }; }
+    if (r.error || !r.data) {
+      if (isAuthErr(r.error)) sessionExpired();
+      const msg = isAuthErr(r.error) ? 'Sesión vencida: ingresá de nuevo.' : rateOrPerm(r.error, 'registrar la sesión de asistencia');
+      if (auto) AS.autoErr.set(devId, msg);
+      asisRefresh();
+      return { error: msg };
+    }
+    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    AS.avail = 'ok'; AS.open.set(devId, row);
+    if (auto) AS.autoIds.add(row.id);
+    logAccess('assist_open', devId, { id: row.id, auto: !!auto, tema: topic || null });
+    announce('Se abrió una sesión de asistencia con ' + label(devId) + '.');
+    ensureAssistChannel();
+    if (AS.loaded) loadAssistRange();
+    asisRefresh();
+    return { row };
+  }
+  // Al tocar "Iniciar" o "Hablar" sin sesion abierta: se abre sola (cfg.ASSIST_AUTO === false la apaga). No frena el video ni la llamada.
+  function asistAuto(devId) {
+    if (cfg.ASSIST_AUTO === false || !canWrite() || !DEV_RE.test(devId) || AS.avail === 'missing') return;
+    Promise.resolve(AS.ready).then(() => {
+      if (AS.open.has(devId) || AS.opening.has(devId)) return;
+      assistOpen(devId, '', true);
+    }).catch(() => {});
+  }
+  async function assistClose(s, v) {   // -> '' si salio bien, o el mensaje de error
+    const r = await tryQ(() => sb.from('assist_sessions')
+      .update({ ended_at: new Date().toISOString(), outcome: v.outcome, note: v.note || null, photos: v.photos })
+      .eq('id', s.id).is('ended_at', null).select(ASSIST_COLS).maybeSingle());
+    if (tableMissing(r)) { AS.avail = 'missing'; asisRefresh(); return MIG_TXT; }
+    if (r.error) {
+      if (isAuthErr(r.error)) { sessionExpired(); return 'Sesión vencida: ingresá de nuevo y cerrá la sesión.'; }
+      if (noPerm(r.error)) return 'Solo quien abrió la sesión o un administrador puede cerrarla.';
+      return 'No se pudo cerrar la sesión: ' + errEs(r.error);
+    }
+    const row = Array.isArray(r.data) ? r.data[0] : r.data;
+    if (!row) return 'No se pudo cerrar: la sesión ya estaba cerrada o solo la puede cerrar quien la abrió o un administrador.';
+    if (AS.open.get(row.device_id) && AS.open.get(row.device_id).id === row.id) AS.open.delete(row.device_id);
+    AS.drafts.delete(s.id); AS.autoIds.delete(s.id); AS.localPh.delete(s.id);
+    const i = AS.rows.findIndex(x => x.id === row.id);
+    if (i >= 0) AS.rows[i] = row;
+    logAccess('assist_close', row.device_id, { id: row.id, resultado: row.outcome, dur_s: durS(row), fotos: row.photos });
+    announce('Sesión de asistencia con ' + label(row.device_id) + ' cerrada: ' + (OUTCOME_LBL[row.outcome] || '').toLowerCase() + '.');
+    if (AS.loaded) loadAssistRange();
+    asisRefresh();
+    return '';
+  }
+  // Formulario de cierre (resultado + nota + fotos). Los borradores sobreviven a los repintados por Realtime.
+  function closeForm(s, where) {
+    if (!(s.opened_by === MY_ID || isAdmin())) {
+      return mk('p', 'mute', 'La abrió ' + (s.opened_by_email || 'otra persona') + ': la cierra esa persona o un administrador.');
+    }
+    const dr = AS.drafts.get(s.id) || {}; AS.drafts.set(s.id, dr);
+    const f = mk('form', 'assist-close noprint'); f.noValidate = true;
+    const out = sel([['', 'Elegí el resultado…'], ['resuelto', 'Resuelto'], ['derivado', 'Derivado'], ['sin_resolver', 'Sin resolver']], dr.outcome || '');
+    const note = inp('text', dr.note || '', { maxLength: 1000, autocomplete: 'off', placeholder: 'Qué se hizo o qué quedó pendiente' });
+    const ph = inp('number', dr.photos != null ? dr.photos : '', { min: 0, max: 1000, inputMode: 'numeric' });
+    out.addEventListener('change', () => { dr.outcome = out.value; });
+    note.addEventListener('input', () => { dr.note = note.value; });
+    ph.addEventListener('input', () => { dr.photos = ph.value; });
+    if (dr.photos == null) countPhotos(s).then(n => { if (dr.photos == null && ph.isConnected !== false && !ph.value) ph.value = String(n); });
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const go = mk('button', '', 'Cerrar sesión'); go.type = 'submit';
+    go.setAttribute('aria-label', 'Cerrar sesión de asistencia, casco ' + s.device_id);
+    const tag = ' (casco ' + s.device_id + ')';
+    const g = mk('div', 'grid2'); g.append(fld('Resultado' + tag, out), fld('Fotos tomadas' + tag, ph));
+    f.append(g, fld('Nota (opcional)' + tag, note), rowOf(go), err);
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = '';
+      if (!out.value) { err.textContent = 'Elegí el resultado de la asistencia.'; out.focus(); return; }
+      const raw = String(ph.value).trim(), n = raw === '' ? 0 : Number(raw);
+      if (!Number.isInteger(n) || n < 0 || n > 1000) { err.textContent = 'Las fotos tienen que ser un número entero de 0 a 1000.'; ph.focus(); return; }
+      go.disabled = true;
+      const m = await assistClose(s, { outcome: out.value, note: note.value.trim().replace(/\s+/g, ' '), photos: n });
+      go.disabled = false;
+      if (m) { err.textContent = m; return; }
+      requestAnimationFrame(() => {   // el formulario se reemplazo: el foco va al boton del mini-cartel o al titulo de la pestaña
+        const mv = AS.minis.get(s.device_id), t = where === 'mini' ? mv && mv.box.querySelector('button') : $('asisH');
+        if (t) { if (t.tagName !== 'BUTTON') t.tabIndex = -1; t.focus({ preventScroll: true }); }
+      });
+    });
+    return f;
+  }
+  // Mini-cartel dentro de cada panel de video: estado de la sesion + cierre con resultado y nota.
+  function asistMini(devId) {
+    const box = mk('div', 'assist-mini noprint');
+    box.setAttribute('role', 'group'); box.setAttribute('aria-label', 'Sesión de asistencia del casco ' + devId);
+    const v = { id: devId, box, sid: '', err: null, update() {
+      const s = AS.open.get(devId);
+      const hide = !canWrite() || AS.avail === 'missing';
+      box.classList.toggle('hidden', hide);
+      if (hide) return;
+      if (!s) {
+        if (v.sid !== '-') {
+          v.sid = '-';
+          const b = mk('button', 'ghost', 'Registrar asistencia'); b.type = 'button';
+          b.setAttribute('aria-label', 'Registrar asistencia, casco ' + devId + ': abre una sesión de asistencia remota');
+          b.addEventListener('click', async () => { b.disabled = true; await assistOpen(devId, '', false); b.disabled = false; });
+          v.err = mk('span', 'err'); v.err.setAttribute('role', 'alert');
+          box.replaceChildren(rowOf(b, v.err));
+        }
+        v.err.textContent = AS.autoErr.get(devId) || '';
+        return;
+      }
+      if (v.sid !== s.id) {
+        v.sid = s.id;
+        const head = mk('p', 'assist-st');
+        head.append(mk('strong', '', 'Asistencia en curso'), mk('span', 'mute', ' · desde ' + fmtAR(s.started_at) + (s.topic ? ' · ' + s.topic : '')));
+        const kids = [head];
+        if (AS.autoIds.has(s.id)) kids.push(mk('p', 'mute', 'Se abrió sola al tocar Iniciar o Hablar. Cerrala con el resultado cuando termines (también desde la pestaña Asistencia).'));
+        kids.push(closeForm(s, 'mini'));
+        box.replaceChildren(...kids);
+      }
+    } };
+    AS.minis.set(devId, v);
+    v.update();
+    return box;
+  }
+
+  function asisCsvRows() {
+    return AS.rows.map(s => [fmtAR(s.started_at), s.ended_at ? fmtAR(s.ended_at) : '', s.device_id, personAt(s.device_id, s.started_at), s.topic || '',
+      s.ended_at ? (OUTCOME_LBL[s.outcome] || '') : 'Abierta', durS(s) != null ? durS(s) : '', s.photos, s.opened_by_email || '', s.closed_by_email || '', s.note || '', s.id]);
+  }
+  const ASIS_HEAD = ['inicio', 'fin', 'casco', 'persona', 'tema', 'resultado', 'duracion_seg', 'fotos', 'abierta_por', 'cerrada_por', 'nota', 'id_sesion'];
+  function asisDesc() {
+    return 'Desde ' + ymdAR(AS.f.from || today()) + ' hasta ' + ymdAR(AS.f.to || today()) + ' · casco: ' + (AS.f.dev ? label(AS.f.dev) : 'todos');
+  }
+  function renderAsis() {
+    const host = $('asisHost');
+    if (!host || $('panelAsis').classList.contains('hidden')) return;
+    const sig = JSON.stringify([AS.avail, !!AS.err, AS.loaded, AS.trunc, AS.rows.map(r => [r.id, r.ended_at, r.outcome, r.photos]), [...AS.open.values()].map(s => s.id),
+      AS.f, ROLE, knownDevices().join(','), [...personOf].join(',')]);
+    if (sig === AS.sig && host.firstChild) return;
+    AS.sig = sig;
+    if (AS.avail === 'missing') { host.replaceChildren(missingBox()); return; }
+    if (AS.avail === 'unknown' && !AS.err) { host.replaceChildren(mk('p', 'mute', 'Cargando sesiones…')); return; }
+    const kids = [];
+    if (AS.err) kids.push(errLine(AS.err, 'No se pudieron leer las sesiones de asistencia (se reintenta solo)'));
+    const devs = knownDevices();
+    // 1) iniciar una sesion a mano
+    if (canWrite()) {
+      const f = mk('form', 'qform noprint'); f.noValidate = true;
+      const dv = sel([['', '(elegí un casco)'], ...devs.map(i => [i, label(i)])], AS.startDraft.dev);
+      const tp = inp('text', AS.startDraft.topic, { maxLength: 200, autocomplete: 'off', placeholder: 'Ej.: calibrar el equipo, revisar la bomba' });
+      dv.addEventListener('change', () => { AS.startDraft.dev = dv.value; });
+      tp.addEventListener('input', () => { AS.startDraft.topic = tp.value; });
+      const go = mk('button', '', 'Iniciar sesión'); go.type = 'submit';
+      const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+      const g = mk('div', 'grid2 qgrid'); g.append(fld('Casco', dv), fld('Tema (opcional, hasta 200 caracteres)', tp));
+      f.append(mk('h3', '', 'Iniciar una sesión de asistencia'), g, rowOf(go), err,
+        mk('p', 'mute', 'También se abre sola al tocar Iniciar o Hablar en el video de un casco, si no hay una sesión abierta con ese casco.'));
+      f.addEventListener('submit', async e => {
+        e.preventDefault(); err.textContent = '';
+        if (!dv.value) { err.textContent = 'Elegí un casco.'; dv.focus(); return; }
+        if (AS.open.has(dv.value)) { err.textContent = 'Ya hay una sesión abierta con ese casco: cerrala primero.'; return; }
+        go.disabled = true;
+        const r = await assistOpen(dv.value, tp.value.trim().replace(/\s+/g, ' '), false);
+        go.disabled = false;
+        if (r.error) { err.textContent = r.error; return; }
+        AS.startDraft = { dev: '', topic: '' };
+      });
+      kids.push(f);
+    } else kids.push(roHint('Tu rol (auditor) es de solo lectura: podés ver, exportar e imprimir las sesiones, pero no abrirlas ni cerrarlas.'));
+    // 2) abiertas
+    const open = [...AS.open.values()].sort((a, b) => b.started_at.localeCompare(a.started_at));
+    const hOpen = mk('h3', '', 'Sesiones abiertas (' + open.length + ')');
+    kids.push(hOpen);
+    if (!open.length) kids.push(mk('p', 'mute', 'No hay sesiones abiertas.'));
+    else {
+      const ul = mk('ul');
+      for (const s of open) {
+        const li = mk('li', 'bcitem');
+        const h = mk('div', 'row');
+        h.append(dlEl('strong', s.device_id, ''), mk('span', 'tag warn', 'ABIERTA'), mk('span', 'mute', 'desde ' + fmtAR(s.started_at) + ' · ' + ago(Date.now() - new Date(s.started_at).getTime())));
+        li.append(h, mk('div', 'mute', (s.topic ? 'Tema: ' + s.topic + ' · ' : '') + 'abrió ' + (s.opened_by_email || '—')));
+        if (canWrite()) li.append(closeForm(s, 'tab'));
+        ul.append(li);
+      }
+      kids.push(ul);
+    }
+    // 3) resumen + filtros + tabla
+    const done = AS.rows.filter(r => r.ended_at), durs = done.map(durS);
+    const avg = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : null;
+    const res = done.filter(r => r.outcome === 'resuelto').length;
+    kids.push(mk('h3', '', 'Sesiones del período'));
+    const ff = mk('form', 'qform noprint'); ff.noValidate = true;
+    const inFrom = dateIn(AS.f.from || today()), inTo = dateIn(AS.f.to || today());
+    const sDev = sel([['', 'Todos los cascos'], ...devs.map(i => [i, label(i)])], AS.f.dev);
+    const bGo = mk('button', '', 'Buscar'); bGo.type = 'submit';
+    const bCsv = mk('button', 'ghost', 'Exportar CSV'); bCsv.type = 'button';
+    const bPr = mk('button', 'ghost', 'Imprimir / PDF'); bPr.type = 'button';
+    bCsv.disabled = bPr.disabled = !AS.rows.length;
+    const fg = mk('div', 'grid2 qgrid'); fg.append(fld('Desde', inFrom), fld('Hasta', inTo), fld('Casco', sDev));
+    const ferr = mk('div', 'err'); ferr.setAttribute('role', 'alert');
+    ff.append(fg, rowOf(bGo, bCsv, bPr), ferr);
+    ff.addEventListener('submit', e => {
+      e.preventDefault(); ferr.textContent = '';
+      if (inFrom.value && inTo.value && inFrom.value > inTo.value) { ferr.textContent = 'La fecha Desde es posterior a Hasta.'; return; }
+      AS.f = { from: inFrom.value, to: inTo.value, dev: sDev.value };
+      loadAssistRange();
+    });
+    bCsv.addEventListener('click', () => csvDownload('asistencia_' + today() + '.csv', ASIS_HEAD, asisCsvRows()));
+    bPr.addEventListener('click', () => printPanel('asisPrint', 'Sesiones de asistencia remota', asisDesc()));
+    kids.push(ff);
+    kids.push(kpiBox([
+      ['Sesiones', String(AS.rows.length), open.length ? open.length + ' abiertas' : 'en el período'],
+      ['Duración media', avg == null ? '—' : elapsed(avg), done.length + ' cerradas'],
+      ['Resueltas', done.length ? Math.round(res * 100 / done.length) + ' %' : '—', res + ' de ' + done.length + ' cerradas'],
+    ]));
+    kids.push(mk('p', 'print-only', asisDesc()));
+    if (!AS.loaded) kids.push(mk('p', 'mute', 'Cargando…'));
+    else {
+      kids.push(dataTable('Sesiones de asistencia remota', ['Inicio', 'Casco', 'Persona', 'Tema', 'Duración', 'Resultado', 'Fotos', 'Abrió', 'Nota'],
+        AS.rows.map(s => ({ cls: s.ended_at ? '' : 'pend', cells: [{ t: fmtAR(s.started_at), cls: 'mono' }, label(s.device_id), personAt(s.device_id, s.started_at), s.topic,
+          s.ended_at ? { t: elapsed(durS(s)), cls: 'mono' } : { t: 'Abierta', cls: 'bad' }, s.ended_at ? OUTCOME_LBL[s.outcome] : '', String(s.photos), s.opened_by_email, s.note] })),
+        'No hay sesiones en este período.'));
+      if (AS.trunc) kids.push(mk('p', 'mute', 'Se muestran las primeras ' + ASSIST_MAX + ' sesiones: acotá las fechas para ver el resto.'));
+    }
+    host.replaceChildren(...kids);
+  }
+  function asisShow() {
+    if (!AS.f.from) AS.f = { from: today(), to: today(), dev: AS.f.dev || '' };
+    renderAsis();
+    loadAssistOpen(); loadAssistRange();
+  }
+
+  // ======================================================================
+  // Constancias: EPP (epp_deliveries) y capacitacion (training_records + training_attendees) + datos del empleador
+  // ======================================================================
+  const CONST_MAX = 500;
+  const ACK_LBL = { conforme: 'Conforme', con_observaciones: 'Con observaciones', no_firma: 'No firma' };
+  const PLACE_LBL = { presencial: 'Presencial', virtual: 'Virtual' }, SYNC_LBL = { sincronica: 'Sincrónica', asincronica: 'Asincrónica' };
+  const EPP_COLS = 'id,person_id,device_id,item,quantity,model,brand,certified,cert_ref,delivered_at,worker_ack,observation,supersedes,created_by_email,created_at';
+  const TRN_COLS = 'id,held_at,topic,trainer,modality_place,modality_sync,assisted,duration_min,supersedes,created_by_email,created_at';
+  const pnameOf = (id, emb) => (emb && emb.full_name) || (EQ.people.find(p => p.id === id) || {}).full_name || 'persona ' + String(id || '').slice(0, 8);
+  const cDbErr = (e, tabla) => {
+    const c = String((e && e.code) || ''), m = String((e && e.message) || '');
+    if (isAuthErr(e)) { sessionExpired(); return 'Sesión vencida: ingresá de nuevo.'; }
+    if (c === '23505') return 'Ese registro ya fue corregido por otro posterior: actualizá la lista.';
+    if (c === '54000' || /rate limit/i.test(m)) return 'Demasiados registros en poco tiempo. Esperá unos segundos y probá de nuevo.';
+    if (noPerm(e)) return 'Tu rol no puede guardar constancias.';
+    if (c === '22023') return m.replace(new RegExp('^' + (tabla || '\\w+') + ': '), '');
+    return 'No se pudo guardar: ' + errEs(e);
+  };
+  async function loadEpp() {
+    if (CN.busy.epp) return;
+    CN.busy.epp = true;
+    const from = CN.f.from || ymdAgo(90), to = CN.f.to || today();
+    const emb = 'person:people(full_name,legajo,job_title,sector)';   // el DNI no es columna de people: viene de people_full (EQ.people, solo admin)
+    const build = cols => {
+      let q = sb.from('epp_deliveries').select(cols).gte('delivered_at', from).lte('delivered_at', to);
+      if (CN.f.per) q = q.eq('person_id', CN.f.per);
+      return q.order('delivered_at', { ascending: false }).order('created_at', { ascending: false }).limit(CONST_MAX + 1);
+    };
+    let r = await tryQ(() => build(EPP_COLS + ',' + emb));
+    if (r.error && !tableMissing(r) && !noPerm(r.error) && !isAuthErr(r.error)) r = await tryQ(() => build(EPP_COLS));   // sin el cruce con personas
+    CN.busy.epp = false;
+    if (tableMissing(r)) CN.avail.epp = 'missing';
+    else if (r.error || !Array.isArray(r.data)) { if (isAuthErr(r.error)) sessionExpired(); CN.err.epp = r.error || new Error('sin datos'); }
+    else { CN.err.epp = null; CN.avail.epp = 'ok'; CN.trunc.epp = r.data.length > CONST_MAX; CN.epp = r.data.slice(0, CONST_MAX); CN.loaded.epp = true; }
+    renderConst();
+  }
+  async function loadTrn() {
+    if (CN.busy.trn) return;
+    CN.busy.trn = true;
+    const from = CN.f.from || ymdAgo(90), to = CN.f.to || today();
+    const r = await tryQ(() => sb.from('training_records').select(TRN_COLS).gte('held_at', dayStartISO(from)).lt('held_at', dayStartISO(to, 1))
+      .order('held_at', { ascending: false }).limit(CONST_MAX + 1));
+    if (tableMissing(r)) { CN.avail.trn = 'missing'; CN.busy.trn = false; renderConst(); return; }
+    if (r.error || !Array.isArray(r.data)) {
+      if (isAuthErr(r.error)) sessionExpired();
+      CN.err.trn = r.error || new Error('sin datos'); CN.busy.trn = false; renderConst(); return;
+    }
+    CN.err.trn = null; CN.avail.trn = 'ok';
+    const recs = r.data.slice(0, CONST_MAX);
+    // Asistentes: viewer/admin leen la tabla (con cruce a personas); el auditor lee la vista training_attendees_audit
+    // (la persona viene vacia cuando dejo una observacion: identidad reservada).
+    const att = new Map(); CN.attErr = null;
+    const aud = isAuditor();
+    for (let i = 0; i < recs.length; i += 40) {
+      const ids = recs.slice(i, i + 40).map(x => x.id);
+      const q = aud
+        ? sb.from('training_attendees_audit').select('training_id,person_id,ack,observation').in('training_id', ids)
+        : sb.from('training_attendees').select('training_id,person_id,ack,observation,person:people(full_name,legajo)').in('training_id', ids);
+      let a = await tryQ(() => q);
+      if (a.error && !aud && !tableMissing(a) && !noPerm(a.error) && !isAuthErr(a.error)) a = await tryQ(() => sb.from('training_attendees').select('training_id,person_id,ack,observation').in('training_id', ids));
+      if (a.error || !Array.isArray(a.data)) { CN.attErr = a.error || new Error('sin datos'); break; }
+      for (const x of a.data) { if (!att.has(x.training_id)) att.set(x.training_id, []); att.get(x.training_id).push(x); }
+    }
+    CN.att = att; CN.trunc.trn = r.data.length > CONST_MAX; CN.trn = recs; CN.loaded.trn = true; CN.busy.trn = false;
+    renderConst();
+  }
+  function closeConstForm() { const h = $('constForm'); h.replaceChildren(); h.classList.add('hidden'); }
+  function formCard(title, fields, spec, onSave) {
+    const f = mk('form', 'card section noprint'); f.noValidate = true;
+    const h = mk('h3', '', title); h.tabIndex = -1;
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const go = mk('button', '', 'Guardar constancia'); go.type = 'submit';
+    const no = mk('button', 'ghost', 'Cancelar'); no.type = 'button';
+    no.addEventListener('click', () => { closeConstForm(); const t = $('constBody').querySelector('button'); if (t) t.focus(); });
+    f.append(h, ...fields, rowOf(go, no), err);
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = '';
+      const r = collect(spec);
+      if (r.errors.length) { err.textContent = r.errors.join(' '); return; }
+      go.disabled = true;
+      const msg = await onSave(r.v);
+      go.disabled = false;
+      if (msg) { err.textContent = msg; return; }
+      closeConstForm();
+    });
+    $('constForm').replaceChildren(f); $('constForm').classList.remove('hidden');
+    const first = f.querySelector('input:not([readonly]),select'); if (first) first.focus();
+    return f;
+  }
+  const personOpts = () => [['', '(elegí una persona)'], ...EQ.people.filter(p => p.active !== false).map(p => [p.id, p.full_name + (p.legajo ? ' (' + p.legajo + ')' : '')])];
+  function eppForm(pre) {
+    if (!canWrite()) return;
+    const po = personOpts();
+    if (pre && !po.some(o => o[0] === pre.person_id)) po.push([pre.person_id, pnameOf(pre.person_id, pre.person)]);
+    const per = sel(po, pre ? pre.person_id : '');
+    if (pre) per.disabled = true;   // la correccion es de la misma persona (lo exige el servidor)
+    const dev = sel([['', '(sin casco)'], ...EQ.devices.filter(d => d.status !== 'baja').map(d => [d.device_id, d.device_id + ' · ' + d.name])], pre && pre.device_id || '');
+    const item = inp('text', pre ? pre.item : '', { maxLength: 120, autocomplete: 'off', placeholder: 'Ej.: casco de seguridad, guantes, botines' });
+    const qty = inp('number', pre ? pre.quantity : 1, { min: 1, max: 999, inputMode: 'numeric' });
+    const model = inp('text', pre && pre.model || '', { maxLength: 120, autocomplete: 'off' });
+    const brand = inp('text', pre && pre.brand || '', { maxLength: 120, autocomplete: 'off' });
+    const cert = sel([['', '(elegí)'], ['si', 'Sí, posee certificación'], ['no', 'No posee certificación']], pre ? (pre.certified ? 'si' : 'no') : '');
+    const cref = inp('text', pre && pre.cert_ref || '', { maxLength: 200, autocomplete: 'off', placeholder: 'Norma, certificado o disposición' });
+    const date = inp('date', pre ? pre.delivered_at : today(), { max: today() });
+    const ack = sel([['', '(elegí)'], ['conforme', 'Conforme'], ['con_observaciones', 'Con observaciones'], ['no_firma', 'No firma']], pre ? pre.worker_ack : '');
+    const obs = inp('text', pre && pre.observation || '', { maxLength: 500, autocomplete: 'off' });
+    const spec = [
+      { k: 'person_id', el: per, label: 'Trabajador', req: true },
+      { k: 'device_id', el: dev, label: 'Casco' },
+      { k: 'item', el: item, label: 'Producto', req: true, max: 120 },
+      { k: 'quantity', el: qty, label: 'Cantidad', req: true, re: /^\d{1,3}$/, msg: 'número entero de 1 a 999.' },
+      { k: 'model', el: model, label: 'Modelo o tipo', max: 120 },
+      { k: 'brand', el: brand, label: 'Marca', max: 120 },
+      { k: 'cert', el: cert, label: 'Certificación', req: true },
+      { k: 'cert_ref', el: cref, label: 'Referencia de la certificación', max: 200 },
+      { k: 'delivered_at', el: date, label: 'Fecha de entrega', req: true },
+      { k: 'worker_ack', el: ack, label: 'Conformidad del trabajador', req: true },
+      { k: 'observation', el: obs, label: 'Observación', max: 500 },
+    ];
+    const g1 = mk('div', 'grid2'); g1.append(fld('Trabajador', per), fld('Casco asignado (opcional)', dev));
+    const g2 = mk('div', 'grid2'); g2.append(fld('Producto (EPP entregado)', item), fld('Cantidad', qty), fld('Modelo o tipo', model), fld('Marca', brand));
+    const g3 = mk('div', 'grid2'); g3.append(fld('¿Posee certificación?', cert), fld('Referencia de la certificación (norma o certificado)', cref), fld('Fecha de entrega', date));
+    const g4 = mk('div', 'grid2'); g4.append(fld('Conformidad del trabajador', ack), fld('Observación (obligatoria si hay observaciones)', obs));
+    const note = mk('p', 'mute', pre ? 'Estás corrigiendo la entrega del ' + ymdAR(pre.delivered_at) + ' (' + pre.item + '). El registro anterior no se borra: queda marcado como reemplazado.'
+      : 'La constancia queda guardada y no se puede modificar: si hay un error, se carga una corrección que reemplaza a la anterior.');
+    formCard(pre ? 'Corregir constancia de entrega de EPP' : 'Nueva constancia de entrega de EPP', [note, g1, g2, g3, g4], spec, async v => {
+      const q = Number(v.quantity);
+      if (!Number.isInteger(q) || q < 1 || q > 999) return 'Cantidad: número entero de 1 a 999.';
+      if (v.delivered_at > today()) return 'Fecha de entrega: no puede ser futura.';
+      if (v.worker_ack === 'con_observaciones' && !v.observation) return 'Observación: es obligatoria cuando el trabajador firma con observaciones.';
+      const row = { person_id: pre ? pre.person_id : v.person_id, item: v.item, quantity: q, certified: v.cert === 'si', delivered_at: v.delivered_at, worker_ack: v.worker_ack };
+      if (v.device_id) row.device_id = v.device_id;
+      if (v.model) row.model = v.model;
+      if (v.brand) row.brand = v.brand;
+      if (v.cert_ref) row.cert_ref = v.cert_ref;
+      if (v.observation) row.observation = v.observation;
+      if (pre) row.supersedes = pre.id;
+      const r = await tryQ(() => sb.from('epp_deliveries').insert(row).select('id').single());
+      if (tableMissing(r)) { CN.avail.epp = 'missing'; renderConst(); return MIG_TXT; }
+      if (r.error) return cDbErr(r.error, 'epp_deliveries');
+      const id = (Array.isArray(r.data) ? r.data[0] : r.data || {}).id || '';
+      logAccess('epp_create', id, { persona: row.person_id, producto: row.item, correccion: !!pre });
+      announce('Constancia de entrega de EPP guardada.');
+      loadEpp();
+      return '';
+    });
+  }
+  function trnForm(pre) {
+    if (!canWrite()) return;
+    const peo = EQ.people.filter(p => p.active !== false);
+    const held = inp('datetime-local', pre ? isoToLocalAR(pre.held_at) : nowLocalAR(), { max: nowLocalAR() });
+    const topic = inp('text', pre ? pre.topic : '', { maxLength: 200, autocomplete: 'off', placeholder: 'Ej.: trabajo en altura, uso de extintores' });
+    const trainer = inp('text', pre ? pre.trainer : '', { maxLength: 120, autocomplete: 'off' });
+    const place = sel([['', '(elegí)'], ['presencial', 'Presencial'], ['virtual', 'Virtual']], pre && pre.modality_place || '');
+    const sync = sel([['', '(elegí)'], ['sincronica', 'Sincrónica'], ['asincronica', 'Asincrónica']], pre && pre.modality_sync || '');
+    const assisted = sel([['', '(elegí)'], ['si', 'Sí'], ['no', 'No']], pre ? (pre.assisted ? 'si' : 'no') : '');
+    const dur = inp('number', pre && pre.duration_min || '', { min: 1, max: 1440, inputMode: 'numeric', placeholder: 'minutos' });
+    const spec = [
+      { k: 'held_at', el: held, label: 'Fecha y hora', req: true },
+      { k: 'topic', el: topic, label: 'Tema', req: true, max: 200 },
+      { k: 'trainer', el: trainer, label: 'Capacitador', req: true, max: 120 },
+      { k: 'place', el: place, label: 'Modalidad (lugar)', req: true },
+      { k: 'sync', el: sync, label: 'Modalidad (sincronía)', req: true },
+      { k: 'assisted', el: assisted, label: 'Capacitación asistida', req: true },
+      { k: 'dur', el: dur, label: 'Duración', re: /^\d{1,4}$/, msg: 'minutos, número entero de 1 a 1440.' },
+    ];
+    const g1 = mk('div', 'grid2'); g1.append(fld('Fecha y hora (hora de Argentina)', held), fld('Tema', topic), fld('Capacitador', trainer), fld('Duración en minutos (opcional)', dur));
+    const g2 = mk('div', 'grid2'); g2.append(fld('Modalidad: lugar', place), fld('Modalidad: sincronía', sync), fld('¿Fue asistida por un capacitador?', assisted));
+    const prev = new Map((pre ? CN.att.get(pre.id) || [] : []).map(a => [a.person_id, a]));
+    const fs = mk('fieldset', 'att-set');
+    fs.append(mk('legend', '', 'Asistentes (de 1 a 200)'));
+    const rows = peo.map(p => {
+      const row = mk('div', 'att-row');
+      const lab = mk('label', 'chk'), cb = inp('checkbox'); cb.checked = prev.has(p.id);
+      lab.append(cb, p.full_name + (p.legajo ? ' · ' + p.legajo : ''));
+      const ak = sel([['conforme', 'Conforme'], ['con_observaciones', 'Con observaciones'], ['no_firma', 'No firma']], prev.has(p.id) ? prev.get(p.id).ack : 'conforme');
+      ak.setAttribute('aria-label', 'Conformidad de ' + p.full_name);
+      const ob = inp('text', prev.has(p.id) && prev.get(p.id).observation || '', { maxLength: 500, autocomplete: 'off', placeholder: 'Observación (si corresponde)' });
+      ob.setAttribute('aria-label', 'Observación de ' + p.full_name);
+      row.append(lab, ak, ob);
+      return { p, cb, ak, ob, row };
+    });
+    const cnt = mk('p', 'mute'); cnt.setAttribute('role', 'status');
+    const updCnt = () => { const n = rows.filter(x => x.cb.checked).length; cnt.textContent = n + (n === 1 ? ' asistente elegido' : ' asistentes elegidos') + ' de ' + peo.length + '.'; };
+    rows.forEach(x => x.cb.addEventListener('change', updCnt));
+    const all = mk('button', 'ghost', 'Marcar a todos'); all.type = 'button';
+    const none = mk('button', 'ghost', 'Desmarcar a todos'); none.type = 'button';
+    all.addEventListener('click', () => { rows.forEach(x => { x.cb.checked = true; }); updCnt(); });
+    none.addEventListener('click', () => { rows.forEach(x => { x.cb.checked = false; }); updCnt(); });
+    fs.append(rowOf(all, none), ...(rows.length ? rows.map(x => x.row) : [mk('p', 'mute', 'No hay personas activas cargadas: cargalas primero en Equipos > Personas.')]), cnt);
+    updCnt();
+    const note = mk('p', 'mute', pre ? 'Estás corrigiendo la capacitación del ' + fmtAR(pre.held_at) + ' (' + pre.topic + '). El registro anterior no se borra: queda marcado como reemplazado.'
+      : 'La constancia queda guardada y no se puede modificar: si hay un error, se carga una corrección que reemplaza a la anterior.');
+    formCard(pre ? 'Corregir constancia de capacitación' : 'Nueva constancia de capacitación', [note, g1, g2, fs], spec, async v => {
+      if (v.held_at > nowLocalAR()) return 'Fecha y hora: no puede ser futura.';
+      const d = v.dur === null || v.dur === '' ? null : Number(v.dur);
+      if (d !== null && !(Number.isInteger(d) && d >= 1 && d <= 1440)) return 'Duración: minutos, número entero de 1 a 1440.';
+      const sel2 = rows.filter(x => x.cb.checked);
+      if (!sel2.length) return 'Asistentes: elegí al menos una persona.';
+      if (sel2.length > 200) return 'Asistentes: como máximo 200 por constancia.';
+      const attendees = [];
+      for (const x of sel2) {
+        const o = x.ob.value.trim();
+        if (x.ak.value === 'con_observaciones' && !o) return 'Observación de ' + x.p.full_name + ': es obligatoria si firma con observaciones.';
+        attendees.push({ person_id: x.p.id, ack: x.ak.value, ...(o ? { observation: o } : {}) });
+      }
+      const args = { held_at: localToIso(v.held_at), topic: v.topic, trainer: v.trainer, modality_place: v.place, modality_sync: v.sync, assisted: v.assisted === 'si', duration_min: d, attendees };
+      if (pre) args.supersedes = pre.id;
+      const r = await tryQ(() => sb.rpc('create_training', args));
+      if (tableMissing(r)) { CN.avail.trn = 'missing'; renderConst(); return MIG_TXT; }
+      if (r.error) return cDbErr(r.error, 'create_training');
+      logAccess('training_create', typeof r.data === 'string' ? r.data : '', { tema: v.topic, asistentes: attendees.length, correccion: !!pre });
+      announce('Constancia de capacitación guardada.');
+      loadTrn();
+      return '';
+    });
+  }
+
+  function constFilters(onGo, printFn, csvFn, hasRows) {
+    const ff = mk('form', 'qform noprint'); ff.noValidate = true;
+    const inFrom = dateIn(CN.f.from || ymdAgo(90)), inTo = dateIn(CN.f.to || today());
+    const grid = mk('div', 'grid2 qgrid'); grid.append(fld('Desde', inFrom), fld('Hasta', inTo));
+    let per = null;
+    if (onGo.person) { per = sel([['', 'Todas las personas'], ...EQ.people.map(p => [p.id, p.full_name])], CN.f.per); grid.append(fld('Persona', per)); }
+    const bGo = mk('button', '', 'Buscar'); bGo.type = 'submit';
+    const bCsv = mk('button', 'ghost', 'Exportar CSV'); bCsv.type = 'button';
+    const bPr = mk('button', 'ghost', 'Imprimir / PDF'); bPr.type = 'button';
+    bCsv.disabled = bPr.disabled = !hasRows;
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    ff.append(grid, rowOf(bGo, bCsv, bPr), err);
+    ff.addEventListener('submit', e => {
+      e.preventDefault(); err.textContent = '';
+      if (inFrom.value && inTo.value && inFrom.value > inTo.value) { err.textContent = 'La fecha Desde es posterior a Hasta.'; return; }
+      CN.f = { from: inFrom.value, to: inTo.value, per: per ? per.value : '' };
+      onGo.run();
+    });
+    bCsv.addEventListener('click', csvFn); bPr.addEventListener('click', printFn);
+    return ff;
+  }
+  const cDesc = () => 'Desde ' + ymdAR(CN.f.from || ymdAgo(90)) + ' hasta ' + ymdAR(CN.f.to || today()) + (CN.f.per && CN.sub === 'epp' ? ' · ' + pnameOf(CN.f.per) : '');
+  function eppView() {
+    if (CN.avail.epp === 'missing') return [missingBox()];
+    const out = [];
+    const head = mk('div', 'row noprint');
+    if (canWrite()) head.append(btn('Nueva entrega de EPP', '', () => eppForm(null)));
+    else out.push(roHint('Tu rol (auditor) es de solo lectura: podés ver, exportar e imprimir las constancias.'));
+    if (head.children.length) out.push(head);
+    if (CN.err.epp) out.push(errLine(CN.err.epp, 'No se pudieron leer las constancias de EPP'));
+    const showDni = ROLE === 'admin';
+    if (!showDni) out.push(mk('p', 'mute noprint', 'El DNI del trabajador solo lo ve un administrador: si la constancia lo necesita, imprimila desde un usuario administrador.'));
+    const sup = new Set(CN.epp.map(r => r.supersedes).filter(Boolean));
+    const csvHead = ['fecha_entrega', 'trabajador', 'legajo', ...(showDni ? ['dni'] : []), 'puesto', 'producto', 'cantidad', 'modelo', 'marca', 'certificacion', 'referencia_certificacion',
+      'casco', 'conformidad', 'observacion', 'estado', 'cargado_por', 'cargado_el', 'id', 'corrige_a'];
+    const stateOf2 = r => (sup.has(r.id) ? 'Reemplazada por una corrección' : r.supersedes ? 'Corrige un registro anterior' : 'Vigente');
+    const csvRows = () => CN.epp.map(r => { const pe = r.person || {}, p2 = EQ.people.find(x => x.id === r.person_id) || {};
+      return [ymdAR(r.delivered_at), pnameOf(r.person_id, pe), pe.legajo || p2.legajo || '', ...(showDni ? [pe.dni || p2.dni || ''] : []), pe.job_title || p2.job_title || '', r.item, r.quantity,
+        r.model || '', r.brand || '', r.certified ? 'Sí' : 'No', r.cert_ref || '', r.device_id || '', ACK_LBL[r.worker_ack] || r.worker_ack, r.observation || '', stateOf2(r),
+        r.created_by_email || '', fmtAR(r.created_at), r.id, r.supersedes || '']; });
+    out.push(constFilters({ person: true, run: loadEpp }, () => printPanel('constPrint', 'Constancias de entrega de EPP', cDesc()),
+      () => csvDownload('constancias_epp_' + today() + '.csv', csvHead, csvRows()), CN.epp.length > 0));
+    if (!CN.loaded.epp) { out.push(mk('p', 'mute', 'Cargando…')); return out; }
+    out.push(mk('p', 'print-only', cDesc()));
+    const heads = ['Entrega', 'Trabajador', ...(showDni ? ['DNI'] : []), 'Puesto', 'Producto', 'Cant.', 'Modelo / marca', 'Certificación', 'Conformidad', 'Estado', 'Cargó', { t: 'Acciones', cls: 'noprint' }];
+    const rows = CN.epp.map(r => {
+      const pe = r.person || {}, p2 = EQ.people.find(x => x.id === r.person_id) || {};
+      const acts = mk('div', 'row');
+      if (canWrite() && !sup.has(r.id)) acts.append(btn('Corregir', 'ghost', () => eppForm(r), 'Corregir la entrega de ' + r.item + ' a ' + pnameOf(r.person_id, pe)));
+      acts.append(btn('Imprimir constancia', 'ghost', ev => printRow(ev.currentTarget.closest('tr'), 'constPrint', 'Constancia de entrega de EPP', pnameOf(r.person_id, pe) + ' · ' + ymdAR(r.delivered_at)),
+        'Imprimir la constancia de ' + r.item + ' de ' + pnameOf(r.person_id, pe)));
+      return { cls: sup.has(r.id) ? 'archived' : '', cells: [{ t: ymdAR(r.delivered_at), cls: 'mono' },
+        pnameOf(r.person_id, pe) + (pe.legajo || p2.legajo ? ' (' + (pe.legajo || p2.legajo) + ')' : ''), ...(showDni ? [pe.dni || p2.dni || ''] : []),
+        pe.job_title || p2.job_title || '', r.item + (r.device_id ? ' · casco ' + r.device_id : ''), String(r.quantity), [r.model, r.brand].filter(Boolean).join(' / '),
+        r.certified ? 'Sí' + (r.cert_ref ? ': ' + r.cert_ref : '') : 'No', (ACK_LBL[r.worker_ack] || r.worker_ack) + (r.observation ? ' · ' + r.observation : ''), stateOf2(r),
+        (r.created_by_email || '—') + ' · ' + fmtAR(r.created_at), acts] };
+    });
+    const t = dataTable('Constancias de entrega de EPP', heads, rows, 'No hay constancias de EPP en este período.');
+    // la columna de acciones no se imprime
+    t.querySelectorAll('tbody tr').forEach(tr => { const l = tr.lastElementChild; if (l && l.querySelector('button')) l.classList.add('noprint'); });
+    out.push(t);
+    if (CN.trunc.epp) out.push(mk('p', 'mute', 'Se muestran las primeras ' + CONST_MAX + ' constancias: acotá las fechas para ver el resto.'));
+    return out;
+  }
+  function trnView() {
+    if (CN.avail.trn === 'missing') return [missingBox()];
+    const out = [];
+    const head = mk('div', 'row noprint');
+    if (canWrite()) head.append(btn('Nueva capacitación', '', () => trnForm(null)));
+    else out.push(roHint('Tu rol (auditor) es de solo lectura: podés ver, exportar e imprimir las constancias. Las observaciones de los asistentes se muestran sin identificar a la persona.'));
+    if (head.children.length) out.push(head);
+    if (CN.err.trn) out.push(errLine(CN.err.trn, 'No se pudieron leer las capacitaciones'));
+    if (CN.attErr) out.push(errLine(CN.attErr, 'No se pudieron leer los asistentes'));
+    const sup = new Set(CN.trn.map(r => r.supersedes).filter(Boolean));
+    const attOf = id => (CN.att.get(id) || []);
+    const aud = isAuditor();
+    const attName = a => (aud ? (a.person_id ? pnameOf(a.person_id) : 'Persona reservada') : (a.person ? a.person.full_name : pnameOf(a.person_id)));
+    const attTxt = a => attName(a) + ' (' + (ACK_LBL[a.ack] || a.ack) + ')' + (a.observation && !aud ? ': ' + a.observation : '');
+    const stateOf2 = r => (sup.has(r.id) ? 'Reemplazada por una corrección' : r.supersedes ? 'Corrige un registro anterior' : 'Vigente');
+    const modTxt = r => [PLACE_LBL[r.modality_place], SYNC_LBL[r.modality_sync], r.assisted ? 'asistida' : 'no asistida'].filter(Boolean).join(' · ');
+    const csvHead = ['fecha_hora', 'tema', 'capacitador', 'modalidad_lugar', 'modalidad_sincronia', 'asistida', 'duracion_min', 'asistentes', 'observaciones_sin_identificar', 'estado', 'cargado_por', 'cargado_el', 'id', 'corrige_a'];
+    const csvRows = () => CN.trn.map(r => [fmtAR(r.held_at), r.topic, r.trainer, PLACE_LBL[r.modality_place] || '', SYNC_LBL[r.modality_sync] || '', r.assisted ? 'Sí' : 'No', r.duration_min || '',
+      attOf(r.id).map(attTxt).join(' | '), aud ? attOf(r.id).filter(a => a.observation).map(a => a.observation).join(' | ') : '', stateOf2(r), r.created_by_email || '',
+      fmtAR(r.created_at), r.id, r.supersedes || '']);
+    out.push(constFilters({ person: false, run: loadTrn }, () => printPanel('constPrint', 'Constancias de capacitación', cDesc()),
+      () => csvDownload('constancias_capacitacion_' + today() + '.csv', csvHead, csvRows()), CN.trn.length > 0));
+    if (!CN.loaded.trn) { out.push(mk('p', 'mute', 'Cargando…')); return out; }
+    out.push(mk('p', 'print-only', cDesc()));
+    const rows = CN.trn.map(r => {
+      const list = mk('ul', 'att-list');
+      const at = attOf(r.id);
+      for (const a of at) list.append(mk('li', '', attName(a) + ' · ' + (ACK_LBL[a.ack] || a.ack) + (a.observation && !aud ? ' · «' + a.observation + '»' : '')));
+      const obsOnly = aud ? at.filter(a => a.observation) : [];
+      const cell = mk('div', 'section');
+      cell.append(mk('span', 'mute', at.length + (at.length === 1 ? ' asistente' : ' asistentes')), list);
+      if (obsOnly.length) { cell.append(mk('span', 'mute', 'Observaciones (sin identificar):')); const ol = mk('ul', 'att-list'); obsOnly.forEach(a => ol.append(mk('li', '', '«' + a.observation + '»'))); cell.append(ol); }
+      const acts = mk('div', 'row');
+      if (canWrite() && !sup.has(r.id)) acts.append(btn('Corregir', 'ghost', () => trnForm(r), 'Corregir la capacitación ' + r.topic));
+      acts.append(btn('Imprimir constancia', 'ghost', ev => printRow(ev.currentTarget.closest('tr'), 'constPrint', 'Constancia de capacitación', r.topic + ' · ' + fmtAR(r.held_at)), 'Imprimir la constancia de la capacitación ' + r.topic));
+      return { cls: sup.has(r.id) ? 'archived' : '', cells: [{ t: fmtAR(r.held_at), cls: 'mono' }, r.topic, r.trainer, modTxt(r), r.duration_min ? r.duration_min + ' min' : '', cell, stateOf2(r),
+        (r.created_by_email || '—') + ' · ' + fmtAR(r.created_at), acts] };
+    });
+    const t = dataTable('Constancias de capacitación', ['Fecha y hora', 'Tema', 'Capacitador', 'Modalidad', 'Duración', 'Asistentes', 'Estado', 'Cargó', { t: 'Acciones', cls: 'noprint' }], rows,
+      'No hay capacitaciones en este período.');
+    t.querySelectorAll('tbody tr').forEach(tr => { const l = tr.lastElementChild; if (l && l.querySelector('button')) l.classList.add('noprint'); });
+    out.push(t);
+    if (CN.trunc.trn) out.push(mk('p', 'mute', 'Se muestran las primeras ' + CONST_MAX + ' capacitaciones: acotá las fechas para ver el resto.'));
+    return out;
+  }
+  function orgView() {
+    if (CN.avail.org === 'missing') return [missingBox()];
+    const out = [];
+    if (CN.orgErr) out.push(errLine(CN.orgErr, 'No se pudieron leer los datos del empleador'));
+    const o = CN.org || {};
+    out.push(mk('p', 'mute', 'Estos datos encabezan todo lo que se imprime o se exporta a PDF desde Asistencia, Constancias y Auditoría.'));
+    if (!isAdmin()) {
+      out.push(kv([['Razón social', o.legal_name], ['CUIT', o.cuit], ['Domicilio', o.address], ['Responsable', o.responsible_name], ['Cargo del responsable', o.responsible_role], ['Contacto', o.contact]]));
+      out.push(mk('p', 'mute rolenote noprint', 'Los datos del empleador los carga un administrador.'));
+      return out;
+    }
+    const legal = inp('text', o.legal_name || '', { maxLength: 200, autocomplete: 'organization' });
+    const cuit = inp('text', o.cuit || '', { maxLength: 13, inputMode: 'numeric', autocomplete: 'off', placeholder: '30-12345678-9' });
+    const addr = inp('text', o.address || '', { maxLength: 300, autocomplete: 'street-address' });
+    const rn = inp('text', o.responsible_name || '', { maxLength: 120, autocomplete: 'off' });
+    const rr = inp('text', o.responsible_role || '', { maxLength: 120, autocomplete: 'off' });
+    const ct = inp('text', o.contact || '', { maxLength: 200, autocomplete: 'off' });
+    const spec = [
+      { k: 'legal_name', el: legal, label: 'Razón social', req: true, max: 200 },
+      { k: 'cuit', el: cuit, label: 'CUIT', req: true, re: /^\d{2}-?\d{8}-?\d$/, msg: 'tiene que ser un CUIT de 11 dígitos (30-12345678-9).' },
+      { k: 'address', el: addr, label: 'Domicilio', max: 300 },
+      { k: 'responsible_name', el: rn, label: 'Responsable', max: 120 },
+      { k: 'responsible_role', el: rr, label: 'Cargo del responsable', max: 120 },
+      { k: 'contact', el: ct, label: 'Contacto', max: 200 },
+    ];
+    const f = mk('form', 'section noprint'); f.noValidate = true; f.dataset.org = CN.org ? 'l' : 'e';
+    const g = mk('div', 'grid2'); g.append(fld('Razón social', legal), fld('CUIT', cuit), fld('Domicilio', addr), fld('Responsable', rn), fld('Cargo del responsable', rr), fld('Contacto (teléfono o correo)', ct));
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    const ok = mk('div', 'okmsg'); ok.setAttribute('role', 'status');
+    const go = mk('button', '', 'Guardar datos del empleador'); go.type = 'submit';
+    f.append(g, rowOf(go), err, ok);
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); err.textContent = ''; ok.textContent = '';
+      const r = collect(spec);
+      if (r.errors.length) { err.textContent = r.errors.join(' '); return; }
+      const d = r.v.cuit.replace(/\D/g, '');
+      const body = { legal_name: r.v.legal_name, cuit: d.slice(0, 2) + '-' + d.slice(2, 10) + '-' + d.slice(10), address: r.v.address, responsible_name: r.v.responsible_name,
+        responsible_role: r.v.responsible_role, contact: r.v.contact };
+      go.disabled = true;
+      // update y, si la fila no existe todavia, insert con id = 1 (el grant de UPDATE no incluye id: no sirve el upsert directo)
+      let res = await tryQ(() => sb.from('org_settings').update(body).eq('id', 1).select(ORG_COLS));
+      if (!res.error && Array.isArray(res.data) && !res.data.length) res = await tryQ(() => sb.from('org_settings').insert({ id: 1, ...body }).select(ORG_COLS));
+      go.disabled = false;
+      if (tableMissing(res)) { CN.avail.org = 'missing'; renderConst(); return; }
+      if (res.error) { err.textContent = isAuthErr(res.error) ? (sessionExpired(), 'Sesión vencida: ingresá de nuevo.') : noPerm(res.error) ? 'Solo un administrador puede cambiar los datos del empleador.' : cDbErr(res.error, 'org_settings'); return; }
+      CN.org = Object.assign({}, CN.org || {}, body); CN.orgP = Promise.resolve(CN.org); CN.avail.org = 'ok';
+      logAccess('config_change', 'org_settings', { claves: Object.keys(body) });
+      ok.textContent = 'Datos del empleador guardados.';
+      announce('Datos del empleador guardados.');
+    });
+    out.push(f);
+    return out;
+  }
+  function renderConst() {
+    if ($('panelConst').classList.contains('hidden')) return;
+    for (const [k, id] of [['epp', 'constTabEpp'], ['trn', 'constTabTrn'], ['org', 'constTabOrg']]) {
+      $(id).setAttribute('aria-selected', String(CN.sub === k)); $(id).tabIndex = CN.sub === k ? 0 : -1;
+    }
+    $('constBody').setAttribute('aria-labelledby', CN.sub === 'epp' ? 'constTabEpp' : CN.sub === 'trn' ? 'constTabTrn' : 'constTabOrg');
+    const body = $('constBody');
+    if (CN.sub === 'org' && body.querySelector('form[data-org="' + (CN.org ? 'l' : 'e') + '"]')) return;   // no pisar lo que se esta tipeando
+    body.replaceChildren(...(CN.sub === 'epp' ? eppView() : CN.sub === 'trn' ? trnView() : orgView()));
+  }
+  function constShow() {
+    if (!EQ.loaded) loadEquipos();
+    loadOrg();
+    if (CN.sub === 'epp') loadEpp(); else if (CN.sub === 'trn') loadTrn();
+    renderConst();
+  }
+  function setConstSub(k) {
+    CN.sub = k; closeConstForm();
+    if (k === 'epp' && !CN.loaded.epp) loadEpp(); else if (k === 'trn' && !CN.loaded.trn) loadTrn(); else if (k === 'org') loadOrg(true).then(renderConst);
+    renderConst();
+  }
+  for (const [id, k] of [['constTabEpp', 'epp'], ['constTabTrn', 'trn'], ['constTabOrg', 'org']]) $(id).addEventListener('click', () => setConstSub(k));
+  $('constTabs').addEventListener('keydown', e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    const keys = ['epp', 'trn', 'org'], ids = ['constTabEpp', 'constTabTrn', 'constTabOrg'];
+    const i = (keys.indexOf(CN.sub) + (e.key === 'ArrowRight' ? 1 : 2)) % 3;
+    setConstSub(keys[i]); $(ids[i]).focus();
+  });
+
+  // ======================================================================
+  // Auditoria (access_log): admin y auditor
+  // ======================================================================
+  const AUD_COLS = 'id,at,user_email,role,action,target,detail';
+  const AUD_PAGE = 50, AUD_CSV_PAGE = 250, AUD_CSV_PAGES = 20;
+  const AUD_ACTION = { view_live: 'Ver en vivo', record_start: 'Inició una grabación', record_stop: 'Detuvo una grabación', photo: 'Sacó una foto', export_csv: 'Exportó un CSV',
+    export_pdf: 'Imprimió o sacó un PDF', config_change: 'Cambió una configuración', command: 'Envió una orden', archive: 'Archivó o desarchivó', delete_media: 'Eliminó una imagen',
+    login: 'Ingresó al visor', assist_open: 'Abrió una asistencia', assist_close: 'Cerró una asistencia', epp_create: 'Cargó una constancia de EPP',
+    training_create: 'Cargó una constancia de capacitación', hash_verify: 'Verificó la integridad de un archivo' };
+  const ROLE_LBL = { admin: 'admin', viewer: 'supervisor', auditor: 'auditor', device: 'casco' };
+  const AU = { rows: [], page: 0, cursors: [null], more: false, busy: false, applied: null, avail: 'unknown', err: null, loaded: false, f: { from: '', to: '', user: '', action: '' } };
+  const detailTxt = d => {
+    if (!d || typeof d !== 'object') return '';
+    return Object.entries(d).map(([k, v]) => k + ': ' + (v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v))).join(' · ');
+  };
+  function audQuery(f, cur) {
+    let q = sb.from('access_log').select(AUD_COLS);
+    if (f.from) q = q.gte('at', dayStartISO(f.from));
+    if (f.to) q = q.lt('at', dayStartISO(f.to, 1));
+    if (f.action) q = q.eq('action', f.action);
+    const u = String(f.user || '').replace(/[%*,()\\]/g, '').trim();
+    if (u) q = q.ilike('user_email', '%' + u + '%');
+    if (cur != null) q = q.lt('id', cur);
+    return q.order('id', { ascending: false });
+  }
+  async function audLoad(page) {
+    if (!AU.applied || AU.busy) return;
+    AU.busy = true; renderAud();
+    const r = await tryQ(() => audQuery(AU.applied, AU.cursors[page]).limit(AUD_PAGE + 1));
+    AU.busy = false;
+    if (tableMissing(r)) AU.avail = 'missing';
+    else if (r.error || !Array.isArray(r.data)) { if (isAuthErr(r.error)) sessionExpired(); AU.err = r.error || new Error('sin datos'); }
+    else {
+      AU.err = null; AU.avail = 'ok'; AU.page = page; AU.more = r.data.length > AUD_PAGE; AU.rows = r.data.slice(0, AUD_PAGE); AU.loaded = true;
+      if (AU.more) AU.cursors[page + 1] = AU.rows[AU.rows.length - 1].id;
+    }
+    renderAud();
+  }
+  async function audCsv(btn) {
+    if (!AU.applied || AU.busy) return;
+    AU.busy = true; renderAud();
+    const all = [];
+    let cur = null, trunc = false, fail = null;
+    for (let i = 0; i < AUD_CSV_PAGES; i++) {
+      const r = await tryQ(() => audQuery(AU.applied, cur).limit(AUD_CSV_PAGE + 1));
+      if (r.error || !Array.isArray(r.data)) { fail = r.error || new Error('sin datos'); break; }
+      all.push(...r.data.slice(0, AUD_CSV_PAGE));
+      if (r.data.length <= AUD_CSV_PAGE) break;
+      if (i === AUD_CSV_PAGES - 1) trunc = true;
+      cur = r.data[AUD_CSV_PAGE - 1].id;
+    }
+    AU.busy = false;
+    if (fail) { AU.err = fail; renderAud(); return; }
+    csvDownload('auditoria_' + today() + '.csv', ['fecha', 'usuario', 'rol', 'accion', 'accion_codigo', 'objetivo', 'detalle', 'id'],
+      all.map(x => [fmtAR(x.at), x.user_email || '', ROLE_LBL[x.role] || x.role || '', AUD_ACTION[x.action] || x.action, x.action, x.target || '', detailTxt(x.detail), x.id]));
+    AU.notice = 'CSV exportado: ' + all.length + ' filas' + (trunc ? ' (tope de ' + AUD_CSV_PAGE * AUD_CSV_PAGES + ': acotá las fechas para ver el resto)' : '') + '.';
+    renderAud();
+  }
+  function renderAud() {
+    const host = $('audHost');
+    if (!host || $('panelAud').classList.contains('hidden')) return;
+    if (AU.avail === 'missing') { host.replaceChildren(missingBox()); return; }
+    const ff = mk('form', 'qform noprint'); ff.noValidate = true;
+    const inFrom = dateIn(AU.f.from || ymdAgo(7)), inTo = dateIn(AU.f.to || today());
+    const usr = inp('text', AU.f.user || '', { maxLength: 80, autocomplete: 'off', placeholder: 'correo o parte del correo' });
+    const act = sel([['', 'Todas las acciones'], ...Object.entries(AUD_ACTION)], AU.f.action || '');
+    const bGo = mk('button', '', 'Buscar'); bGo.type = 'submit';
+    const bCsv = mk('button', 'ghost', 'Exportar CSV'); bCsv.type = 'button';
+    const bPr = mk('button', 'ghost', 'Imprimir / PDF'); bPr.type = 'button';
+    bCsv.disabled = bPr.disabled = AU.busy || !AU.rows.length;
+    bGo.disabled = AU.busy;
+    const g = mk('div', 'grid2 qgrid'); g.append(fld('Desde', inFrom), fld('Hasta', inTo), fld('Usuario', usr), fld('Acción', act));
+    const err = mk('div', 'err'); err.setAttribute('role', 'alert');
+    ff.append(g, rowOf(bGo, bCsv, bPr), err);
+    ff.addEventListener('submit', e => {
+      e.preventDefault(); err.textContent = '';
+      if (inFrom.value && inTo.value && inFrom.value > inTo.value) { err.textContent = 'La fecha Desde es posterior a Hasta.'; return; }
+      AU.f = { from: inFrom.value, to: inTo.value, user: usr.value.trim(), action: act.value };
+      AU.applied = { ...AU.f }; AU.cursors = [null]; AU.page = 0; AU.notice = '';
+      audLoad(0);
+    });
+    bCsv.addEventListener('click', () => audCsv());
+    const desc = () => 'Desde ' + ymdAR(AU.f.from || ymdAgo(7)) + ' hasta ' + ymdAR(AU.f.to || today()) + (AU.f.user ? ' · usuario: ' + AU.f.user : '') + (AU.f.action ? ' · acción: ' + (AUD_ACTION[AU.f.action] || AU.f.action) : '');
+    bPr.addEventListener('click', () => printPanel('audPrint', 'Auditoría de accesos', desc() + ' · página ' + (AU.page + 1)));
+    const kids = [ff];
+    if (AU.err) kids.push(errLine(AU.err, 'No se pudo leer la auditoría'));
+    if (AU.notice) { const n = mk('p', 'okmsg', AU.notice); n.setAttribute('role', 'status'); kids.push(n); }
+    kids.push(mk('p', 'print-only', desc()));
+    if (!AU.applied) kids.push(mk('p', 'mute', 'Elegí los filtros y tocá Buscar.'));
+    else if (AU.busy && !AU.loaded) kids.push(mk('p', 'mute', 'Cargando…'));
+    else {
+      kids.push(dataTable('Auditoría de accesos', ['Fecha', 'Usuario', 'Rol', 'Acción', 'Objetivo', 'Detalle'],
+        AU.rows.map(x => ({ cells: [{ t: fmtAR(x.at), cls: 'mono' }, x.user_email, ROLE_LBL[x.role] || x.role, AUD_ACTION[x.action] || x.action, { t: x.target || '', cls: 'mono' }, detailTxt(x.detail).slice(0, 240)] })),
+        'No hay registros para estos filtros.'));
+      const bPrev = mk('button', 'ghost', 'Anterior'), bNext = mk('button', 'ghost', 'Siguiente');
+      bPrev.type = bNext.type = 'button';
+      bPrev.disabled = AU.busy || AU.page === 0; bNext.disabled = AU.busy || !AU.more;
+      bPrev.addEventListener('click', () => audLoad(AU.page - 1)); bNext.addEventListener('click', () => audLoad(AU.page + 1));
+      const a = AU.page * AUD_PAGE;
+      const pg = mk('div', 'row pager'); pg.append(bPrev, mk('span', 'mute', AU.rows.length ? 'Página ' + (AU.page + 1) + ' · filas ' + (a + 1) + ' a ' + (a + AU.rows.length) : 'Página ' + (AU.page + 1)), bNext);
+      kids.push(pg);
+    }
+    host.replaceChildren(...kids);
+  }
+  function audShow() {
+    if (!AU.applied) { AU.f = { from: ymdAgo(7), to: today(), user: '', action: '' }; AU.applied = { ...AU.f }; AU.cursors = [null]; audLoad(0); }
+    renderAud();
+  }
+
+  function resetTandaC() {
+    clearTimeout(asReloadT);
+    Object.assign(AS, { avail: 'unknown', open: new Map(), rows: [], trunc: false, f: { from: '', to: '', dev: '' }, loaded: false, busy: false, again: false, err: null,
+      ready: null, sig: '', startDraft: { dev: '', topic: '' } });
+    AS.drafts.clear(); AS.minis.clear(); AS.opening.clear(); AS.autoIds.clear(); AS.autoErr.clear(); AS.localPh.clear();
+    Object.assign(CN, { sub: 'epp', avail: { epp: 'unknown', trn: 'unknown', org: 'unknown' }, org: null, orgP: null, orgErr: null, epp: [], trn: [], att: new Map(), attErr: null,
+      err: {}, loaded: { epp: false, trn: false }, busy: {}, trunc: {}, f: { from: '', to: '', per: '' } });
+    Object.assign(AU, { rows: [], page: 0, cursors: [null], more: false, busy: false, applied: null, avail: 'unknown', err: null, loaded: false, notice: '', f: { from: '', to: '', user: '', action: '' } });
+    LOGACC.off = false;
+    for (const id of ['asisHost', 'constBody', 'audHost', 'constForm', 'asisPrint', 'constPrint', 'audPrint']) { const e = $(id); if (e) e.replaceChildren(); }
+    $('constForm').classList.add('hidden');
+    syncAsisBadge();
+  }
+
   // ---- Roles en la UI (el servidor tambien lo exige por RLS): admin hace todo; supervisor (viewer) mira, atiende y manda mensajes ----
   function applyRole() {
-    const adm = isAdmin();
-    const who = $('who'), em = who.dataset.email || '', role = adm ? 'admin' : 'supervisor';
+    const adm = isAdmin(), aud = isAuditor();
+    const who = $('who'), em = who.dataset.email || '', role = roleName();
     who.replaceChildren(...(em ? [mk('span', 'who-email', em)] : []), mk('span', 'who-role', role));
     who.title = (em ? em + ' · ' : '') + 'rol: ' + role;   // tooltip con el texto completo si el correo se recorta
     $('btnEvac').disabled = !adm;
@@ -3975,8 +5008,15 @@
     for (const id of ['gDrawCircle', 'gDrawPoly', 'gAddPoint']) $(id).disabled = !adm;
     $('mapRoleNote').classList.toggle('hidden', adm);
     if (!adm && typeof setMode === 'function') setMode(null);
+    // Tanda C: pestañas segun rol. Auditor: solo lectura (sin En vivo, Mapa, ordenes ni Atender). Auditoria: admin y auditor.
+    document.body.dataset.role = ROLE;
+    for (const [id, hide] of [['tabLive', aud], ['tabMap', aud], ['tabAud', !(adm || aud)]]) $(id).classList.toggle('hidden', hide);
+    for (const id of ['orders', 'testMic']) $(id).classList.toggle('hidden', aud);
+    $('toolbarAud').classList.toggle('hidden', !aud);
+    ovAtend.hidden = ovLive.hidden = ovNoteL.hidden = aud;
+    ovMute.hidden = false;
   }
-  const roNote = what => mk('p', 'mute rolenote', 'Tu rol (supervisor) es de solo lectura: ' + what + ' las hace un administrador.');
+  const roNote = what => mk('p', 'mute rolenote', 'Tu rol (' + roleName() + ') es de solo lectura: ' + what + ' las hace un administrador.');
   function resetT4() {
     closeDlg();
     CMD.items.clear(); CMD.last.clear(); CMD.torch.clear(); CMD.avail = 'unknown';
@@ -3986,6 +5026,7 @@
     for (const a of frames.values()) a.forEach(f => { try { URL.revokeObjectURL(f.url); } catch (_) {} });
     frames.clear();
     QR.view = 'unknown'; repQ.reset(); histQ.reset();
+    resetTandaC();
     ARC.ids.clear(); ARC.avail = 'unknown'; ARC.show = false;
     if (ARC.ch) { try { sb.removeChannel(ARC.ch); } catch (_) {} ARC.ch = null; }
   }
@@ -4058,6 +5099,7 @@
     if (channel && (channel.state === 'closed' || channel.state === 'errored')) { rtDown = true; updateConnBar(); }
     syncEvents();   // noteSync() procesa el resultado (error, recuperados, sirena via alertSos)
     loadDevices();
+    if (AS.avail === 'ok') loadAssistOpen();   // respaldo del Realtime de las sesiones de asistencia
   }
   // Salir de la sesion (vencida o nueva): sirena, intervalos, paneles en vivo y rol no pueden sobrevivir en el login.
   function teardownSession() {
@@ -4073,8 +5115,8 @@
     lives.clear();
     const lv = $('lives'); if (lv) { lv.replaceChildren(); lv.classList.add('hidden'); }
     ROLE = 'viewer';
-    for (const c of [channel, chOrders, chGeo]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
-    channel = chOrders = chGeo = null;
+    for (const c of [channel, chOrders, chGeo, AS.ch]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
+    channel = chOrders = chGeo = null; AS.ch = null; clearTimeout(asReloadT);
   }
 
   // ---- Sincronizacion de eventos: carga inicial y resync tras reconexion (dedupe por id) ----
@@ -4179,7 +5221,8 @@
     {
       let r = session.user && session.user.app_metadata && session.user.app_metadata.role;
       if (!r) { try { const c = JSON.parse(atob(String(session.access_token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); r = c.app_metadata && c.app_metadata.role; } catch (_) {} }
-      ROLE = r === 'admin' ? 'admin' : 'viewer';
+      ROLE = r === 'admin' ? 'admin' : r === 'auditor' ? 'auditor' : 'viewer';
+      MY_ID = session.user && session.user.id ? String(session.user.id) : '';
     }
     resetT4(); applyRole();
     // Estado limpio (Reintentar / nuevo ingreso): sin tarjetas fantasma de la sesion anterior.
@@ -4250,6 +5293,7 @@
     }
     if (!resyncT) resyncT = setInterval(resyncNow, RESYNC_MS);
     loadEscalation(); loadBroadcasts(); loadGeo(); loadArchive();
+    AS.ready = loadAssistOpen();
     (async () => {   // cascos y posiciones por casco: primero se conocen los registrados
       await Promise.allSettled([loadEquipos()]);
       await loadDevices();
@@ -4269,6 +5313,7 @@
     if (error) { $('loginErr').textContent = 'No se pudo ingresar: ' + errEs(error); return; }
     manualLogout = false; clearExpired();
     start(data.session);
+    logAccess('login', null, {});
   });
   $('logout').addEventListener('click', async () => { manualLogout = true; await sb.auth.signOut(); location.reload(); });
   $('enableSound').addEventListener('click', () => {
@@ -4303,9 +5348,9 @@
   // Limpieza al cerrar la pagina (no si va a bfcache): timers y canales.
   window.addEventListener('pagehide', e => {
     if (e.persisted) return;
-    for (const t of [escTimer, resyncT, sirenT, CMD.timer, eqTimer, geoTimer, mapTimer, rqT, armTimer]) { clearInterval(t); clearTimeout(t); }
+    for (const t of [escTimer, resyncT, sirenT, CMD.timer, eqTimer, geoTimer, mapTimer, rqT, armTimer, asReloadT]) { clearInterval(t); clearTimeout(t); }
     stopSiren(); closeNotifs();
-    for (const c of [channel, chOrders, chGeo, CMD.ch]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
+    for (const c of [channel, chOrders, chGeo, CMD.ch, AS.ch]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
   });
   window.addEventListener('offline', () => { netOff = true; $('status').textContent = 'Sin conexión a internet'; updateConnBar(); });
   window.addEventListener('online', () => { netOff = false; $('status').textContent = 'Reconectando…'; updateConnBar(); resyncNow(); });

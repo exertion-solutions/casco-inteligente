@@ -23,7 +23,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610130738">
+<link rel="stylesheet" href="app.css?v=202610131200">
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
@@ -74,6 +74,14 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg>
         <span>Equipos</span>
       </button>
+      <button type="button" role="tab" id="tabAsis" aria-selected="false" aria-controls="panelAsis" tabindex="-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/><path d="M19 20a4 4 0 0 1-4 2h-2"/></svg>
+        <span>Asistencia</span><span id="navAsis" class="tab-badge med hidden">0</span>
+      </button>
+      <button type="button" role="tab" id="tabConst" aria-selected="false" aria-controls="panelConst" tabindex="-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="1"/><path d="M9 4h6v3H9zM9 14l2 2 4-4"/></svg>
+        <span>Constancias</span>
+      </button>
       <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
         <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden">0</span>
@@ -81,6 +89,10 @@
       <button type="button" role="tab" id="tabRep" aria-selected="false" aria-controls="panelRep" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></svg>
         <span>Reportes</span>
+      </button>
+      <button type="button" role="tab" id="tabAud" aria-selected="false" aria-controls="panelAud" tabindex="-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5M8.5 11l2 2 3-4"/></svg>
+        <span>Auditoría</span>
       </button>
       <button type="button" role="tab" id="tabCmd" aria-selected="false" aria-controls="panelCmd" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
@@ -96,6 +108,7 @@
         <button id="testMic" class="ghost" type="button">Probar micrófono</button>
         <p id="escState" class="mute esc">Aviso a responsables: consultando…</p>
       </div>
+      <p id="toolbarAud" class="mute rolenote hidden">Perfil de auditor: solo lectura. Podés ver, exportar e imprimir; no podés atender alertas ni mandar órdenes.</p>
       <p id="cmdLive" class="sr-only" role="status" aria-live="polite"></p>
 
       <div id="panelMain" role="tabpanel" aria-labelledby="tabMain" data-view="centro">
@@ -217,6 +230,24 @@
         <div id="eqBody" role="tabpanel" class="section"></div>
       </div>
 
+      <div id="panelAsis" role="tabpanel" aria-labelledby="tabAsis" class="hidden">
+        <div id="asisPrint" class="print-only emp-head"></div>
+        <section class="block" aria-labelledby="asisH">
+          <h2 id="asisH" class="sec">Asistencia remota</h2>
+          <p class="mute">Sesiones en las que guiás a un operario desde el panel con video y voz. Cada una queda registrada con inicio, duración, resultado y nota. Fechas en hora de Argentina.</p>
+          <div id="asisHost"></div>
+        </section>
+      </div>
+      <div id="panelConst" role="tabpanel" aria-labelledby="tabConst" class="hidden">
+        <div id="constPrint" class="print-only emp-head"></div>
+        <div id="constTabs" class="subtabs noprint" role="tablist" aria-label="Tipos de constancia">
+          <button type="button" role="tab" id="constTabEpp" aria-selected="true" aria-controls="constBody">Entrega de EPP</button>
+          <button type="button" role="tab" id="constTabTrn" aria-selected="false" aria-controls="constBody" tabindex="-1">Capacitación</button>
+          <button type="button" role="tab" id="constTabOrg" aria-selected="false" aria-controls="constBody" tabindex="-1">Empleador</button>
+        </div>
+        <div id="constForm" class="hidden"></div>
+        <div id="constBody" role="tabpanel" aria-labelledby="constTabEpp" class="section"></div>
+      </div>
       <div id="panelDone" role="tabpanel" aria-labelledby="tabDone" class="hidden">
         <div class="row"><label class="chk arc-toggle-l hidden"><input type="checkbox" class="arc-toggle"> Mostrar archivados</label></div>
         <section class="block" aria-labelledby="doneH">
@@ -237,6 +268,14 @@
         </details>
         <p id="histLive" class="sr-only" role="status" aria-live="polite"></p>
       </div>
+      <div id="panelAud" role="tabpanel" aria-labelledby="tabAud" class="hidden">
+        <div id="audPrint" class="print-only emp-head"></div>
+        <section class="block" aria-labelledby="audH">
+          <h2 id="audH" class="sec">Auditoría de accesos</h2>
+          <p class="mute">Quién hizo qué en el visor: ver en vivo, grabar, sacar fotos, exportar, cambiar configuración, mandar órdenes, archivar, abrir asistencias y cargar constancias. Los registros no se pueden modificar ni borrar. Fechas en hora de Argentina.</p>
+          <div id="audHost"></div>
+        </section>
+      </div>
       <div id="panelCmd" role="tabpanel" aria-labelledby="tabCmd" class="hidden">
         <section class="block" aria-label="Comandos de voz del casco"><div id="cmdHost" class="mute">Cargando comandos…</div></section>
       </div>
@@ -254,7 +293,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js?v=202610122230"></script>
-<script src="app.js?v=202610130738"></script>
+<script src="app.js?v=202610131200"></script>
 <script>try{if('serviceWorker'in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))addEventListener('load',function(){navigator.serviceWorker.register('sw.js',{scope:'./'}).catch(function(){})})}catch(e){}</script>
 </body>
 </html>

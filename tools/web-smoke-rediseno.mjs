@@ -8,6 +8,7 @@ if (!chromium) throw new Error('Falta playwright/playwright-core: npm i -D playw
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 
 const WEB = process.env.WEBDIR || 'C:/CASCO INTELIGENTE/web';
 const OUT = 'C:/CASCO INTELIGENTE/out';
@@ -72,6 +73,21 @@ const people = [{ id: 'p1', full_name: 'Marcos Peralta', legajo: '1042', job_tit
   { id: 'p2', full_name: 'Lucía Ferreyra', legajo: '1077', job_title: 'Técnica', sector: 'Planta', group_id: 'g1', active: true }];
 const groups = [{ id: 'g1', name: 'Cuadrilla Norte', site: 'Yacimiento Sur', notes: '', active: true }];
 const assigns = [{ id: 'a1', device_id: '4132', person_id: 'p1', starts_at: iso(86400000), ends_at: null }];
+// ---- Tanda C: tablas de la migracion 013 ----
+const NEW013 = ['assist_sessions', 'epp_deliveries', 'training_records', 'training_attendees', 'training_attendees_audit', 'access_log', 'org_settings', 'rpc/log_access', 'rpc/create_training'];
+const PNG_SHA = crypto.createHash('sha256').update(PNG).digest('hex');
+const P1 = { full_name: 'Marcos Peralta', legajo: '1042', job_title: 'Operario', sector: 'Pozo 12' };
+const SEED_ASSIST = { id: 'as-seed', device_id: '4132', started_at: iso(7200000), ended_at: iso(7200000 - 600000), topic: 'Calibrar la bomba', outcome: 'derivado', note: 'Pasa a mantenimiento', photos: 2,
+  opened_by: 'u1', opened_by_email: 'sup@demo.test', closed_by_email: 'sup@demo.test' };
+const SEED_EPP = { id: 'epp-seed', person_id: 'p1', device_id: null, item: 'Guantes dieléctricos', quantity: 1, model: 'GD-20', brand: 'Marca X', certified: true, cert_ref: 'IRAM 3604',
+  delivered_at: '2026-10-01', worker_ack: 'conforme', observation: null, supersedes: null, created_by_email: 'sup@demo.test', created_at: iso(86400000 * 10), person: P1 };
+const SEED_TRN = { id: 'trn-seed', held_at: iso(86400000 * 3), topic: 'Trabajo en altura', trainer: 'Ing. Ríos', modality_place: 'presencial', modality_sync: 'sincronica', assisted: true,
+  duration_min: 90, supersedes: null, created_by_email: 'sup@demo.test', created_at: iso(86400000 * 3) };
+const SEED_ATT = [{ training_id: 'trn-seed', person_id: 'p1', ack: 'conforme', observation: null, person: { full_name: 'Marcos Peralta', legajo: '1042' } },
+  { training_id: 'trn-seed', person_id: 'p2', ack: 'con_observaciones', observation: 'Falta el arnés talle M', person: { full_name: 'Lucía Ferreyra', legajo: '1077' } }];
+const ACT = ['view_live', 'export_csv', 'command', 'photo', 'assist_open', 'login'];
+const ACCESS = Array.from({ length: 120 }, (_, i) => ({ id: 120 - i, at: iso((i + 1) * 60000), user_email: i % 2 ? 'sup@demo.test' : 'adm@demo.test', role: i % 2 ? 'viewer' : 'admin',
+  action: ACT[i % ACT.length], target: '4132', detail: { n: i } }));
 const geofences = [{ id: 'z1', name: 'Pileta de ácido', kind: 'restringida', shape: 'circle', geometry: { center: [-34.602, -58.399], radius_m: 120 }, message: 'Zona restringida', alarm: 'voz_y_sirena', device_ids: null, active: true }];
 const points = [{ id: 'pt1', name: 'Punto de reunión A', category: 'punto_reunion', lat: -34.605, lng: -58.395, notes: '', alert_radius_m: null, active: true }];
 
@@ -111,9 +127,44 @@ async function mock(ctx, opts = {}) {
     }
     const t = u.pathname.split('/rest/v1/')[1] || '';
     if (opts.noNew && NEWT.includes(t)) { S.hits = (S.hits || []).concat(t); return json({ code: 'PGRST205', message: "Could not find the table 'public." + t + "' in the schema cache" }, 404); }
+    if (opts.noNew && NEW013.includes(t)) { S.hits013 = (S.hits013 || []).concat(t); return json({ code: t.startsWith('rpc/') ? 'PGRST202' : 'PGRST205', message: t.startsWith('rpc/') ? 'Could not find the function public.' + t.slice(4) + ' in the schema cache' : "Could not find the table 'public." + t + "' in the schema cache" }, 404); }
     if (req.method() !== 'GET' && req.method() !== 'HEAD') {
       let body = null; try { body = JSON.parse(req.postData() || 'null'); } catch {}
       (S.posts = S.posts || []).push({ t, method: req.method(), body });
+      if (t === 'rpc/log_access') {
+        if (S.logFail > 0) { S.logFail--; return json({ code: 'XX000', message: 'boom' }, 500); }
+        (S.logs = S.logs || []).push(body);
+        return route.fulfill({ status: 204, headers: CORS });
+      }
+      if (t === 'assist_sessions') {
+        const A = (S.assist = S.assist || [SEED_ASSIST]);
+        if (req.method() === 'POST') {
+          const row = { id: 'as-' + (A.length + 1), device_id: body.device_id, started_at: new Date().toISOString(), ended_at: null, topic: body.topic || null, outcome: null, note: null, photos: 0,
+            opened_by: 'u1', opened_by_email: 'supervisor@demo.test', closed_by_email: null };
+          A.push(row); return json(row, 201);
+        }
+        const id = (u.searchParams.get('id') || '').replace('eq.', ''), row = A.find(x => x.id === id && !x.ended_at);
+        if (!row) return json({ code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned', details: 'The result contains 0 rows' }, 406);
+        Object.assign(row, body, { closed_by_email: 'supervisor@demo.test' });
+        return json(row);
+      }
+      if (t === 'epp_deliveries') {
+        const E = (S.epp = S.epp || [SEED_EPP]);
+        const row = { id: 'epp-' + (E.length + 1), ...body, created_by_email: 'supervisor@demo.test', created_at: new Date().toISOString(), person: people.find(p => p.id === body.person_id) };
+        E.push(row); return json({ id: row.id }, 201);
+      }
+      if (t === 'rpc/create_training') {
+        const T = (S.trn = S.trn || [SEED_TRN]), A = (S.att = S.att || SEED_ATT.slice());
+        const id = 'trn-' + (T.length + 1);
+        T.push({ id, held_at: body.held_at, topic: body.topic, trainer: body.trainer, modality_place: body.modality_place, modality_sync: body.modality_sync, assisted: body.assisted,
+          duration_min: body.duration_min, supersedes: body.supersedes || null, created_by_email: 'supervisor@demo.test', created_at: new Date().toISOString() });
+        for (const a of body.attendees) A.push({ training_id: id, person_id: a.person_id, ack: a.ack, observation: a.observation || null, person: people.find(p => p.id === a.person_id) });
+        return json(id, 200);
+      }
+      if (t === 'org_settings') {
+        if (req.method() === 'PATCH') { if (!S.org) return json([]); Object.assign(S.org, body); return json([S.org]); }
+        S.org = { ...body }; return json([S.org], 201);
+      }
       if (t === 'event_archive') {
         S.arch = S.arch || [];
         if (req.method() === 'DELETE') { const id = (u.searchParams.get('event_id') || '').replace('eq.', ''); S.arch = S.arch.filter(x => x.event_id !== id); return route.fulfill({ status: 204, headers: CORS }); }
@@ -128,6 +179,27 @@ async function mock(ctx, opts = {}) {
     }
     const q = u.search;
     if (t === 'event_archive') return json((S.arch || []).slice());
+    if (t === 'assist_sessions') {
+      let A = (S.assist = S.assist || [SEED_ASSIST]).slice();
+      if (u.searchParams.get('ended_at') === 'is.null') A = A.filter(x => !x.ended_at);
+      for (const c of u.searchParams.getAll('started_at')) { const m = c.match(/^(gte|lt)\.(.+)$/); if (m) A = A.filter(x => (m[1] === 'gte' ? x.started_at >= m[2] : x.started_at < m[2])); }
+      return json(A.sort((a, b) => b.started_at.localeCompare(a.started_at)));
+    }
+    if (t === 'epp_deliveries') return json((S.epp = S.epp || [SEED_EPP]).slice().reverse());
+    if (t === 'training_records') return json((S.trn = S.trn || [SEED_TRN]).slice().reverse());
+    if (t === 'training_attendees' || t === 'training_attendees_audit') {
+      const rows = (S.att = S.att || SEED_ATT.slice());
+      S.attTable = (S.attTable || []).concat(t);
+      return json(t === 'training_attendees' ? rows : rows.map(a => ({ training_id: a.training_id, person_id: a.observation ? null : a.person_id, ack: a.ack, observation: a.observation })));
+    }
+    if (t === 'org_settings') return json(S.org ? [S.org] : []);
+    if (t === 'access_log') {
+      let rows = ACCESS.slice();
+      const g = k => u.searchParams.get(k);
+      if (g('action')) rows = rows.filter(r => 'eq.' + r.action === g('action'));
+      if (g('id') && /^lt\./.test(g('id'))) rows = rows.filter(r => r.id < Number(g('id').slice(3)));
+      return json(rows.slice(0, Number(g('limit')) || 1000));
+    }
     if (t === 'device_command_acks') {
       const ids = ((u.searchParams.get('command_id') || '').match(/[\w-]+/g) || []).slice(1);
       return json((S.acks || []).filter(a => ids.includes(a.command_id)));
@@ -995,8 +1067,300 @@ if (!process.env.ONLY4) {
     await page.waitForTimeout(300);
     const m = await page.evaluate(() => ({ hh: document.querySelector('header.top').getBoundingClientRect().height, tabs: [...document.querySelectorAll('#mainNav [role=tab]')].map(b => { const r = b.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }), who: document.getElementById('who').innerText.replace(/\s+/g, ' '), role: !!document.querySelector('.who-role') }));
     check(m.hh <= 96, 'responsive: encabezado <= 96 px en 375 (' + Math.round(m.hh) + ' px)');
-    check(m.tabs.length === 7 && m.tabs.every(t => t[0] >= 0 && t[1] <= 376), 'responsive: las 7 pestañas entran en 375 sin cortarse ' + JSON.stringify(m.tabs[6]));
+    check(m.tabs.length === 10 && m.tabs.every(t => t[1] - t[0] >= 44) && m.tabs[0][0] >= 0, 'responsive: las 10 pestañas (barra deslizable) tienen >= 44 px de ancho en 375 ' + JSON.stringify(m.tabs.map(t => t[1] - t[0])));
     check(m.role && /supervisor/.test(m.who), 'header: el rol se ve completo (' + m.who + ')');
+    await ctx.close();
+  }
+}
+
+// ---- 13) Tanda C: Asistencia, Constancias, Auditoria, huella SHA-256, log_access, rol auditor ----
+const logsOf = S => (S.logs || []).map(b => b.action);
+const printStub = page => page.evaluate(() => { window.__p = 0; window.print = () => { window.__p++; }; });
+const dl = async (page, locator) => {
+  const [d] = await Promise.all([page.waitForEvent('download', { timeout: 10000 }).catch(() => null), locator.click()]);
+  return d ? fs.readFileSync(await d.path(), 'utf8') : '';
+};
+const unnamed = (page, root) => page.evaluate(r => [...document.querySelectorAll(r + ' input:not([type=hidden]), ' + r + ' select, ' + r + ' textarea')]
+  .filter(e => e.offsetParent && !(e.labels && e.labels.length) && !e.getAttribute('aria-label')).length, root);
+if (!process.env.ONLY4) {
+  // a) Asistencia: abrir a mano, cerrar con resultado y nota, KPIs, CSV, imprimir
+  {
+    const state = {};
+    const [ctx, page] = await newPage({ t4: true, state });
+    await closeOv(page);
+    const ids = await page.evaluate(() => [...document.querySelectorAll('#mainNav [role=tab]')].map(b => b.id));
+    check(JSON.stringify(ids) === JSON.stringify(['tabMain', 'tabLive', 'tabMap', 'tabEq', 'tabAsis', 'tabConst', 'tabDone', 'tabRep', 'tabAud', 'tabCmd']), 'tandaC: pestañas nuevas en la barra: ' + ids.join(','));
+    check(await page.locator('#tabAud').isVisible(), 'tandaC: admin ve Auditoría');
+    await page.click('#tabAsis');
+    check(await waitFor(async () => /Sesiones abiertas \(0\)/.test(await page.locator('#asisHost').innerText())), 'asis: la pestaña carga sin sesiones abiertas');
+    check(/Calibrar la bomba/.test(await page.locator('#asisHost').innerText()), 'asis: la lista del día muestra la sesión cerrada con su tema');
+    const sf = page.locator('#asisHost form', { hasText: 'Iniciar una sesión de asistencia' });
+    await sf.locator('button[type=submit]').click();
+    check(/Elegí un casco/.test(await sf.innerText()), 'asis: validación al iniciar sin casco');
+    await sf.locator('select').selectOption('4133');
+    await sf.locator('input[type=text]').fill('Reparar bomba de lodo');
+    await sf.locator('button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'assist_sessions').some(x => x.method === 'POST' && x.body.device_id === '4133' && x.body.topic === 'Reparar bomba de lodo')), 'asis: Iniciar sesión inserta assist_sessions(device_id, topic)');
+    check(await waitFor(async () => /Sesiones abiertas \(1\)/.test(await page.locator('#asisHost').innerText())), 'asis: aparece en abiertas');
+    check(/1 sesión abierta/.test((await page.locator('#tabAsis').getAttribute('aria-label')) || ''), 'asis: la pestaña avisa "1 sesión abierta"');
+    check(await unnamed(page, '#panelAsis') === 0, 'a11y: todos los campos de Asistencia tienen nombre accesible');
+    const cf = page.locator('#asisHost .assist-close');
+    await cf.locator('button[type=submit]').click();
+    check(/Elegí el resultado/.test(await cf.innerText()), 'asis: cerrar exige resultado');
+    await cf.locator('select').selectOption('resuelto');
+    await cf.locator('input[type=text]').fill('Se cambió el sello');
+    await cf.locator('input[type=number]').fill('2');
+    await cf.locator('button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'assist_sessions').some(x => x.method === 'PATCH' && x.body.outcome === 'resuelto' && x.body.note === 'Se cambió el sello' && x.body.photos === 2 && typeof x.body.ended_at === 'string')), 'asis: cerrar envía ended_at, outcome, note y photos');
+    check(await waitFor(async () => /Sesiones abiertas \(0\)/.test(await page.locator('#asisHost').innerText())), 'asis: la sesión cerrada sale de abiertas');
+    const kp = await page.locator('#asisHost .kpis').innerText();
+    check(/Sesiones\s*2/.test(kp.replace(/\n/g, ' ')) && /50 %/.test(kp), 'asis: KPIs (2 sesiones, 50 % resueltas): ' + kp.replace(/\s+/g, ' '));
+    await shot(page, `${TAG}-asistencia-1440`);
+    const csv = await dl(page, page.locator('#asisHost button', { hasText: 'Exportar CSV' }));
+    const lines = csv.split('\r\n').filter(Boolean);
+    check(csv.charCodeAt(0) === 0xFEFF && lines.length === 3 && lines[0].includes('"inicio";"fin";"casco"'), 'asis: CSV con BOM, ; y 2 filas (' + lines.length + ')');
+    check(/^"\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}";/.test((lines[1] || '').replace('﻿', '')), 'asis: fecha dd/mm/aaaa HH:mm en el CSV');
+    await printStub(page);
+    await page.locator('#asisHost button', { hasText: 'Imprimir' }).click();
+    check(await waitFor(async () => (await page.evaluate(() => window.__p)) === 1) && /Empleador/.test(await page.locator('#asisPrint').textContent()), 'asis: Imprimir / PDF con encabezado del empleador');
+    check(await waitFor(() => logsOf(state).includes('assist_open') && logsOf(state).includes('assist_close') && logsOf(state).includes('export_csv') && logsOf(state).includes('export_pdf')),
+      'log_access: assist_open, assist_close, export_csv, export_pdf (' + [...new Set(logsOf(state))].join(',') + ')');
+    await ctx.close();
+  }
+  // b) apertura automatica al tocar Iniciar / Hablar + mini-cartel
+  {
+    const state = {};
+    const [ctx, page] = await newPage({ t4: true, state });
+    await closeOv(page);
+    await page.click('#tabLive');
+    const sec = page.locator('#lives .live', { hasText: '4132' });
+    await sec.locator('button', { hasText: 'Iniciar' }).first().click();
+    check(await waitFor(() => posts(state, 'assist_sessions').some(x => x.method === 'POST' && x.body.device_id === '4132')), 'auto: Iniciar abre sola una sesión de asistencia con el casco');
+    const mini = sec.locator('.assist-mini');
+    check(await waitFor(async () => /Asistencia en curso/.test(await mini.innerText())) && /Se abrió sola/.test(await mini.innerText()), 'auto: mini-cartel en En vivo con el estado');
+    await page.waitForTimeout(400);
+    check(posts(state, 'assist_sessions').filter(x => x.method === 'POST').length === 1, 'auto: una sola sesión por casco aunque se toque de nuevo');
+    await sec.locator('button', { hasText: 'Iniciar' }).first().click({ force: true }).catch(() => {});
+    await page.waitForTimeout(500);
+    check(posts(state, 'assist_sessions').filter(x => x.method === 'POST').length === 1, 'auto: no duplica si ya hay una abierta');
+    await mini.locator('select').selectOption('sin_resolver');
+    await mini.locator('input[type=text]').fill('Sin señal en el pozo');
+    await mini.locator('button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'assist_sessions').some(x => x.method === 'PATCH' && x.body.outcome === 'sin_resolver' && x.body.note === 'Sin señal en el pozo')), 'auto: se cierra desde el mini-cartel con resultado y nota');
+    check(await waitFor(async () => /Registrar asistencia/.test(await mini.innerText())), 'auto: el mini-cartel vuelve a "Registrar asistencia"');
+    await sec.getByRole('button', { name: /Hablar con el casco 4132/ }).click();   // cierra y reabre: Hablar tambien abre sola
+    check(await waitFor(() => posts(state, 'assist_sessions').filter(x => x.method === 'POST').length === 2), 'auto: Hablar abre sola una sesión si no hay abierta');
+    check(await waitFor(() => logsOf(state).includes('view_live') && logsOf(state).includes('assist_open') && logsOf(state).includes('login')), 'log_access: view_live, assist_open y login (' + [...new Set(logsOf(state))].join(',') + ')');
+    await ctx.close();
+  }
+  // c) Constancias: EPP (alta, validacion, correccion, CSV, imprimir), capacitacion (RPC), empleador
+  {
+    const state = {};
+    const [ctx, page] = await newPage({ t4: true, state });
+    await closeOv(page);
+    await page.click('#tabConst');
+    check(await waitFor(async () => /Guantes dieléctricos/.test(await page.locator('#constBody').innerText())), 'const: lista de EPP con la constancia cargada');
+    check(/Marcos Peralta/.test(await page.locator('#constBody').innerText()) && /30111222/.test(await page.locator('#constBody').innerText()), 'const: admin ve el DNI del trabajador');
+    await page.locator('#constBody button', { hasText: 'Nueva entrega de EPP' }).click();
+    const form = page.locator('#constForm form');
+    await form.locator('button[type=submit]').click();
+    check(/Trabajador: es obligatorio/.test(await form.innerText()) && /Producto: es obligatorio/.test(await form.innerText()), 'const: validación de campos obligatorios del EPP');
+    check(await unnamed(page, '#constForm') === 0, 'a11y: todos los campos del formulario de EPP tienen nombre accesible');
+    const sels = form.locator('select');   // trabajador, casco, certificacion, conformidad
+    await sels.nth(0).selectOption('p2');
+    await form.locator('input[type=text]').first().fill('Casco de seguridad');
+    await form.locator('input[type=number]').fill('2');
+    await sels.nth(2).selectOption('si');
+    await sels.nth(3).selectOption('con_observaciones');
+    await form.locator('button[type=submit]').click();
+    check(/Observación: es obligatoria/.test(await form.innerText()), 'const: observación obligatoria con "con observaciones"');
+    await form.locator('input[type=text]').nth(4).fill('Talle chico');
+    await form.locator('button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'epp_deliveries').some(x => x.body && x.body.person_id === 'p2' && x.body.item === 'Casco de seguridad' && x.body.quantity === 2 && x.body.certified === true
+      && x.body.worker_ack === 'con_observaciones' && x.body.observation === 'Talle chico' && !('created_by' in x.body))), 'const: alta de EPP inserta solo las columnas permitidas');
+    check(await waitFor(async () => /Casco de seguridad/.test(await page.locator('#constBody').innerText())), 'const: la nueva entrega aparece en el listado');
+    // corregir la del seed: supersedes
+    await page.locator('#constBody tbody tr', { hasText: 'Guantes' }).locator('button', { hasText: 'Corregir' }).click();
+    const f2 = page.locator('#constForm form');
+    check(await f2.locator('select').first().isDisabled(), 'const: en la corrección la persona no se puede cambiar');
+    await f2.locator('input[type=number]').fill('3');
+    await f2.locator('button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'epp_deliveries').some(x => x.body && x.body.supersedes === 'epp-seed' && x.body.quantity === 3)), 'const: la corrección se guarda con supersedes');
+    check(await waitFor(async () => /Reemplazada por una corrección/.test(await page.locator('#constBody').innerText())), 'const: el registro corregido queda marcado como reemplazado');
+    const csv = await dl(page, page.locator('#constBody button', { hasText: 'Exportar CSV' }));
+    check(csv.charCodeAt(0) === 0xFEFF && /"fecha_entrega";"trabajador"/.test(csv) && /"\d{2}\/\d{2}\/\d{4}";/.test(csv.split('\r\n')[1].replace('﻿', '')), 'const: CSV de EPP con BOM, ; y fecha dd/mm/aaaa');
+    await printStub(page);
+    await page.locator('#constBody tbody tr').first().locator('button', { hasText: 'Imprimir constancia' }).click();
+    check(await waitFor(async () => (await page.evaluate(() => window.__p)) === 1) && /Constancia de entrega de EPP/.test(await page.locator('#constPrint').textContent()), 'const: imprimir una constancia individual');
+    // capacitacion
+    await page.click('#constTabTrn');
+    check(await waitFor(async () => /Trabajo en altura/.test(await page.locator('#constBody').innerText())) && /Falta el arnés/.test(await page.locator('#constBody').innerText()), 'const: lista de capacitaciones con asistentes y observación');
+    await page.locator('#constBody button', { hasText: 'Nueva capacitación' }).click();
+    const tf = page.locator('#constForm form');
+    await tf.locator('button[type=submit]').click();
+    check(/Tema: es obligatorio/.test(await tf.innerText()) && /Capacitador: es obligatorio/.test(await tf.innerText()), 'const: validación de la capacitación');
+    check(await unnamed(page, '#constForm') === 0, 'a11y: campos de la capacitación con nombre accesible');
+    await tf.locator('input[type=text]').nth(0).fill('Uso de extintores');
+    await tf.locator('input[type=text]').nth(1).fill('Lic. Gómez');
+    const ts = tf.locator('select');
+    await ts.nth(0).selectOption('presencial'); await ts.nth(1).selectOption('sincronica'); await ts.nth(2).selectOption('si');
+    await tf.locator('button[type=submit]').click();
+    check(/al menos una persona/.test(await tf.innerText()), 'const: pide al menos un asistente');
+    await tf.locator('.att-row input[type=checkbox]').first().check();
+    await tf.locator('button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'rpc/create_training').some(x => x.body && x.body.topic === 'Uso de extintores' && x.body.attendees.length === 1 && x.body.attendees[0].person_id === 'p1'
+      && x.body.assisted === true && x.body.modality_place === 'presencial' && !('supersedes' in x.body))), 'const: la capacitación se carga por rpc create_training con attendees');
+    check(await waitFor(async () => /Uso de extintores/.test(await page.locator('#constBody').innerText())), 'const: la nueva capacitación aparece');
+    // empleador
+    await page.click('#constTabOrg');
+    await page.locator('#constBody input').nth(0).fill('Petrolera Sur S.A.');
+    await page.locator('#constBody input').nth(1).fill('123');
+    await page.locator('#constBody button[type=submit]').click();
+    check(/CUIT/.test(await page.locator('#constBody .err').innerText()), 'org: valida el CUIT');
+    await page.locator('#constBody input').nth(1).fill('30123456789');
+    await page.locator('#constBody button[type=submit]').click();
+    check(await waitFor(() => posts(state, 'org_settings').some(x => x.method === 'POST' && x.body.id === 1 && x.body.legal_name === 'Petrolera Sur S.A.' && x.body.cuit === '30-12345678-9')), 'org: guarda con id = 1 y CUIT normalizado');
+    await page.click('#tabAsis');
+    await printStub(page);
+    await waitFor(() => page.locator('#asisHost button', { hasText: 'Imprimir' }).isEnabled());
+    await page.locator('#asisHost button', { hasText: 'Imprimir' }).click();
+    check(await waitFor(async () => /Petrolera Sur S\.A\./.test(await page.locator('#asisPrint').textContent())), 'org: el encabezado impreso usa los datos del empleador');
+    check(await waitFor(() => ['epp_create', 'training_create', 'config_change'].every(a => logsOf(state).includes(a))), 'log_access: epp_create, training_create, config_change');
+    await ctx.close();
+  }
+  // d) Auditoria: tabla paginada, filtros, CSV; el supervisor no la ve
+  {
+    const state = {};
+    const [ctx, page] = await newPage({ t4: true, state });
+    await closeOv(page);
+    await page.click('#tabAud');
+    check(await waitFor(async () => (await page.locator('#audHost tbody tr').count()) === 50), 'aud: 50 filas en la primera página');
+    check(await unnamed(page, '#panelAud') === 0, 'a11y: filtros de Auditoría con nombre accesible');
+    await page.locator('#audHost .pager button', { hasText: 'Siguiente' }).click();
+    check(await waitFor(async () => /Página 2/.test(await page.locator('#audHost .pager').innerText())) && (await page.locator('#audHost tbody tr').count()) === 50, 'aud: paginación, página 2');
+    await page.locator('#audHost select').selectOption('export_csv');
+    await page.locator('#audHost button[type=submit]').click();
+    check(await waitFor(async () => { const n = await page.locator('#audHost tbody tr').count(); return n === 20 && /Exportó un CSV/.test(await page.locator('#audHost tbody').innerText()); }), 'aud: filtro por acción');
+    const rows = await page.evaluate(() => [...document.querySelectorAll('#audHost tbody tr')].every(r => /Exportó un CSV/.test(r.textContent)));
+    check(rows, 'aud: todas las filas son de la acción elegida');
+    await page.locator('#audHost select').selectOption('');
+    await page.locator('#audHost button[type=submit]').click();
+    await waitFor(async () => (await page.locator('#audHost tbody tr').count()) === 50);
+    const csv = await dl(page, page.locator('#audHost button', { hasText: 'Exportar CSV' }));
+    const lines = csv.split('\r\n').filter(Boolean);
+    check(csv.charCodeAt(0) === 0xFEFF && lines.length === 121 && /^"\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}";/.test(lines[1].replace('﻿', '')), 'aud: CSV con BOM, ; y fecha AR (' + lines.length + ')');
+    await shot(page, `${TAG}-auditoria-1440`);
+    check(await waitFor(() => logsOf(state).includes('export_csv')), 'log_access: la exportación de la auditoría queda registrada');
+    await ctx.close();
+    const [c2, p2] = await newPage({ t4: true, role: 'viewer', state: {} });
+    await closeOv(p2);
+    check(!(await p2.locator('#tabAud').isVisible()) && await p2.locator('#tabConst').isVisible() && await p2.locator('#tabAsis').isVisible(), 'viewer: ve Asistencia y Constancias pero no Auditoría');
+    await p2.click('#tabConst');
+    check(await waitFor(async () => /Guantes/.test(await p2.locator('#constBody').innerText())), 'viewer: lista EPP');
+    check(!/30111222/.test(await p2.locator('#constBody').innerText()) && /DNI del trabajador solo lo ve un administrador/.test(await p2.locator('#constBody').innerText()), 'viewer: sin DNI en la constancia, con aviso');
+    check(await p2.locator('#constBody button', { hasText: 'Nueva entrega de EPP' }).isVisible(), 'viewer: puede cargar constancias');
+    await c2.close();
+  }
+  // e) huella SHA-256: Integro / No coincide / Sin huella
+  {
+    const state = {};
+    const h = { hash_alg: 'sha256', size: PNG.length, captured_at: iso(1000) };
+    const evs = [...events,
+      { id: 'e-hok', device_id: '4132', type: 'photo', created_at: iso(5000), lat: null, lng: null, battery: 15, payload: { ...h, sha256: PNG_SHA }, media_path: '4132/ok.jpg' },
+      { id: 'e-hbad', device_id: '4132', type: 'photo', created_at: iso(6000), lat: null, lng: null, battery: 15, payload: { ...h, sha256: 'a'.repeat(64) }, media_path: '4132/bad.jpg' },
+      { id: 'e-hnone', device_id: '4132', type: 'video', created_at: iso(7000), lat: null, lng: null, battery: 15, payload: {}, media_path: '4132/v.mp4' }];
+    const [ctx, page] = await newPage({ evs, state });
+    await closeOv(page);
+    await page.click('#tabDone');
+    const btn = id => page.locator('#feed li[data-id="' + id + '"] .verify-row button');
+    check(await waitFor(async () => (await btn('e-hok').count()) === 1 && (await btn('e-hbad').count()) === 1 && (await btn('e-hnone').count()) === 1), 'hash: foto y video del Historial tienen "Verificar integridad"');
+    check(/Verificar integridad, foto del casco 4132/.test((await btn('e-hok').getAttribute('aria-label')) || ''), 'a11y: el nombre accesible empieza con el texto visible');
+    await btn('e-hok').click();
+    check(await waitFor(async () => /Íntegro/.test(await page.locator('#feed li[data-id="e-hok"] .verify-st').innerText())), 'hash: huella coincide -> Íntegro');
+    await btn('e-hbad').click();
+    check(await waitFor(async () => /No coincide/.test(await page.locator('#feed li[data-id="e-hbad"] .verify-st').innerText())), 'hash: huella distinta -> No coincide');
+    await btn('e-hnone').click();
+    check(await waitFor(async () => /Sin huella registrada/.test(await page.locator('#feed li[data-id="e-hnone"] .verify-st').innerText())), 'hash: sin huella -> aviso');
+    check(await waitFor(() => (state.logs || []).filter(l => l.action === 'hash_verify').length === 3), 'log_access: 3 hash_verify');
+    const r = (state.logs || []).find(l => l.action === 'hash_verify' && l.detail && l.detail.resultado === 'ok');
+    check(!!r && r.target === '4132/ok.jpg', 'log_access: hash_verify con target = ruta del archivo');
+    await ctx.close();
+  }
+  // f) log_access: 1 reintento, silencioso y sin bloquear la accion; sin migracion no insiste
+  {
+    const state = { logFail: 1 };
+    const [ctx, page] = await newPage({ t4: true, state });
+    await closeOv(page);
+    state.logs = []; state.posts = [];
+    await page.click('#tabLive');
+    const sec = page.locator('#lives .live', { hasText: '4132' });
+    state.logFail = 1;
+    await sec.getByRole('button', { name: /Sacar foto, casco 4132/ }).click();
+    check(await waitFor(() => posts(state, 'device_commands').length === 1), 'log: la acción se envía aunque el registro falle');
+    check(await waitFor(() => posts(state, 'rpc/log_access').length >= 2 && (state.logs || []).some(l => l.action === 'photo')), 'log: reintenta una vez y el asiento llega (' + posts(state, 'rpc/log_access').length + ' pedidos)');
+    check(!(await page.locator('#vigToast').isVisible().catch(() => false)), 'log: el fallo es silencioso (sin aviso en pantalla)');
+    await ctx.close();
+    const st2 = {};
+    const [c2, p2] = await newPage({ t4: true, noNew: true, state: st2 });
+    await closeOv(p2);
+    await p2.click('#tabLive');
+    const s2 = p2.locator('#lives .live', { hasText: '4132' });
+    await s2.getByRole('button', { name: /Probar enlace, casco 4132/ }).click();
+    await s2.locator('button', { hasText: 'Iniciar' }).first().click();
+    await p2.waitForTimeout(1500);
+    check(posts(st2, 'rpc/log_access').length <= 1, 'log sin migración: deja de insistir tras el primer 404 (' + posts(st2, 'rpc/log_access').length + ')');
+    check(posts(st2, 'stream_commands').some(x => x.body && x.body.action === 'start'), 'sin migración: Iniciar sigue funcionando');
+    check(!(await s2.locator('.assist-mini').isVisible()), 'sin migración: no hay mini-cartel de asistencia');
+    for (const [tab, host] of [['#tabAsis', '#asisHost'], ['#tabConst', '#constBody'], ['#tabAud', '#audHost']]) {
+      await p2.click(tab);
+      check(await waitFor(async () => /Falta aplicar la migración 013/.test(await p2.locator(host).innerText())), 'sin migración: ' + tab + ' dice "Falta aplicar la migración 013"');
+    }
+    await c2.close();
+  }
+  // g) rol auditor: solo lectura
+  {
+    const state = {};
+    const evs = [...events, { id: 'e-hok', device_id: '4132', type: 'photo', created_at: iso(5000), lat: null, lng: null, battery: 15, payload: { sha256: PNG_SHA, hash_alg: 'sha256' }, media_path: '4132/ok.jpg' }];
+    const [ctx, page] = await newPage({ t4: true, role: 'auditor', evs, state });
+    check(/auditor/.test(await page.locator('#who').innerText()), 'auditor: el rol se muestra');
+    check(!(await page.locator('.sos-ov-go').isVisible()), 'auditor: el cartel no tiene Atender');
+    await closeOv(page);
+    check((await page.locator('#pendList .a-act').count()) === 0 && (await page.locator('#pendList button.attend').count()) === 0, 'auditor: tarjetas pendientes sin nota ni Atender');
+    check(!(await page.locator('#orders').isVisible()) && !(await page.locator('#tabLive').isVisible()) && !(await page.locator('#tabMap').isVisible()), 'auditor: sin órdenes, En vivo ni Mapa');
+    check(await page.locator('#toolbarAud').isVisible(), 'auditor: aviso de solo lectura');
+    check((await page.locator('.cmdbar').count()) === 0, 'auditor: sin comandos a pedido');
+    await page.click('#tabAsis');
+    check(await waitFor(async () => /Sesiones abiertas/.test(await page.locator('#asisHost').innerText())) && !(await page.locator('#asisHost form', { hasText: 'Iniciar una sesión' }).count()), 'auditor: Asistencia en solo lectura (sin formulario)');
+    await page.click('#tabConst');
+    check(await waitFor(async () => /Guantes/.test(await page.locator('#constBody').innerText())) && (await page.locator('#constBody button', { hasText: /Nueva|Corregir/ }).count()) === 0, 'auditor: Constancias sin Nueva ni Corregir');
+    check(!/30111222/.test(await page.locator('#constBody').innerText()), 'auditor: sin DNI');
+    await page.click('#constTabTrn');
+    check(await waitFor(async () => /Trabajo en altura/.test(await page.locator('#constBody').innerText())), 'auditor: lee capacitaciones');
+    check((state.attTable || []).every(t => t === 'training_attendees_audit') && (state.attTable || []).length > 0, 'auditor: asistentes por la vista training_attendees_audit');
+    const body = await page.locator('#constBody').innerText();
+    check(/Falta el arnés/.test(body) && /Observaciones \(sin identificar\)/.test(body) && !/Lucía Ferreyra · Con observaciones/.test(body), 'auditor: observación sin la persona al lado');
+    await page.click('#tabAud');
+    check(await waitFor(async () => (await page.locator('#audHost tbody tr').count()) === 50), 'auditor: ve la auditoría');
+    await page.click('#tabDone');
+    check((await page.locator('#feed .verify-row').count()) === 0 && /huella SHA-256 registrada/.test(await page.locator('#feed').innerText()), 'auditor: sin Storage -> no verifica, solo ve la huella registrada');
+    const wr = posts(state, 'event_acks').length + posts(state, 'broadcasts').length + posts(state, 'device_commands').length + posts(state, 'assist_sessions').length;
+    check(wr === 0, 'auditor: no escribió nada (' + wr + ')');
+    await ctx.close();
+  }
+  // h) 375 px: sin desborde y objetivos tactiles en las pestañas nuevas
+  {
+    const [ctx, page] = await newPage({ t4: true, state: {} });
+    await closeOv(page);
+    await page.setViewportSize({ width: 375, height: 812 });
+    for (const [tab, name] of [['#tabAsis', 'asistencia'], ['#tabConst', 'constancias'], ['#tabAud', 'auditoria']]) {
+      await page.click(tab); await page.waitForTimeout(700);
+      if (tab === '#tabConst') { await page.locator('#constBody button', { hasText: 'Nueva entrega de EPP' }).click(); await page.waitForTimeout(200); }
+      const m = await page.evaluate(() => ({ ov: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+        small: [...document.querySelectorAll('.content :is(button,input:not([type=checkbox]),select):not(.hidden)')].filter(e => e.offsetParent && !e.closest('.hidden') && e.getBoundingClientRect().height < 43.5).length }));
+      check(!m.ov, 'responsive 375: ' + name + ' sin desborde horizontal');
+      check(m.small === 0, 'responsive 375: ' + name + ' con controles >= 44 px (' + m.small + ' chicos)');
+      await shot(page, `${TAG}-${name}-375`);
+    }
     await ctx.close();
   }
 }

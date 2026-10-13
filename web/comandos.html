@@ -27,7 +27,7 @@
   <div class="cmd-status" role="note">
     <strong>Estado</strong>
     <div>
-      <p><strong>El reconocimiento por voz ya está implementado en la versión 0.7.0 del agente, pero viene apagado.</strong> Se activa por casco: hace falta copiar el modelo de voz sin conexión y encender <span class="cmd-say">voice_commands</span> (ver “Activación” al final). Hasta entonces el casco solo <em>habla</em> en español (órdenes del supervisor, avisos) y se maneja con sus tres botones físicos. La prueba hablada en campo todavía está pendiente.</p>
+      <p><strong>El reconocimiento por voz está activo en el piloto (agente 0.7.0).</strong> Se activa por casco desde la configuración remota (<span class="cmd-say">voice_commands</span>, ver “Activación” al final). En los cascos que lo tienen encendido podés manejarlo hablando; en los demás el casco solo <em>habla</em> en español (órdenes del supervisor, avisos) y se maneja con sus tres botones físicos.</p>
     </div>
   </div>
 
@@ -224,7 +224,7 @@
       <li>El reconocimiento corre <strong>sin conexión</strong> en el casco (Vosk, modelo en español) y no envía audio a ninguna nube.</li>
       <li>Copiar el modelo <span class="cmd-say">vosk-model-small-es-0.42</span> (~40 MB, no va en el APK) con <span class="cmd-say">tools\instalar-modelo-voz.ps1</span> y poner <span class="cmd-say">voice_commands: true</span> en la configuración del casco (o desde la configuración remota). La palabra de activación se cambia con <span class="cmd-say">voice_wake_word</span>.</li>
       <li>Para proteger la batería, el reconocimiento se apaga si el casco está quieto más de <span class="cmd-say">voice_idle_off_minutes</span> (10 por defecto) y vuelve al moverse.</li>
-      <li>Con la transmisión de video con audio el casco sigue escuchando: Android 10 permite las dos capturas a la vez en este equipo. Si el micrófono compartido llegara a entregar silencio, el reconocimiento se pausa solo mientras dure esa transmisión.</li>
+      <li>Con la transmisión de video con audio el casco sigue escuchando. Si el micrófono compartido llegara a entregar silencio, el reconocimiento se pausa solo mientras dure esa transmisión.</li>
       <li class="cmd-warn">Avisar al personal: el casco escucha su micrófono mientras el reconocimiento está activo (Ley 25.326).</li>
     </ul>
   </section>
