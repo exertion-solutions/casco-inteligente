@@ -91,3 +91,12 @@
 - Tanda C: PENDIENTE: push/email de alertas, gestion de usuarios en la UI, SLA de respuesta, informe por turno, pasar lista (evacuacion).
 - Tanda D (limpieza segura fuera de web/): hecha, ver out/tanda-d.md. Sin tocar: mediamtx.yml, activar/desactivar-voz.sh, vps-soporte.sh, rescate-vps.sh, relay-audio.sh, migraciones, android/.
 - IMPORTANTE: subir `CACHE_VERSION` de web/sw.js (y el `?v=` en index.html) en CADA deploy de web/.
+
+## Estado 2026-10-13 (tanda C)
+- Hecho y publicado: tanda A (confiabilidad), PWA, tanda B (severidades/a11y), tanda C (asistencia remota registrada, constancias EPP y capacitacion, auditoria + rol auditor, hash SHA-256 de media, guia de comandos corregida). Commit 4c9d0f8.
+- Migracion 013 APLICADA en la base real (verificado: 7 objetos, 2 funciones, 11 politicas). Contrato en docs/PROTOCOLO-ASISTENCIA.md.
+- Agente 0.8.0 (hash de media) compilado: android/app/build/outputs/apk/debug/app-debug.apk. FALTA instalarlo en el casco: tools\instalar-agente.ps1 -Config config.local.json con el casco por USB.
+- Probar en vivo con sesion iniciada: pestanas Asistencia, Constancias, Auditoria; "Verificar integridad" (requiere fotos nuevas con el agente 0.8.0).
+- Para tener rol auditor: crear usuario y setear app_metadata.role='auditor' (ver supabase/promover_admin.sql como modelo).
+- Pendiente: Res. SIC 16/2025 excluye equipos Ex del reglamento electrico; certificado del casco es chino (no IECEx/ATEX) -> aceptacion del cliente; cargador/fuente necesitan certificacion de seguridad electrica; homologacion de radio (ENACOM) y bandas LTE: verificar.
+- Pendiente: ponytail (recortes de tools/ y server/ no aplicados), escalamiento push/email/WhatsApp, usuarios en la UI, informe por turno, pasar lista en evacuacion, grabacion en servidor.
