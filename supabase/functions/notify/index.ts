@@ -1,23 +1,22 @@
 // Edge Function notify (Supabase, Deno). Ver docs/PROTOCOLO-AVISOS.md.
-// Manda un correo a los responsables cuando entra una alerta (SOS, caida, zona, sin movimiento) y un
-// recordatorio si nadie la atiende. La llaman: (a) el trigger de events por pg_net (inmediato) y (b) pg_cron
-// cada minuto (recordatorio / reintento), ambos con la cabecera x-notify-secret; y (c) un admin desde el visor
-// con su JWT, solo para {"test":true}. Un solo archivo para pegarlo en el dashboard; sin dependencias externas
-// (supabase-js se importa solo cuando corre en Deno).
+// Avisa de una alerta (SOS, caida, zona, sin movimiento) por PUSH del navegador (Web Push, VAPID) y por CORREO
+// (proveedor HTTP Brevo o Resend, un envio por destinatario; webhook generico como respaldo), y repite una vez como
+// recordatorio si nadie la atiende. La llaman: (a) el trigger de events por pg_net (inmediato) y (b) pg_cron cada
+// minuto (recordatorio / reintento), ambos con la cabecera x-notify-secret; y (c) un usuario del visor con su JWT:
+// admin {"test":true} (correo de prueba) y {"bootstrap_push":true} (genera el par VAPID); cualquier viewer/admin/auditor
+// {"test_push":true} (prueba a SUS dispositivos). Un solo archivo para pegarlo en el dashboard; sin dependencias externas
+// (supabase-js se importa solo cuando corre en Deno; el cifrado Web Push usa WebCrypto, sin npm:web-push).
 //
-// SIN variables obligatorias: la clave y el canal se leen de la tabla notify_config con service_role
-// (la clave la genera notify_bootstrap(); la URL del canal la guarda el admin desde el visor).
+// SIN variables obligatorias: clave, canal, proveedor de correo y VAPID se leen/guardan en notify_config con service_role.
 // Env (todas opcionales; SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY las inyecta Supabase, NUNCA van al repo):
 //      NOTIFY_SECRET        (tambien vale como x-notify-secret, ademas de notify_config.webhook_secret),
-//      NOTIFY_WEBHOOK_URL   (canal a de respaldo si la tabla no tiene webhook_url; POST JSON {to, subject, text, html, severity, event_id}),
-//      RESEND_API_KEY       (canal b: API de Resend; la clave solo existe como variable de entorno) + remitente
-//                           notify_config.resend_from o NOTIFY_FROM,
-//      NOTIFY_VIEWER_URL    (opcional: enlace al visor; por defecto el de GitHub Pages).
-// Si hay webhook y Resend, se intenta primero el webhook y, si falla, Resend.
+//      NOTIFY_WEBHOOK_URL   (webhook de respaldo si la tabla no tiene webhook_url),
+//      RESEND_API_KEY       (Resend por entorno si no hay proveedor en la tabla; remitente notify_config.resend_from o NOTIFY_FROM),
+//      NOTIFY_VIEWER_URL    (enlace al visor; por defecto el de GitHub Pages).
 //
-// Cuerpo: {"event_id":"<uuid>","kind":"inmediato"|"recordatorio"}  o  {"test":true}.
-// Respuestas: 200 {ok, sent, ...} | 400 | 401 | 403 | 404 | 405 | 502 (el canal rechazo el envio) |
-//             503 {error:"canal_no_configurado"} | 500. Nunca devuelve ni registra correos, URLs ni secretos.
+// Respuestas: 200 {ok, sent, ...} | 400 | 401 | 403 | 404 | 405 | 409 | 502 (todos los canales rechazaron el envio) |
+//             503 {error:"canal_no_configurado"} | 500. Nunca devuelve ni registra claves ni URLs; el payload push no lleva
+//             coordenadas ni nombres de personas.
 
 export type Kind = "inmediato" | "recordatorio";
 export type SevName = "critica" | "alta" | "media";
@@ -40,32 +39,50 @@ export interface Ev {
   payload: Record<string, unknown> | null;
 }
 export interface Channel {
-  /** notify_config.webhook_secret (la clave que usa el trigger). */
   secret: string | null;
-  /** notify_config.webhook_url (canal a, guardado desde el visor). */
   webhookUrl: string | null;
-  /** notify_config.resend_from (remitente del canal b). */
   resendFrom: string | null;
+  emailProvider: "brevo" | "resend" | null;
+  emailApiKey: string | null;
+  emailFrom: string | null;
+  emailFromName: string | null;
+  vapidPublic: string | null;
+  /** JWK (JSON) de la clave privada ECDSA P-256. */
+  vapidPrivate: string | null;
 }
+export interface Sub {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  min_severity: SevName;
+}
+/** Resultado por destinatario guardado en notify_log.results. */
+export type Results = Record<string, { ok?: boolean; ch?: string; d?: string; sent?: number; failed?: number; gone?: number }>;
 export interface Db {
   channel(): Promise<Channel>;
   config(): Promise<Cfg | null>;
   /** Solo destinatarios activos. */
   recipients(): Promise<Recipient[]>;
+  /** Suscripciones push; con userId solo las de ese usuario. */
+  subscriptions(userId?: string): Promise<Sub[]>;
+  deleteSub(endpoint: string): Promise<void>;
+  saveVapid(publicKey: string, privateJwk: string): Promise<void>;
   event(id: string): Promise<Ev | null>;
   /** true solo si existe la fila en event_acks. Un error de base NO es "atendida": lanza. */
   acked(id: string): Promise<boolean>;
   deviceName(deviceId: string): Promise<string | null>;
   /** Reserva atomica (evento, kind). false = ya enviado o lo tiene otro proceso. */
   claim(eventId: string, kind: Kind): Promise<boolean>;
-  finish(eventId: string, kind: Kind, ok: boolean, channel: string, recipients: number, detail: string): Promise<void>;
+  /** Resultados por destinatario de un intento anterior (para no repetir a quien ya recibio). */
+  results(eventId: string, kind: Kind): Promise<Results>;
+  finish(eventId: string, kind: Kind, ok: boolean, channel: string, recipients: number, detail: string, results: Results): Promise<void>;
   /** Hubo un aviso ok del mismo kind para este casco desde sinceIso (otro evento)? */
   recentOk(deviceId: string, kind: Kind, sinceIso: string, exceptEventId: string): Promise<boolean>;
 }
 export interface Deps {
   db: Db;
   secret?: string;
-  getUser?: (jwt: string) => Promise<{ app_metadata?: Record<string, unknown> } | null>;
+  getUser?: (jwt: string) => Promise<{ id?: string; app_metadata?: Record<string, unknown> } | null>;
   webhookUrl?: string;
   resendKey?: string;
   from?: string;
@@ -76,7 +93,7 @@ export interface Deps {
 
 export const DEFAULT_VIEWER_URL = "https://exertion-solutions.github.io/casco-inteligente/";
 const TIMEOUT_MS = 8_000;
-const MAX_TO = 50; // tope de la API de Resend por mensaje
+const MAX_TO = 50;
 const RANK: Record<SevName, number> = { critica: 3, alta: 2, media: 1 };
 const SEV_NAME: Record<number, SevName> = { 3: "critica", 2: "alta", 1: "media" };
 const SEV_LABEL: Record<number, string> = { 3: "CRÍTICA", 2: "ALTA", 1: "MEDIA" };
@@ -217,7 +234,25 @@ export function testMail(viewerUrl: string): Mail {
   };
 }
 
-function httpsUrl(u: string | undefined): string | undefined {
+/** Payload push minimo: casco, tipo, hora Argentina y enlace. Sin coordenadas ni nombres de personas. */
+export interface PushMsg {
+  title: string;
+  body: string;
+  url: string;
+  severity: string;
+  tag: string;
+}
+export function buildPush(e: Ev, sev: number, kind: Kind, nowMs: number, viewerUrl: string): PushMsg {
+  const device = clean(e.device_id, 64);
+  const ageS = Math.floor((nowMs - Date.parse(e.created_at)) / 1000);
+  const what = e.type === "geofence" ? (e.payload?.kind === "peligro" ? "Zona de peligro" : e.payload?.kind === "restringida" ? "Zona restringida" : "Salió de zona permitida")
+    : e.type === "sos" ? "SOS" : e.type === "fall" ? "Caída" : e.type === "inactive" ? "Sin movimiento" : e.type === "not_worn" ? "Casco sin usar" : e.type;
+  const title = kind === "recordatorio" ? `SIN ATENDER: ${what}` : `ALERTA ${SEV_LABEL[sev] ?? ""}: ${what}`;
+  const body = `Casco ${device} · ${fmtAR(Date.parse(e.created_at))} (Argentina)` + (kind === "recordatorio" ? ` · hace ${fmtAge(ageS)}` : "");
+  return { title, body, url: viewerUrl, severity: SEV_NAME[sev] ?? "media", tag: e.id };
+}
+
+function httpsUrl(u: string | null | undefined): string | undefined {
   if (!u) return undefined;
   try {
     return new URL(u).protocol === "https:" ? u : undefined;
@@ -226,6 +261,102 @@ function httpsUrl(u: string | undefined): string | undefined {
   }
 }
 
+// ---- Web Push (RFC 8030 / 8291 aes128gcm / 8292 VAPID) con WebCrypto ----------------------------------------
+export const b64u = (b: Uint8Array): string => {
+  let s = "";
+  for (const x of b) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+export const unb64u = (s: string): Uint8Array => {
+  const t = s.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (s.length % 4)) % 4);
+  const r = atob(t);
+  const o = new Uint8Array(r.length);
+  for (let i = 0; i < r.length; i++) o[i] = r.charCodeAt(i);
+  return o;
+};
+const cat = (...p: Uint8Array[]): Uint8Array => {
+  const o = new Uint8Array(p.reduce((n, x) => n + x.length, 0));
+  let k = 0;
+  for (const x of p) {
+    o.set(x, k);
+    k += x.length;
+  }
+  return o;
+};
+async function hkdf(salt: Uint8Array, ikm: Uint8Array, info: Uint8Array, len: number): Promise<Uint8Array> {
+  const k = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, k, len * 8));
+}
+
+/** Genera el par VAPID: publica = punto sin comprimir (65 bytes) en base64url; privada = JWK en JSON. */
+export async function generateVapid(): Promise<{ publicKey: string; privateJwk: string }> {
+  const kp = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const jwk = await crypto.subtle.exportKey("jwk", kp.privateKey);
+  const raw = new Uint8Array(await crypto.subtle.exportKey("raw", kp.publicKey));
+  return { publicKey: b64u(raw), privateJwk: JSON.stringify(jwk) };
+}
+
+async function vapidHeader(endpoint: string, publicKey: string, privateJwk: string, subject: string, nowMs: number): Promise<string> {
+  const key = await crypto.subtle.importKey("jwk", JSON.parse(privateJwk), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
+  const head = b64u(enc.encode(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const claims = b64u(enc.encode(JSON.stringify({
+    aud: new URL(endpoint).origin,
+    exp: Math.floor(nowMs / 1000) + 12 * 3600,
+    sub: subject,
+  })));
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, enc.encode(`${head}.${claims}`)));
+  return `vapid t=${head}.${claims}.${b64u(sig)}, k=${publicKey}`;
+}
+
+/** Cifra el payload para una suscripcion (RFC 8291, un solo registro). Devuelve el cuerpo aes128gcm. */
+export async function encryptPush(sub: { p256dh: string; auth: string }, plaintext: Uint8Array): Promise<Uint8Array> {
+  const uaPublic = unb64u(sub.p256dh), authSecret = unb64u(sub.auth);
+  const eph = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const asPublic = new Uint8Array(await crypto.subtle.exportKey("raw", eph.publicKey));
+  const uaKey = await crypto.subtle.importKey("raw", uaPublic, { name: "ECDH", namedCurve: "P-256" }, false, []);
+  const ecdh = new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: uaKey }, eph.privateKey, 256));
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const zero = new Uint8Array([0]);
+  const prk = await hkdf(authSecret, ecdh, cat(enc.encode("WebPush: info"), zero, uaPublic, asPublic), 32);
+  const cek = await hkdf(salt, prk, cat(enc.encode("Content-Encoding: aes128gcm"), zero), 16);
+  const nonce = await hkdf(salt, prk, cat(enc.encode("Content-Encoding: nonce"), zero), 12);
+  const aes = await crypto.subtle.importKey("raw", cek, "AES-GCM", false, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, aes, cat(plaintext, new Uint8Array([2]))));
+  const rs = new Uint8Array([0, 0, 0x10, 0]); // 4096
+  return cat(salt, rs, new Uint8Array([asPublic.length]), asPublic, ct);
+}
+
+type PushOutcome = "ok" | "gone" | "fail";
+async function sendPush(
+  f: typeof fetch, ch: Channel, sub: Sub, msg: PushMsg, subject: string, nowMs: number, urgent: boolean,
+): Promise<PushOutcome> {
+  try {
+    const endpoint = httpsUrl(sub.endpoint);
+    if (!endpoint || !ch.vapidPublic || !ch.vapidPrivate) return "fail";
+    const body = await encryptPush(sub, enc.encode(JSON.stringify(msg)));
+    const r = await f(endpoint, {
+      method: "POST",
+      headers: {
+        authorization: await vapidHeader(endpoint, ch.vapidPublic, ch.vapidPrivate, subject, nowMs),
+        "content-encoding": "aes128gcm",
+        "content-type": "application/octet-stream",
+        ttl: urgent ? "86400" : "3600",
+        urgency: urgent ? "high" : "normal",
+        topic: msg.tag.replace(/[^A-Za-z0-9]/g, "").slice(0, 32),
+      },
+      body,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      redirect: "manual",
+    });
+    await r.body?.cancel();
+    if (r.ok) return "ok";
+    return r.status === 404 || r.status === 410 ? "gone" : "fail";
+  } catch {
+    return "fail";
+  }
+}
+
+// ---- Correo por proveedor HTTP / webhook ----------------------------------------------------------------------
 interface SendResult {
   ok: boolean;
   channel: string;
@@ -249,42 +380,62 @@ async function post(f: typeof fetch, url: string, headers: Record<string, string
   }
 }
 
+/** Entrega un correo a UN destinatario: proveedor (Brevo/Resend) -> webhook -> Resend por entorno. */
+async function deliver(
+  f: typeof fetch, ch: Channel, env: { webhook?: string; resendKey?: string; from?: string },
+  to: string, mail: Mail, severityName: string, eventId: string | null,
+): Promise<SendResult> {
+  const fails: string[] = [];
+  if (ch.emailProvider && ch.emailApiKey && ch.emailFrom) {
+    let r: string;
+    if (ch.emailProvider === "brevo") {
+      r = await post(f, "https://api.brevo.com/v3/smtp/email", { "api-key": ch.emailApiKey, accept: "application/json" }, {
+        sender: { email: ch.emailFrom, ...(ch.emailFromName ? { name: ch.emailFromName } : {}) },
+        to: [{ email: to }],
+        subject: mail.subject,
+        htmlContent: mail.html,
+        textContent: mail.text,
+      });
+    } else {
+      r = await post(f, "https://api.resend.com/emails", { authorization: `Bearer ${ch.emailApiKey}` }, {
+        from: ch.emailFromName ? `${ch.emailFromName} <${ch.emailFrom}>` : ch.emailFrom,
+        to: [to], subject: mail.subject, html: mail.html, text: mail.text,
+      });
+    }
+    if (r === "ok") return { ok: true, channel: ch.emailProvider, detail: "HTTP 2xx" };
+    fails.push(`${ch.emailProvider} ${r}`);
+  }
+  if (env.webhook) {
+    const r = await post(f, env.webhook, {}, {
+      to: [to], subject: mail.subject, text: mail.text, html: mail.html, severity: severityName, event_id: eventId,
+    });
+    if (r === "ok") return { ok: true, channel: "webhook", detail: "HTTP 2xx" };
+    fails.push(`webhook ${r}`);
+  }
+  if (!ch.emailProvider && env.resendKey && env.from) {
+    const r = await post(f, "https://api.resend.com/emails", { authorization: `Bearer ${env.resendKey}` }, {
+      from: env.from, to: [to], subject: mail.subject, html: mail.html, text: mail.text,
+    });
+    if (r === "ok") return { ok: true, channel: "resend", detail: "HTTP 2xx" };
+    fails.push(`resend ${r}`);
+  }
+  return { ok: false, channel: "-", detail: fails.join("; ") || "sin_canal" };
+}
+
 export function makeHandler(deps: Deps) {
   const f = deps.fetch ?? fetch;
   const now = deps.now ?? Date.now;
   const viewerUrl = httpsUrl(deps.viewerUrl) ?? DEFAULT_VIEWER_URL;
-
-  async function send(
-    ch: { webhook?: string; resend?: string; from?: string },
-    to: string[], mail: Mail, severityName: string, eventId: string | null,
-  ): Promise<SendResult> {
-    const { webhook, resend } = ch;
-    let detail = "";
-    if (webhook) {
-      const r = await post(f, webhook, {}, {
-        to, subject: mail.subject, text: mail.text, html: mail.html, severity: severityName, event_id: eventId,
-      });
-      if (r === "ok") return { ok: true, channel: "webhook", detail: "HTTP 2xx" };
-      detail = `webhook ${r}`;
-    }
-    if (resend) {
-      const r = await post(f, "https://api.resend.com/emails", { authorization: `Bearer ${resend}` }, {
-        from: ch.from, to, subject: mail.subject, text: mail.text, html: mail.html,
-      });
-      if (r === "ok") return { ok: true, channel: "resend", detail: "HTTP 2xx" };
-      detail = (detail ? detail + "; " : "") + `resend ${r}`;
-    }
-    return { ok: false, channel: webhook ? "webhook" : "resend", detail };
-  }
 
   return async (req: Request): Promise<Response> => {
     try {
       if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
       if (req.method !== "POST") return new Response(null, { status: 405 });
 
-      // --- autenticacion: secreto compartido (pg_net / pg_cron) o JWT de admin (solo prueba) ---
+      // --- autenticacion: secreto compartido (pg_net / pg_cron) o JWT de usuario del visor ---
       // El secreto vale si coincide con el de la TABLA (notify_config.webhook_secret) o con NOTIFY_SECRET del entorno.
-      let mode: "system" | "admin" | null = null;
+      let mode: "system" | "user" | null = null;
+      let userId = "", role = "";
       let chan: Channel | null = null;
       const getChan = async () => (chan ??= await deps.db.channel());
       const given = req.headers.get("x-notify-secret");
@@ -299,7 +450,12 @@ export function makeHandler(deps: Deps) {
         const jwt = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
         if (jwt && jwt.length <= 4096 && deps.getUser) {
           const u = await deps.getUser(jwt);
-          if (u && u.app_metadata?.role === "admin") mode = "admin";
+          const r = String(u?.app_metadata?.role ?? "");
+          if (u && u.id && ["admin", "viewer", "auditor"].includes(r)) {
+            mode = "user";
+            userId = u.id;
+            role = r;
+          }
         }
       }
       if (!mode) return new Response(null, { status: 401 });
@@ -312,21 +468,53 @@ export function makeHandler(deps: Deps) {
         return json(400, { ok: false, error: "cuerpo_ilegible" });
       }
       const c = await getChan();
-      const from = c.resendFrom || deps.from;
-      const ch = {
-        webhook: httpsUrl(c.webhookUrl ?? undefined) ?? httpsUrl(deps.webhookUrl),
-        resend: deps.resendKey && from && from.length >= 3 && from.length <= 200 && from.split("").every((x) => x >= " ") ? deps.resendKey : undefined,
-        from,
+      const env = {
+        webhook: httpsUrl(c.webhookUrl) ?? httpsUrl(deps.webhookUrl),
+        resendKey: deps.resendKey,
+        from: c.resendFrom || deps.from,
       };
-      const hasChannel = !!(ch.webhook || ch.resend);
+      const mailOk = !!((c.emailProvider && c.emailApiKey && c.emailFrom) || env.webhook || (env.resendKey && env.from));
+      const nowMs = now();
+      const pushReady = !!(c.vapidPublic && c.vapidPrivate);
+      const subject = viewerUrl;
 
-      // --- prueba: a todos los destinatarios activos, sin tocar notify_log ---
+      // --- acciones del visor (JWT de usuario) ---
+      if (body.bootstrap_push === true) {
+        if (role !== "admin") return json(403, { ok: false, error: "solo_admin" });
+        if (pushReady) return json(200, { ok: true, created: false });
+        const v = await generateVapid();
+        await deps.db.saveVapid(v.publicKey, v.privateJwk);
+        return json(200, { ok: true, created: true });
+      }
+      if (body.test_push === true) {
+        if (mode !== "user") return json(403, { ok: false, error: "solo_usuario" });
+        if (!pushReady) return json(409, { ok: false, error: "push_no_habilitado" });
+        const subs = await deps.db.subscriptions(userId);
+        if (!subs.length) return json(409, { ok: false, error: "sin_dispositivos" });
+        const msg: PushMsg = { title: "PRUEBA - Casco Inteligente", body: "Este es un aviso de prueba. No hay ninguna alerta.", url: viewerUrl, severity: "prueba", tag: "prueba" };
+        let sent = 0, failed = 0, gone = 0;
+        for (const s of subs) {
+          const o = await sendPush(f, c, s, msg, subject, nowMs, false);
+          if (o === "ok") sent++;
+          else if (o === "gone") {
+            gone++;
+            await deps.db.deleteSub(s.endpoint);
+          } else failed++;
+        }
+        return json(sent ? 200 : 502, { ok: sent > 0, test: true, push: { sent, failed, gone } });
+      }
       if (body.test === true) {
-        if (!hasChannel) return json(503, { ok: false, error: "canal_no_configurado" });
+        if (mode === "user" && role !== "admin") return json(403, { ok: false, error: "solo_admin" });
+        if (!mailOk) return json(503, { ok: false, error: "canal_no_configurado" });
         const to = (await deps.db.recipients()).map((r) => r.email).slice(0, MAX_TO);
         if (!to.length) return json(409, { ok: false, error: "sin_destinatarios" });
-        const r = await send(ch, to, testMail(viewerUrl), "prueba", null);
-        return json(r.ok ? 200 : 502, { ok: r.ok, test: true, channel: r.channel, recipients: to.length, detail: r.detail });
+        const mail = testMail(viewerUrl);
+        const rs = await Promise.all(to.map((t) => deliver(f, c, env, t, mail, "prueba", null)));
+        const okN = rs.filter((r) => r.ok).length;
+        return json(okN ? 200 : 502, {
+          ok: okN > 0, test: true, recipients: to.length, sent: okN, failed: to.length - okN,
+          channel: rs.find((r) => r.ok)?.channel ?? "-", detail: okN ? "ok" : rs[0].detail,
+        });
       }
       if (mode !== "system") return json(403, { ok: false, error: "solo_prueba" });
 
@@ -347,29 +535,62 @@ export function makeHandler(deps: Deps) {
         // Solo "atendida" si la fila existe en event_acks; un fallo de lectura lanza (500) y se reintenta.
         if (await deps.db.acked(ev.id)) return json(200, { ok: true, sent: 0, skipped: "atendida" });
       }
-      const nowMs = now();
       if (cfg.cooldown_s > 0) {
         const since = new Date(nowMs - cfg.cooldown_s * 1000).toISOString();
         if (await deps.db.recentOk(ev.device_id, kind, since, ev.id)) {
           return json(200, { ok: true, sent: 0, skipped: "cooldown" });
         }
       }
-      const to = (await deps.db.recipients()).filter((r) => RANK[r.min_severity] <= sev).map((r) => r.email)
-        .slice(0, MAX_TO);
+      const to = (await deps.db.recipients()).filter((r) => RANK[r.min_severity] <= sev).map((r) => r.email).slice(0, MAX_TO);
+      const subs = pushReady ? (await deps.db.subscriptions()).filter((s) => RANK[s.min_severity] <= sev) : [];
 
-      if (!(await deps.db.claim(ev.id, kind))) return json(200, { ok: true, sent: 0, skipped: "ya_enviado_o_en_curso" });
-      if (!hasChannel) {
-        await deps.db.finish(ev.id, kind, false, "-", to.length, "sin_canal");
+      if (!mailOk && !subs.length) {
+        if (await deps.db.claim(ev.id, kind)) await deps.db.finish(ev.id, kind, false, "-", to.length, "sin_canal", {});
         return json(503, { ok: false, error: "canal_no_configurado" });
       }
-      if (!to.length) {
-        await deps.db.finish(ev.id, kind, true, "-", 0, "sin_destinatarios");
-        return json(200, { ok: true, sent: 0, skipped: "sin_destinatarios" });
+      if (!(await deps.db.claim(ev.id, kind))) return json(200, { ok: true, sent: 0, skipped: "ya_enviado_o_en_curso" });
+
+      const prev = await deps.db.results(ev.id, kind); // un reintento solo repite lo que fallo
+      const results: Results = { ...prev };
+      const mail = mailOk && to.length ? buildMail(ev, sev, kind, nowMs, await deps.db.deviceName(ev.device_id), viewerUrl) : null;
+      const pending = mail ? to.filter((t) => prev[t]?.ok !== true) : [];
+      const urgent = sev >= 2;
+
+      const mailJob = Promise.all(pending.map(async (t) => {
+        const r = await deliver(f, c, env, t, mail!, SEV_NAME[sev], ev.id);
+        results[t] = { ok: r.ok, ch: r.channel, d: r.detail };
+      }));
+      let pushJob: Promise<void> = Promise.resolve();
+      const prevPush = prev.push;
+      if (subs.length && !(prevPush && (prevPush.sent ?? 0) > 0)) {
+        const msg = buildPush(ev, sev, kind, nowMs, viewerUrl);
+        pushJob = (async () => {
+          let sent = 0, failed = 0, gone = 0;
+          await Promise.all(subs.map(async (s) => {
+            const o = await sendPush(f, c, s, msg, subject, nowMs, urgent);
+            if (o === "ok") sent++;
+            else if (o === "gone") {
+              gone++;
+              await deps.db.deleteSub(s.endpoint);
+            } else failed++;
+          }));
+          results.push = { sent, failed, gone };
+        })();
       }
-      const mail = buildMail(ev, sev, kind, nowMs, await deps.db.deviceName(ev.device_id), viewerUrl);
-      const r = await send(ch, to, mail, SEV_NAME[sev], ev.id);
-      await deps.db.finish(ev.id, kind, r.ok, r.channel, to.length, r.detail);
-      return json(r.ok ? 200 : 502, { ok: r.ok, kind, channel: r.channel, sent: r.ok ? to.length : 0, detail: r.detail });
+      await Promise.all([mailJob, pushJob]);
+
+      const mailFailed = pending.filter((t) => results[t]?.ok !== true);
+      const pushFailedAll = !!results.push && (results.push.sent ?? 0) === 0 && (results.push.failed ?? 0) > 0;
+      const allOk = mailFailed.length === 0 && !pushFailedAll;
+      const sentMail = to.filter((t) => results[t]?.ok === true).length;
+      const channels = [results.push?.sent ? "push" : "", ...new Set(to.map((t) => results[t]?.ch ?? "").filter((x) => x && x !== "-"))].filter(Boolean).join("+") || "-";
+      const detail = allOk ? (to.length || subs.length ? "ok" : "sin_destinatarios")
+        : [mailFailed.length ? `correo ${mailFailed.length} fallo(s): ${results[mailFailed[0]]?.d ?? ""}` : "", pushFailedAll ? "push fallo" : ""].filter(Boolean).join("; ");
+      await deps.db.finish(ev.id, kind, allOk, channels, sentMail, detail, results);
+      return json(allOk ? 200 : 502, {
+        ok: allOk, kind, channel: channels, sent: sentMail, failed: mailFailed.length,
+        push: results.push ?? null, ...(allOk && !to.length && !subs.length ? { skipped: "sin_destinatarios" } : {}),
+      });
     } catch {
       return json(500, { ok: false, error: "interno" }); // sin detalles
     }
@@ -391,15 +612,35 @@ async function realDeps(): Promise<Pick<Deps, "db" | "getUser">> {
   };
   const db: Db = {
     async channel() {
-      const r = ok(await c.from("notify_config").select("webhook_secret,webhook_url,resend_from").eq("id", 1).maybeSingle()) as
-        { webhook_secret: string | null; webhook_url: string | null; resend_from: string | null } | null;
-      return { secret: r?.webhook_secret ?? null, webhookUrl: r?.webhook_url ?? null, resendFrom: r?.resend_from ?? null };
+      const r = ok(await c.from("notify_config")
+        .select("webhook_secret,webhook_url,resend_from,email_provider,email_api_key,email_from,email_from_name,vapid_public,vapid_private")
+        .eq("id", 1).maybeSingle()) as Record<string, string | null> | null;
+      const g = (k: string) => r?.[k] ?? null;
+      return {
+        secret: g("webhook_secret"), webhookUrl: g("webhook_url"), resendFrom: g("resend_from"),
+        emailProvider: (g("email_provider") as Channel["emailProvider"]), emailApiKey: g("email_api_key"),
+        emailFrom: g("email_from"), emailFromName: g("email_from_name"),
+        vapidPublic: g("vapid_public"), vapidPrivate: g("vapid_private"),
+      };
     },
     async config() {
       return ok(await c.from("notify_config").select("enabled,remind_after_s,cooldown_s").eq("id", 1).maybeSingle()) as Cfg | null;
     },
     async recipients() {
       return (ok(await c.from("notify_recipients").select("email,min_severity").eq("active", true).limit(MAX_TO)) ?? []) as Recipient[];
+    },
+    async subscriptions(userId) {
+      let q = c.from("push_subscriptions").select("endpoint,p256dh,auth,min_severity").limit(200);
+      if (userId) q = q.eq("user_id", userId);
+      return (ok(await q) ?? []) as Sub[];
+    },
+    async deleteSub(endpoint) {
+      await c.from("push_subscriptions").delete().eq("endpoint", endpoint);
+    },
+    async saveVapid(publicKey, privateJwk) {
+      const r = await c.from("notify_config").update({ vapid_public: publicKey, vapid_private: privateJwk })
+        .eq("id", 1).is("vapid_public", null);
+      if (r.error) throw new Error("db");
     },
     async event(id) {
       return ok(await c.from("events").select("id,created_at,device_id,type,lat,lng,payload").eq("id", id).maybeSingle()) as Ev | null;
@@ -416,9 +657,14 @@ async function realDeps(): Promise<Pick<Deps, "db" | "getUser">> {
       if (r.error) throw new Error("db");
       return r.data === true;
     },
-    async finish(eventId, kind, okFlag, channel, recipients, detail) {
+    async results(eventId, kind) {
+      const r = ok(await c.from("notify_log").select("results").eq("event_id", eventId).eq("kind", kind).maybeSingle()) as
+        { results: Results } | null;
+      return r?.results ?? {};
+    },
+    async finish(eventId, kind, okFlag, channel, recipients, detail, results) {
       const r = await c.from("notify_log")
-        .update({ status: okFlag ? "ok" : "error", channel, recipients, detail: detail.slice(0, 200), sent_at: new Date().toISOString() })
+        .update({ status: okFlag ? "ok" : "error", channel, recipients, detail: detail.slice(0, 200), results, sent_at: new Date().toISOString() })
         .eq("event_id", eventId).eq("kind", kind);
       if (r.error) throw new Error("db");
     },
@@ -432,7 +678,7 @@ async function realDeps(): Promise<Pick<Deps, "db" | "getUser">> {
   };
   const getUser: Deps["getUser"] = async (jwt) => {
     const { data, error } = await c.auth.getUser(jwt);
-    return error || !data?.user ? null : (data.user as { app_metadata?: Record<string, unknown> });
+    return error || !data?.user ? null : (data.user as { id?: string; app_metadata?: Record<string, unknown> });
   };
   return { db, getUser };
 }

@@ -77,7 +77,7 @@ const assigns = [{ id: 'a1', device_id: '4132', person_id: 'p1', starts_at: iso(
 // ---- Tanda C: tablas de la migracion 013 ----
 const NEW013 = ['assist_sessions', 'epp_deliveries', 'training_records', 'training_attendees', 'training_attendees_audit', 'access_log', 'org_settings', 'rpc/log_access', 'rpc/create_training'];
 // ---- Avisos por correo: migracion 014 ----
-const NEW014 = ['notify_config', 'notify_recipients', 'rpc/notify_status', 'rpc/notify_bootstrap', 'rpc/notify_set_channel'];
+const NEW014 = ['notify_config', 'notify_recipients', 'rpc/notify_status', 'rpc/notify_bootstrap', 'rpc/notify_set_channel', 'rpc/notify_set_email', 'rpc/notify_push_key', 'rpc/push_subscribe', 'push_subscriptions'];
 const SEED_NREC = [{ email: 'nombre@ejemplo.com', active: true, min_severity: 'alta' }];
 const SEED_NCFG = { enabled: false, remind_after_s: 180, cooldown_s: 300 };
 const PNG_SHA = crypto.createHash('sha256').update(PNG).digest('hex');
@@ -121,6 +121,12 @@ async function mock(ctx, opts = {}) {
     if (u.pathname.includes('/functions/v1/notify')) {   // Edge Function de avisos: prueba del admin
       let b = null; try { b = JSON.parse(req.postData() || 'null'); } catch {}
       (S.fn = S.fn || []).push({ body: b, auth: req.headers()['authorization'] || '' });
+      if (b && b.bootstrap_push) { S.vapid = S.vapid || 'B' + 'A'.repeat(86); return json({ ok: true, created: true }); }
+      if (b && b.test_push) {
+        const n = (S.psubs || []).length;
+        if (S.fnStatus && S.fnStatus !== 200) return json({ ok: false, error: 'x' }, S.fnStatus);
+        return n ? json({ ok: true, test: true, push: { sent: n, failed: 0, gone: 0 } }) : json({ ok: false, error: 'sin_dispositivos' }, 409);
+      }
       const st = S.fnStatus || 200;
       return json(st === 200 ? { ok: true, test: true, channel: 'webhook', recipients: (S.nrec = S.nrec || SEED_NREC.map(x => ({ ...x }))).filter(r => r.active).length } : { ok: false, error: 'x' }, st);
     }
@@ -145,9 +151,29 @@ async function mock(ctx, opts = {}) {
       let body = null; try { body = JSON.parse(req.postData() || 'null'); } catch {}
       (S.posts = S.posts || []).push({ t, method: req.method(), body });
       if (t === 'rpc/notify_status') {
-        return json(role === 'admin' ? { ready: NC.enabled, enabled: NC.enabled, secret_ok: true, channel_ok: !!S.nchan, recipients: NR.filter(r => r.active).length, remind_after_s: NC.remind_after_s, cooldown_s: NC.cooldown_s } : { ready: NC.enabled });
+        const PS = (S.psubs = S.psubs || []);
+        if (role !== 'admin') return json({ ready: NC.enabled, push_ok: !!S.vapid, my_devices: PS.length });
+        return json(role === 'admin' ? { ready: NC.enabled, enabled: NC.enabled, secret_ok: true, channel_ok: !!S.nchan, email_ok: !!S.nemail, email_provider: S.nemail && S.nemail.p, email_from: S.nemail && S.nemail.f, email_from_name: S.nemail && S.nemail.n, push_ok: !!S.vapid, push_devices: PS.length, my_devices: PS.length, recipients: NR.filter(r => r.active).length, remind_after_s: NC.remind_after_s, cooldown_s: NC.cooldown_s } : { ready: NC.enabled });
       }
       if (t === 'rpc/notify_bootstrap') return json(true);
+      if (t === 'rpc/notify_push_key') return json(S.vapid || null);
+      if (t === 'rpc/push_subscribe') {
+        const PS = (S.psubs = S.psubs || []), i = PS.findIndex(x => x.p_endpoint === body.p_endpoint);
+        if (i >= 0) PS[i] = body; else PS.push(body);
+        return json(true);
+      }
+      if (t === 'push_subscriptions') {
+        const ep = decodeURIComponent((u.searchParams.get('endpoint') || '').replace(/^eq\./, ''));
+        S.psubs = (S.psubs || []).filter(x => x.p_endpoint !== ep);
+        return route.fulfill({ status: 204, headers: CORS });
+      }
+      if (t === 'rpc/notify_set_email') {
+        const pr = String(body.p_provider || '');
+        if (!pr) { S.nemail = null; return json(false); }
+        if (!body.p_api_key && !S.nemail) return json({ code: '22023', message: 'notify_set_email: falta la clave de API' }, 400);
+        S.nemail = { p: pr, f: body.p_from, n: body.p_from_name || null, k: body.p_api_key || (S.nemail && S.nemail.k) };
+        return json(true);
+      }
       if (t === 'rpc/notify_set_channel') {
         const v = String((body && body.p_url) || '').trim();
         if (v && !v.startsWith('https://')) return json({ code: '22023', message: 'notify_set_channel: la URL debe empezar con https://' }, 400);
@@ -1413,30 +1439,30 @@ if (!process.env.ONLY4) {
   const box = page.locator('.nf-box');
   check(await waitFor(async () => /nombre@ejemplo\.com/.test(await box.innerText())) && /Estado: desactivado/.test(await box.innerText()), 'avisos: el admin ve la lista de destinatarios y el estado');
   check(await unnamed(page, '.nf-box') === 0, 'a11y: campos de avisos con nombre accesible');
-  check(/Canal: sin configurar/.test(await box.innerText()) && /falta: la URL del canal de envío/.test(await box.innerText()), 'avisos: sin canal el estado dice que falta la URL del canal');
-  const chIn = box.locator('input[type=password]');
+  check(/Canal: sin configurar/.test(await box.innerText()) && /falta: un proveedor de correo/.test(await box.innerText()), 'avisos: sin canal el estado dice que falta la URL del canal');
+  const chIn = box.locator('form[data-nf=canal] input[type=password]');
   await chIn.fill('http://inseguro.example.test/x');
   await box.getByRole('button', { name: 'Guardar canal' }).click();
   check(/empieza con https/.test(await box.innerText()) && !posts(state, 'rpc/notify_set_channel').length, 'avisos: rechaza una URL que no es https antes de enviar');
   await chIn.fill('https://hooks.example.test/flujo?sig=ABC');
   await box.getByRole('button', { name: 'Guardar canal' }).click();
   check(await waitFor(() => posts(state, 'rpc/notify_set_channel').some(x => x.body && x.body.p_url === 'https://hooks.example.test/flujo?sig=ABC')), 'avisos: guarda la URL del canal por rpc notify_set_channel');
-  check(await waitFor(async () => /Canal: configurado/.test(await box.innerText())) && (await box.locator('input[type=password]').inputValue()) === '' && !/hooks.example.test/.test(await box.innerText()), 'avisos: el canal queda "configurado" y la URL no se vuelve a mostrar');
-  check((await box.locator('input[type=password]').getAttribute('aria-label') || '').includes('Power Automate'), 'avisos: el campo del canal tiene nombre accesible');
+  check(await waitFor(async () => /Canal: configurado/.test(await box.innerText())) && (await chIn.inputValue()) === '' && !/hooks.example.test/.test(await box.innerText()), 'avisos: el canal queda "configurado" y la URL no se vuelve a mostrar');
+  check((await chIn.getAttribute('aria-label') || '').includes('Power Automate'), 'avisos: el campo del canal tiene nombre accesible');
   check(/Crítica: SOS y caída/.test(await box.innerText()) || (await box.locator('option', { hasText: 'Crítica: SOS y caída' }).count()) > 0, 'avisos: selector de nivel con la explicacion de cada nivel');
   await box.locator('button', { hasText: 'Activar avisos' }).click();
   check(await waitFor(() => posts(state, 'notify_config').some(x => x.method === 'PATCH' && x.body.enabled === true)) && await waitFor(async () => /Estado: ACTIVADO/.test(await box.innerText())), 'avisos: Activar avisos actualiza notify_config.enabled');
   check(await waitFor(async () => /por correo activado \(1 destinatario, recordatorio a los 3 min\)/.test(await page.locator('#escState').innerText())), 'avisos: el encabezado pasa a "activado" con destinatarios y recordatorio');
-  await box.locator('input[type=email]').fill('no-es-un-correo');
-  await box.locator('form:has(input[type=email]) button[type=submit]').click();
+  await box.locator('form[data-nf=add] input[type=email]').fill('no-es-un-correo');
+  await box.locator('form[data-nf=add] button[type=submit]').click();
   check(/correo válido/.test(await box.innerText()) && !posts(state, 'notify_recipients').length, 'avisos: valida el correo antes de enviar');
-  await box.locator('input[type=email]').fill('  Otro@Ejemplo.com ');
-  await box.locator('select').last().selectOption('critica');
-  await box.locator('form:has(input[type=email]) button[type=submit]').click();
+  await box.locator('form[data-nf=add] input[type=email]').fill('  Otro@Ejemplo.com ');
+  await box.locator('form[data-nf=add] select').selectOption('critica');
+  await box.locator('form[data-nf=add] button[type=submit]').click();
   check(await waitFor(() => posts(state, 'notify_recipients').some(x => x.method === 'POST' && x.body.email === 'otro@ejemplo.com' && x.body.min_severity === 'critica' && x.body.active === true)), 'avisos: agrega el destinatario en minusculas y con su nivel');
   check(await waitFor(async () => /otro@ejemplo\.com/.test(await box.innerText())), 'avisos: el nuevo destinatario aparece en la lista');
-  await box.locator('input[type=email]').fill('otro@ejemplo.com');
-  await box.locator('form:has(input[type=email]) button[type=submit]').click();
+  await box.locator('form[data-nf=add] input[type=email]').fill('otro@ejemplo.com');
+  await box.locator('form[data-nf=add] button[type=submit]').click();
   check(await waitFor(async () => /ya está en la lista/.test(await box.innerText())), 'avisos: duplicado -> mensaje claro');
   await box.locator('li select').first().selectOption('media');
   check(await waitFor(() => posts(state, 'notify_recipients').some(x => x.method === 'PATCH' && x.body.min_severity === 'media')), 'avisos: cambia el nivel de un destinatario');
@@ -1473,6 +1499,94 @@ if (!process.env.ONLY4) {
   await p3.click('#tabConst');
   await p3.click('#constTabOrg');
   check(await waitFor(async () => /Falta aplicar la migración 014/.test(await p3.locator('#constBody').innerText())), 'avisos sin migracion 014: el admin ve "Falta aplicar la migración 014"');
+  await c3.close();
+}
+
+// ---- 15) Push del navegador + proveedor de correo (migracion 015) ----
+const PUSH_INIT = `(() => {
+  window.__push = { asked: 0, unsub: 0, userVisibleOnly: null, keyLen: 0 };
+  const ep = 'https://push.example.test/send/abc123';
+  let sub = null;
+  const mkSub = () => ({ endpoint: ep, toJSON() { return { endpoint: ep, keys: { p256dh: 'BPpPpPpPpPpPpPpPpPpPpPpPpPpPpPp', auth: 'aaaaaaaaaaaaaaaaaaaa' } }; },
+    async unsubscribe() { sub = null; window.__push.unsub++; return true; } });
+  const reg = { pushManager: { async getSubscription() { return sub; },
+    async subscribe(o) { window.__push.userVisibleOnly = o.userVisibleOnly; window.__push.keyLen = new Uint8Array(o.applicationServerKey).length; sub = mkSub(); return sub; } } };
+  Object.defineProperty(navigator.serviceWorker, 'ready', { get: () => Promise.resolve(reg) });
+  const N = function () {}; N.permission = 'default';
+  N.requestPermission = async () => { window.__push.asked++; N.permission = 'granted'; return 'granted'; };
+  window.Notification = N;
+})();`;
+{
+  const state = {};
+  const [ctx, page] = await newPage({ t4: true, state }, false, PUSH_INIT);
+  await closeOv(page);
+  await page.locator('#pushBox > summary').click();
+  check(await waitFor(async () => /No activado en este dispositivo/.test(await page.locator('#pushBody').innerText())) && /pantalla de inicio/.test(await page.locator('#pushBody').innerText()), 'push: estado "No activado" y nota para iPhone');
+  check(await unnamed(page, '#pushBody') === 0, 'a11y: controles de push con nombre accesible');
+  const hh = await page.evaluate(() => [...document.querySelectorAll('#pushBody button, #pushBody select')].every(e => e.getBoundingClientRect().height >= 43.5));
+  check(hh, 'push: botones y selector de >= 44 px');
+  await page.locator('#pushToggle').click();
+  check(await waitFor(() => (state.fn || []).some(x => x.body && x.body.bootstrap_push === true)), 'push: sin clave VAPID el admin la genera (funcion notify {bootstrap_push})');
+  check(await waitFor(() => (state.psubs || []).some(x => x.p_endpoint === 'https://push.example.test/send/abc123' && x.p_p256dh && x.p_auth && x.p_min === 'alta')), 'push: guarda la suscripcion por rpc push_subscribe con el nivel');
+  check(await waitFor(async () => /Activado en este dispositivo/.test(await page.locator('#pushBody').innerText())), 'push: estado "Activado en este dispositivo"');
+  const pv = await page.evaluate(() => window.__push);
+  check(pv.asked >= 1 && pv.userVisibleOnly === true && pv.keyLen === 65, 'push: pide permiso y se suscribe con userVisibleOnly y la clave VAPID (65 bytes)');
+  check(await waitFor(async () => /push: 1 dispositivo/.test(await page.locator('#escState').innerText())), 'push: el encabezado cuenta los dispositivos');
+  await page.locator('#pushLevel').selectOption('critica');
+  check(await waitFor(() => (state.psubs || []).some(x => x.p_min === 'critica')), 'push: cambiar el nivel actualiza la suscripcion');
+  await page.locator('#pushTest').click();
+  check(await waitFor(() => (state.fn || []).some(x => x.body && x.body.test_push === true && /^Bearer /.test(x.auth))) && await waitFor(async () => /Aviso de prueba enviado/.test(await page.locator('#pushBody').innerText())), 'push: "Enviar aviso de prueba a mis dispositivos" llama a notify {test_push} con el JWT');
+  // proveedor de correo (solo admin)
+  await page.click('#tabConst');
+  await page.click('#constTabOrg');
+  const box = page.locator('.nf-box');
+  check(await waitFor(async () => /Correo: sin configurar/.test(await box.innerText())) && /Push: 1 dispositivo/.test(await box.innerText()), 'correo: estado "sin configurar" y dispositivos push');
+  check(/Remitentes y IP/.test(await box.innerText()) || (await box.locator('details.fold li').count()) === 3, 'correo: ayuda con los 3 pasos');
+  check(await unnamed(page, '.nf-box') === 0, 'a11y: formulario del proveedor con nombre accesible');
+  const mf = box.locator('form[data-nf=mail]');
+  await mf.locator('button[type=submit]').click();
+  check(/correo remitente/.test(await box.innerText()) && !posts(state, 'rpc/notify_set_email').length, 'correo: valida el remitente antes de enviar');
+  await mf.locator('input[type=email]').fill('Avisos@Ejemplo.com');
+  await mf.locator('button[type=submit]').click();
+  check(/clave de API/.test(await box.innerText()) && !posts(state, 'rpc/notify_set_email').length, 'correo: exige la clave la primera vez');
+  await mf.locator('input[type=password]').fill('xkeysib-clave-de-prueba-1234');
+  await mf.locator('input[type=text]').fill('Casco Inteligente');
+  await mf.locator('button[type=submit]').click();
+  check(await waitFor(() => posts(state, 'rpc/notify_set_email').some(x => x.body && x.body.p_provider === 'brevo' && x.body.p_api_key === 'xkeysib-clave-de-prueba-1234' && x.body.p_from === 'avisos@ejemplo.com' && x.body.p_from_name === 'Casco Inteligente')), 'correo: guarda proveedor, clave, remitente y nombre por rpc notify_set_email');
+  check(await waitFor(async () => /Correo: configurado \(Brevo\)/.test(await box.innerText())) && (await mf.locator('input[type=password]').inputValue()) === '' && !/xkeysib/.test(await box.innerText()), 'correo: queda "configurado (Brevo)" y la clave no se vuelve a mostrar');
+  await mf.locator('select').selectOption('resend');
+  await mf.locator('button[type=submit]').click();
+  check(await waitFor(() => posts(state, 'rpc/notify_set_email').some(x => x.body && x.body.p_provider === 'resend' && x.body.p_api_key === '')), 'correo: cambiar de proveedor sin pegar la clave conserva la guardada');
+  await box.getByRole('button', { name: 'Quitar el proveedor de correo' }).click();
+  check(await waitFor(() => posts(state, 'rpc/notify_set_email').some(x => x.body && x.body.p_provider === '')) && await waitFor(async () => /Correo: sin configurar/.test(await box.innerText())), 'correo: quitar proveedor');
+  // desactivar en este dispositivo
+  await page.click('#tabMain');
+  await page.locator('#pushToggle').click();
+  check(await waitFor(async () => /No activado en este dispositivo/.test(await page.locator('#pushBody').innerText())) && (await page.evaluate(() => window.__push.unsub)) === 1 && (state.psubs || []).length === 0, 'push: desactivar en este dispositivo (unsubscribe y baja en el servidor)');
+  await shot(page, TAG + '-push-1440');
+  await ctx.close();
+
+  // viewer: sin clave el visor explica que lo activa un admin; con clave se suscribe sin tocar la funcion; sin formulario de correo
+  const st2 = {};
+  const [c2, p2] = await newPage({ t4: true, role: 'viewer', state: st2 }, false, PUSH_INIT);
+  await closeOv(p2);
+  await p2.locator('#pushBox > summary').click();
+  await p2.locator('#pushToggle').click();
+  check(await waitFor(async () => /tiene que activarlos|tienen que activarlos|un administrador tiene que activarlos/.test(await p2.locator('#pushBody').innerText())) && !(st2.fn || []).length, 'push viewer: sin clave en el servidor lo dice y no llama a la funcion de admin');
+  st2.vapid = 'B' + 'A'.repeat(86);
+  await p2.locator('#pushToggle').click();
+  check(await waitFor(() => (st2.psubs || []).length === 1) && await waitFor(async () => /Activado en este dispositivo/.test(await p2.locator('#pushBody').innerText())), 'push viewer: con la clave publicada se suscribe');
+  await p2.click('#tabConst');
+  await p2.click('#constTabOrg');
+  await p2.waitForTimeout(500);
+  check((await p2.locator('.nf-box').count()) === 0, 'push viewer: no ve el formulario de proveedor de correo');
+  await c2.close();
+
+  // navegador sin Push (iPhone sin instalar): mensaje claro
+  const [c3, p3] = await newPage({ t4: true, state: {} }, false, 'delete window.PushManager;');
+  await closeOv(p3);
+  await p3.locator('#pushBox > summary').click();
+  check(await waitFor(async () => /no permite avisos push/.test(await p3.locator('#pushBody').innerText())) && /pantalla de inicio/.test(await p3.locator('#pushBody').innerText()), 'push: navegador sin Push -> mensaje con la nota de instalar la app');
   await c3.close();
 }
 

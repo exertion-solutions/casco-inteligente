@@ -338,7 +338,13 @@ Viene **apagado**. Contrato y detalles: `docs/PROTOCOLO-AVISOS.md`.
 
 **17.5 Probar y activar.** **Enviar correo de prueba**: tiene que llegar. Despues **Activar avisos**.
 
-**17.6 Opcional: Resend** en vez de Power Automate: variable `RESEND_API_KEY` en la funcion y `update public.notify_config set resend_from = 'Avisos <avisos@tu-dominio>';`.
+**17.6 Camino recomendado (migracion 015): push + Brevo/Resend, sin Power Automate.**
+1. **SQL Editor** > **New query**, pega TODO `supabase/migrations/015_push_y_proveedor_correo.sql`, **Run** (despues de la 014; se puede repetir). Si usaste `ejecutar-todo.sql` actualizado ya esta incluida.
+2. Volve a publicar la funcion: **Edge Functions** > `notify` > pega el `index.ts` nuevo > **Deploy** (Verify JWT sigue apagado).
+3. **Brevo** (gratis): crea la cuenta en brevo.com; en **Remitentes y IP** agrega y verifica el correo remitente; en **SMTP y API** > **Claves de API** genera una clave v3. (**Resend**: cuenta en resend.com, verifica el dominio y crea la clave en **API Keys**.)
+4. En el visor (admin): **Constancias** > **Empleador** > **Avisos por correo**: elegi el proveedor, pega la clave, el remitente y el nombre > **Guardar proveedor**; agrega los destinatarios; **Enviar correo de prueba**.
+5. En cada dispositivo: **Avisos en este dispositivo** > **Activar avisos en este dispositivo** (en iPhone/iPad primero instala la app: Compartir > Agregar a inicio). **Enviar aviso de prueba a mis dispositivos**.
+6. **Activar avisos**. No hay que cargar variables ni secretos en el panel de Supabase.
 
 **17.7 Ver que paso.** `select * from public.notify_log order by sent_at desc;` (una fila por alerta y tipo: `ok` o `error` con el motivo). Apagar: boton **Desactivar avisos** o `update public.notify_config set enabled = false;`.
 

@@ -23,7 +23,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@400;500;600;700&amp;family=IBM+Plex+Mono:wght@400;500&amp;display=swap">
 <script>try{var t=localStorage.getItem('casco-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
-<link rel="stylesheet" href="app.css?v=202610131700">
+<link rel="stylesheet" href="app.css?v=202610131900">
 </head>
 <body>
 <a class="skip" href="#main">Saltar al contenido</a>
@@ -108,6 +108,10 @@
         <button id="testMic" class="ghost" type="button">Probar micrófono</button>
         <p id="escState" class="mute esc">Aviso a responsables: consultando…</p>
       </div>
+      <details id="pushBox" class="block fold noprint">
+        <summary><h2 class="sec">Avisos en este dispositivo <span id="pushBadge" class="mute"></span></h2></summary>
+        <div id="pushBody"></div>
+      </details>
       <p id="toolbarAud" class="mute rolenote hidden">Perfil de auditor: solo lectura. Podés ver, exportar e imprimir; no podés atender alertas ni mandar órdenes.</p>
       <p id="cmdLive" class="sr-only" role="status" aria-live="polite"></p>
 
@@ -293,7 +297,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <script src="config.js?v=202610122230"></script>
-<script src="app.js?v=202610131700"></script>
+<script src="app.js?v=202610131900"></script>
 <script>try{if('serviceWorker'in navigator&&(location.protocol==='https:'||location.hostname==='localhost'))addEventListener('load',function(){navigator.serviceWorker.register('sw.js',{scope:'./'}).catch(function(){})})}catch(e){}</script>
 </body>
 </html>

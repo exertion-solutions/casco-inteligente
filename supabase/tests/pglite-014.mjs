@@ -56,6 +56,9 @@ await db.exec(ET);
 ok(true, 'ejecutar-todo.sql (001-014) carga sin errores');
 await db.exec(sb('migrations/014_avisos_correo.sql'));
 await db.exec(sb('migrations/014_avisos_correo.sql'));
+await db.exec(sb('migrations/015_push_y_proveedor_correo.sql'));
+await db.exec(sb('migrations/015_push_y_proveedor_correo.sql'));
+ok(true, '015 (aditiva) re-ejecutada 2 veces sin errores');
 ok((await one(`select count(*) from cron.job where jobname = 'casco-notify-reminders'`)) == 1, '014 re-ejecutada: sigue 1 solo job de cron');
 ok((await one(`select schedule from cron.job where jobname = 'casco-notify-reminders'`)) === '* * * * *', 'job de recordatorios cada minuto');
 ok((await one(`select count(*) from public.notify_config`)) == 1 && (await one(`select enabled from public.notify_config`)) === false, 'notify_config: 1 fila, enabled = false por defecto');
@@ -180,6 +183,42 @@ const st = await commitAs(ad, `select public.notify_status()`);
 ok(st.channel_ok === true && st.secret_ok === true && !JSON.stringify(st).includes('hooks.example') && !JSON.stringify(st).includes(sec1), 'notify_status: channel_ok sin exponer URL ni clave');
 ok(await commitAs(ad, `select public.notify_set_channel('')`) === false && (await one(`select webhook_url from public.notify_config`)) === null, 'set_channel: vacio quita el canal');
 ok(await err(`update public.notify_config set webhook_url = 'ftp://x'`) !== null, 'webhook_url: check https');
+
+// ---- 015: push_subscribe / visibilidad / notify_push_key / notify_set_email ----
+const v2 = '{"role":"authenticated","sub":"00000000-0000-0000-0000-00000000000b","app_metadata":{"role":"viewer"}}';
+const P = `'BPpPpPpPpPpPpPpPpPpPpPpPpPpPpPp','aaaaaaaaaaaaaaaaaaaa','ua','alta'`;
+ok(await commitAs(vw, `select public.push_subscribe('https://push.example.test/a1', ${P})`) === true, 'push_subscribe: viewer registra un dispositivo');
+ok(await commitAs(vw, `select public.push_subscribe('https://push.example.test/a1', ${P})`) === true
+  && Number(await one(`select count(*) from public.push_subscriptions where endpoint = 'https://push.example.test/a1'`)) === 1, 'push_subscribe: idempotente (upsert)');
+ok(await failAs(vw, `select public.push_subscribe('http://push.example.test/x', ${P})`) !== null, 'push_subscribe: http rechazado');
+ok(await failAs(dv, `select public.push_subscribe('https://push.example.test/d', ${P})`) !== null, 'push_subscribe: device rechazado');
+await commitAs(v2, `select public.push_subscribe('https://push.example.test/b1', ${P})`);
+ok(Number(await commitAs(vw, `select count(*) from public.push_subscriptions`)) === 1, 'push: el viewer ve solo sus dispositivos');
+ok(Number(await commitAs(ad, `select count(*) from public.push_subscriptions`)) === 2, 'push: el admin ve todos');
+await commitAs(v2, `select public.push_subscribe('https://push.example.test/a1', ${P})`);
+ok(await one(`select user_id::text from public.push_subscriptions where endpoint = 'https://push.example.test/a1'`) === '00000000-0000-0000-0000-00000000000b', 'push_subscribe: el dispositivo pasa al usuario que lo activa');
+for (let i = 0; i < 10; i++) await commitAs(vw, `select public.push_subscribe('https://push.example.test/m${i}', ${P})`);
+ok(await failAs(vw, `select public.push_subscribe('https://push.example.test/m10', ${P})`) !== null, 'push_subscribe: maximo 10 dispositivos por usuario');
+ok(await commitAs(vw, `select public.notify_push_key()`) === null, 'notify_push_key: null hasta que la funcion genere el par');
+await db.exec(`update public.notify_config set vapid_public = 'BClavePublicaDePrueba', vapid_private = '{"d":"x"}' where id = 1`);
+ok(await commitAs(vw, `select public.notify_push_key()`) === 'BClavePublicaDePrueba', 'notify_push_key: devuelve solo la publica');
+ok(await failAs(dv, `select public.notify_push_key()`) !== null, 'notify_push_key: device rechazado');
+ok(await failAs(vw, `select public.notify_set_email('brevo','xkeysib-clave-de-prueba-1234','avisos@ejemplo.com',null)`) !== null, 'notify_set_email: viewer rechazado');
+ok(await failAs(ad, `select public.notify_set_email('otro','xkeysib-clave-de-prueba-1234','avisos@ejemplo.com',null)`) !== null, 'notify_set_email: proveedor invalido');
+ok(await failAs(ad, `select public.notify_set_email('brevo','','avisos@ejemplo.com',null)`) !== null, 'notify_set_email: sin clave previa exige clave');
+ok(await commitAs(ad, `select public.notify_set_email('Brevo','xkeysib-clave-de-prueba-1234',' Avisos@Ejemplo.com ','Avisos Casco')`) === true, 'notify_set_email: guarda y devuelve true (nunca la clave)');
+ok((await one(`select email_from from public.notify_config`)) === 'avisos@ejemplo.com' && (await one(`select email_provider from public.notify_config`)) === 'brevo', 'notify_set_email: normaliza proveedor y remitente');
+ok(await commitAs(ad, `select public.notify_set_email('resend','','avisos@ejemplo.com','')`) === true
+  && (await one(`select email_api_key from public.notify_config`)) === 'xkeysib-clave-de-prueba-1234', 'notify_set_email: clave vacia conserva la guardada');
+const st2 = await commitAs(ad, `select public.notify_status()`);
+ok(st2.email_ok === true && st2.push_ok === true && Number(st2.push_devices) === 12 && st2.email_provider === 'resend'
+  && !JSON.stringify(st2).includes('xkeysib') && !JSON.stringify(st2).includes('"d":"x"'), 'notify_status: email_ok / push_ok / dispositivos, sin claves');
+const st3 = await commitAs(vw, `select public.notify_status()`);
+ok(st3.push_ok === true && Number(st3.my_devices) === 10 && !('email_ok' in st3), 'notify_status viewer: push_ok y mis dispositivos, sin detalle de correo');
+ok(await commitAs(ad, `select public.notify_set_email('', '', '', '')`) === false
+  && (await one(`select email_api_key from public.notify_config`)) === null, 'notify_set_email: vacio quita proveedor y borra la clave');
+ok(await err(`update public.notify_config set email_provider = 'smtp'`) !== null, 'email_provider: check brevo|resend');
+await db.exec(`delete from public.push_subscriptions; update public.notify_config set vapid_public = null, vapid_private = null`);
 
 // ---- rls_test.sql (arranca de una instalacion limpia: sin destinatarios, log ni secreto) ----
 await db.exec(`delete from public.notify_recipients; delete from public.notify_log; delete from public.events;

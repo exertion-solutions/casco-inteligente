@@ -671,3 +671,5 @@ button.trash.icon-only { min-width: 44px; padding: 0; }
 .nf-box { margin-top: var(--sp-5); padding-top: var(--sp-4); border-top: 1px solid var(--line); }
 .nf-list { list-style: none; padding: 0; margin: var(--sp-3) 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .nf-list li { overflow-wrap: anywhere; }
+.nf-help { margin: var(--sp-2) 0 0; padding-left: var(--sp-5); }
+.nf-mail { margin-top: var(--sp-4); }

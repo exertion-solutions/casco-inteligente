@@ -1310,14 +1310,14 @@
     let mail;
     if (s.ready === true) {
       mail = 'por correo activado';
-      if (isAdmin() && s.channel_ok === false) mail = 'por correo activado, pero falta el canal de envío (no sale ningún aviso)';
+      if (isAdmin() && s.channel_ok === false && s.email_ok !== true) mail = 'por correo activado, pero falta el canal de envío (no sale ningún aviso)';
       else if (isAdmin() && num(s.recipients) != null) {
         mail = s.recipients === 0 ? 'por correo activado, pero sin destinatarios (no sale ningún aviso)'
           : 'por correo activado (' + (s.recipients === 1 ? '1 destinatario' : s.recipients + ' destinatarios') + (num(s.remind_after_s) ? ', recordatorio a los ' + secTxt(s.remind_after_s) : '') + ')';
       }
     } else if (isAdmin() && s.enabled === true && s.secret_ok === false) mail = 'por correo: falta cargar la clave en el servidor (no sale ningún aviso)';
     else mail = 'por correo desactivado';
-    el.textContent = 'Aviso a responsables: ' + mail + (on.length ? ' · por Teams si nadie atiende en ' + secTxt(Math.min(...on)) : '');
+    el.textContent = 'Aviso a responsables: ' + mail + (isAdmin() && s.push_ok === true ? ' · push: ' + (num(s.push_devices) || 0) + (s.push_devices === 1 ? ' dispositivo' : ' dispositivos') : '') + (on.length ? ' · por Teams si nadie atiende en ' + secTxt(Math.min(...on)) : '');
   }
 
   // ---- Evacuacion y mensajes a cascos (public.broadcasts / broadcast_acks; docs/PROTOCOLO-CENTRO.md seccion 4) ----
@@ -4813,6 +4813,114 @@
     if (CN.trunc.trn) out.push(mk('p', 'mute', 'Se muestran las primeras ' + CONST_MAX + ' capacitaciones: acotá las fechas para ver el resto.'));
     return out;
   }
+  // ---- Avisos push en este dispositivo (Web Push; migracion 015, docs/PROTOCOLO-AVISOS.md) ----
+  // La suscripcion vive en el navegador; el servidor guarda endpoint + claves publicas en push_subscriptions (rpc push_subscribe).
+  const PUSH = { ok: 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window, reg: null, sub: null, level: 'alta', msg: '', bad: false, busy: false, ready: false };
+  try { PUSH.level = localStorage.getItem('casco-push-level') || 'alta'; } catch (_) {}
+  const urlB64 = v => { const b = (v + '='.repeat((4 - v.length % 4) % 4)).replace(/-/g, '+').replace(/_/g, '/'), r = atob(b); return Uint8Array.from(r, c => c.charCodeAt(0)); };
+  const PUSH_LV = [['critica', 'Crítica: SOS y caída'], ['alta', 'Alta: + peligro e inmovilidad'], ['media', 'Media: + sin usar y zonas restringidas']];
+  async function pushReg() {
+    if (!PUSH.reg) PUSH.reg = await Promise.race([navigator.serviceWorker.ready, new Promise((_, no) => setTimeout(() => no(new Error('sw')), 5000))]);
+    return PUSH.reg;
+  }
+  async function pushKey() {
+    const r = await tryQ(() => sb.rpc('notify_push_key'));
+    return !r.error && typeof r.data === 'string' && r.data ? r.data : null;
+  }
+  function pushSay(t, bad) { PUSH.msg = t; PUSH.bad = !!bad; if (t) announce(t); pushRender(); }
+  async function pushSave() {
+    const j = PUSH.sub.toJSON(), k = j.keys || {};
+    return tryQ(() => sb.rpc('push_subscribe', { p_endpoint: PUSH.sub.endpoint, p_p256dh: k.p256dh || '', p_auth: k.auth || '', p_ua: navigator.userAgent.slice(0, 200), p_min: PUSH.level }));
+  }
+  async function pushInit() {
+    if (PUSH.ok) { try { PUSH.sub = await (await pushReg()).pushManager.getSubscription(); } catch (_) { PUSH.sub = null; } }
+    PUSH.ready = true; pushRender();
+  }
+  async function pushEnable() {
+    if (PUSH.busy) return;
+    PUSH.busy = true; pushSay('Activando…');
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') return pushSay('El navegador no dio permiso para mostrar avisos. Habilitalo en los ajustes del sitio y probá de nuevo.', true);
+      let key = await pushKey();
+      if (!key && isAdmin()) { await tryQ(() => sb.functions.invoke('notify', { body: { bootstrap_push: true } })); key = await pushKey(); }
+      if (!key) return pushSay('Los avisos en el dispositivo todavía no están habilitados en el servidor: un administrador tiene que activarlos una vez desde su cuenta.', true);
+      const reg = await pushReg();
+      const opts = { userVisibleOnly: true, applicationServerKey: urlB64(key) };
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) sub = await reg.pushManager.subscribe(opts);
+      PUSH.sub = sub;
+      const r = await pushSave();
+      if (r.error) {
+        try { await sub.unsubscribe(); } catch (_) {}
+        PUSH.sub = null;
+        return pushSay(isAuthErr(r.error) ? 'Sesión vencida: ingresá de nuevo.' : tableMissing(r) ? 'Falta aplicar la migración 015 en el servidor.' : 'No se pudo registrar el dispositivo: ' + errEs(r.error), true);
+      }
+      loadEscalation();
+      pushSay('Avisos activados en este dispositivo.');
+    } catch (e) {
+      pushSay('No se pudieron activar los avisos en este dispositivo' + (e && e.name === 'NotAllowedError' ? ' (permiso denegado)' : '') + '.', true);
+    } finally { PUSH.busy = false; pushRender(); }
+  }
+  async function pushDisable() {
+    if (PUSH.busy || !PUSH.sub) return;
+    PUSH.busy = true;
+    const ep = PUSH.sub.endpoint;
+    try { await PUSH.sub.unsubscribe(); } catch (_) {}
+    await tryQ(() => sb.from('push_subscriptions').delete().eq('endpoint', ep));
+    PUSH.sub = null; PUSH.busy = false;
+    loadEscalation();
+    pushSay('Avisos desactivados en este dispositivo.');
+  }
+  async function pushTest() {
+    if (PUSH.busy) return;
+    PUSH.busy = true; pushSay('Enviando el aviso de prueba…');
+    let text = 'No se pudo llamar a la función de avisos (¿está publicada?).', bad = true;
+    try {
+      const { data, error } = await sb.functions.invoke('notify', { body: { test_push: true } });
+      if (!error) { bad = false; text = 'Aviso de prueba enviado a ' + ((data && data.push && data.push.sent) || 1) + ' dispositivo(s). Debería aparecer en unos segundos.'; }
+      else {
+        const st = error.context && error.context.status;
+        let code = '';
+        try { code = (await error.context.json()).error || ''; } catch (_) {}
+        text = st === 409 && code === 'sin_dispositivos' ? 'Este usuario no tiene dispositivos activados: tocá "Activar avisos en este dispositivo".'
+          : st === 409 ? 'Los avisos en el dispositivo todavía no están habilitados en el servidor.'
+          : st === 502 ? 'El servicio de avisos del navegador rechazó el envío: desactivá y volvé a activar este dispositivo.'
+          : st === 401 ? 'El servidor no reconoció tu sesión: ingresá de nuevo.' : text;
+      }
+    } catch (_) {}
+    PUSH.busy = false; pushSay(text, bad);
+  }
+  function pushRender() {
+    const host = $('pushBody'), badge = $('pushBadge');
+    if (!host) return;
+    if (badge) badge.textContent = PUSH.ok ? (PUSH.sub ? '· activado' : '· desactivado') : '· no disponible';
+    const out = [];
+    if (!PUSH.ok) {
+      out.push(mk('p', 'state bad', 'Este navegador no permite avisos push. En iPhone o iPad: instalá la app en la pantalla de inicio (Compartir > Agregar a inicio) y abrila desde ahí.'));
+      host.replaceChildren(...out); return;
+    }
+    out.push(mk('p', 'mute', 'Recibí un aviso en este dispositivo cuando entra una alerta, aunque el visor esté cerrado. En iPhone o iPad primero instalá la app en la pantalla de inicio (Compartir > Agregar a inicio) y abrila desde ahí.'));
+    const on = !!PUSH.sub;
+    out.push(mk('p', 'state ' + (on ? '' : 'bad'), on ? 'Activado en este dispositivo' : 'No activado en este dispositivo'));
+    const b = mk('button', on ? 'ghost' : '', on ? 'Desactivar avisos en este dispositivo' : 'Activar avisos en este dispositivo');
+    b.type = 'button'; b.disabled = PUSH.busy; b.id = 'pushToggle';
+    b.addEventListener('click', on ? pushDisable : pushEnable);
+    out.push(rowOf(b));
+    const lv = sel(PUSH_LV, PUSH.level); lv.id = 'pushLevel'; lv.setAttribute('aria-label', 'Nivel mínimo de aviso en este dispositivo');
+    lv.addEventListener('change', async () => {
+      PUSH.level = lv.value;
+      try { localStorage.setItem('casco-push-level', PUSH.level); } catch (_) {}
+      if (PUSH.sub) { const r = await pushSave(); pushSay(r.error ? 'No se pudo cambiar el nivel.' : 'Nivel de aviso actualizado.', !!r.error); }
+    });
+    out.push(fld('Nivel mínimo de aviso en este dispositivo', lv));
+    const t = mk('button', 'ghost', 'Enviar aviso de prueba a mis dispositivos'); t.type = 'button'; t.id = 'pushTest'; t.disabled = PUSH.busy || !on;
+    t.addEventListener('click', pushTest);
+    out.push(rowOf(t));
+    if (PUSH.msg) { const m = mk('p', PUSH.bad ? 'err' : 'okmsg', PUSH.msg); m.setAttribute('role', PUSH.bad ? 'alert' : 'status'); out.push(m); }
+    keepFocus(() => host.replaceChildren(...out));
+  }
+
   // ---- Avisos por correo (admin): destinatarios, activar/desactivar y correo de prueba. Migracion 014; docs/PROTOCOLO-AVISOS.md ----
   // notify_config / notify_recipients solo las lee y escribe un admin (RLS). La clave (webhook_secret) NO se ve ni se cambia desde aqui.
   const NF = { avail: 'unknown', cfg: null, rec: [], err: null, p: null, host: null, msg: '', msgBad: false, busy: false };
@@ -4834,7 +4942,13 @@
     NF.p = p;
     return p;
   }
-  function notifyRender() { if (NF.host && NF.host.isConnected) keepFocus(() => NF.host.replaceChildren(...notifyBody())); }
+  function notifyRender() {
+    if (!NF.host || !NF.host.isConnected) return;
+    // Si el mensaje es un error, lo que el usuario tipeo en los formularios se conserva (no se pierde la clave pegada).
+    const keep = NF.msgBad ? [...NF.host.querySelectorAll('form[data-nf] input, form[data-nf] select')].map(e => [e.form.dataset.nf + ':' + e.type, e.value]) : [];
+    keepFocus(() => NF.host.replaceChildren(...notifyBody()));
+    for (const [k, v] of keep) { const e = [...NF.host.querySelectorAll('form[data-nf] input, form[data-nf] select')].find(x => x.form.dataset.nf + ':' + x.type === k); if (e && v) e.value = v; }
+  }
   function notifySay(msg, bad) { NF.msg = msg; NF.msgBad = !!bad; announce(msg); notifyRender(); }
   function notifyErr(e) {
     if (isAuthErr(e)) { sessionExpired(); return 'Sesión vencida: ingresá de nuevo.'; }
@@ -4865,6 +4979,47 @@
     logAccess('config_change', 'notify_config', { claves: ['webhook_url'] });
     await loadEscalation();
     notifySay(url ? 'Canal de envío guardado.' : 'Canal de envío quitado.');
+  }
+  async function notifyEmail(provider, key, from, name) {
+    const r = await tryQ(() => sb.rpc('notify_set_email', { p_provider: provider, p_api_key: key, p_from: from, p_from_name: name }));
+    if (r.error) return notifySay(r.error.code === '22023' ? String(r.error.message || '').replace(/^notify_set_email: /, '') + '.' : notifyErr(r.error), true);
+    logAccess('config_change', 'notify_config', { claves: ['email_provider'] });
+    await loadEscalation();
+    notifySay(provider ? 'Proveedor de correo guardado.' : 'Proveedor de correo quitado.');
+  }
+  const EM_NAME = { brevo: 'Brevo', resend: 'Resend' };
+  function emailForm(st) {
+    const f = mk('form', 'noprint nf-mail'); f.noValidate = true; f.dataset.nf = 'mail';
+    const prov = sel([['brevo', 'Brevo'], ['resend', 'Resend']], st.email_provider || 'brevo'); prov.setAttribute('aria-label', 'Proveedor de correo');
+    const key = inp('password', '', { maxLength: 300, autocomplete: 'off', placeholder: st.email_ok ? 'Guardada: dejala vacía para conservarla' : 'Pegá la clave de API' });
+    key.setAttribute('aria-label', 'Clave de API del proveedor de correo');
+    const from = inp('email', st.email_from || '', { maxLength: 254, autocomplete: 'off', placeholder: 'avisos@tu-dominio.com' });
+    from.setAttribute('aria-label', 'Correo remitente (el que verificaste en el proveedor)');
+    const nm = inp('text', st.email_from_name || '', { maxLength: 100, autocomplete: 'off', placeholder: 'Casco Inteligente' });
+    nm.setAttribute('aria-label', 'Nombre del remitente');
+    const go = mk('button', '', 'Guardar proveedor'); go.type = 'submit';
+    const g = mk('div', 'grid2'); g.append(fld('Proveedor', prov), fld('Clave de API', key), fld('Correo remitente', from), fld('Nombre del remitente', nm));
+    const help = mk('details', 'fold');
+    help.append(mk('summary', '', '¿Cómo consigo la clave y el remitente?'));
+    const ol = mk('ol', 'nf-help');
+    for (const t of ['Brevo (gratis): creá una cuenta en brevo.com.',
+      'Brevo: en Remitentes y IP agregá el correo desde el que querés enviar y verificalo (te llega un mensaje de confirmación).',
+      'Brevo: en SMTP y API > Claves de API generá una clave v3 y pegala acá. Resend: creá la cuenta en resend.com, verificá tu dominio en Domains y generá la clave en API Keys; el remitente tiene que ser de ese dominio.']) ol.append(mk('li', '', t));
+    help.append(ol);
+    f.append(mk('h4', '', 'Proveedor de correo (Brevo o Resend)'),
+      mk('p', 'state ' + (st.email_ok ? '' : 'bad'), 'Correo: ' + (st.email_ok ? 'configurado (' + (EM_NAME[st.email_provider] || '') + ')' : 'sin configurar')),
+      mk('p', 'state', 'Push: ' + (st.push_ok ? (num(st.push_devices) || 0) + (st.push_devices === 1 ? ' dispositivo' : ' dispositivos') : 'sin habilitar (se habilita al activar los avisos en un dispositivo)')),
+      g, rowOf(go), help);
+    if (st.email_ok) f.querySelector('.row').append(btn('Quitar proveedor', 'ghost', () => notifyEmail('', '', '', ''), 'Quitar el proveedor de correo'));
+    f.addEventListener('submit', e => {
+      e.preventDefault();
+      const fr = from.value.trim().toLowerCase(), k = key.value.trim();
+      if (!MAIL_RE.test(fr)) return notifySay('Escribí el correo remitente (el que verificaste en el proveedor).', true);
+      if (!k && !st.email_ok) return notifySay('Pegá la clave de API del proveedor.', true);
+      key.value = '';
+      notifyEmail(prov.value, k, fr, nm.value.trim());
+    });
+    return f;
   }
   async function notifyToggle() {
     const next = !(NF.cfg && NF.cfg.enabled);
@@ -4911,13 +5066,13 @@
     tg.addEventListener('click', notifyToggle);
     const stN = NOTIFY.st || {};
     const faltan = [];
-    if (stN.channel_ok === false) faltan.push('la URL del canal de envío');
+    if (stN.channel_ok === false && stN.email_ok !== true) faltan.push('un proveedor de correo (Brevo o Resend) o la URL de un canal de envío');
     if (stN.secret_ok === false) faltan.push('la clave interna (se genera sola; recargá)');
     if (!NF.rec.some(r => r.active)) faltan.push('al menos un destinatario');
     out.push(st, rowOf(tg));
     if (faltan.length) { const w = mk('p', 'state bad', 'Para que salgan avisos falta: ' + faltan.join(', ') + '.'); w.setAttribute('role', 'status'); out.push(w); }
     // Canal de envio (flujo de Power Automate / Make / Zapier): la URL se guarda pero NUNCA se vuelve a mostrar ni a leer.
-    const cf = mk('form', 'noprint'); cf.noValidate = true;
+    const cf = mk('form', 'noprint'); cf.noValidate = true; cf.dataset.nf = 'canal';
     const cu = inp('password', '', { maxLength: 500, autocomplete: 'off', placeholder: stN.channel_ok ? 'Configurado: pegá una URL nueva para cambiarla' : 'https://...' });
     cu.setAttribute('aria-label', 'URL del canal de envío (Power Automate / Make / Zapier)');
     const cs = mk('button', '', 'Guardar canal'); cs.type = 'submit';
@@ -4932,6 +5087,7 @@
       notifyChannel(v);
     });
     out.push(cf);
+    out.push(emailForm(stN));
     const list = mk('ul', 'nf-list');
     if (!NF.rec.length) list.append(mk('li', 'mute', 'Todavía no hay destinatarios.'));
     for (const r of NF.rec) {
@@ -4943,7 +5099,7 @@
       list.append(li);
     }
     out.push(list);
-    const f = mk('form', 'noprint'); f.noValidate = true;
+    const f = mk('form', 'noprint'); f.noValidate = true; f.dataset.nf = 'add';
     const em = inp('email', '', { maxLength: 254, autocomplete: 'off', placeholder: 'nombre@empresa.com' }); em.setAttribute('aria-label', 'Correo del nuevo destinatario');
     const sv = sel(NF_SEV, 'alta'); sv.setAttribute('aria-label', 'Nivel desde el que se le avisa');
     const add = mk('button', '', 'Agregar destinatario'); add.type = 'submit';
@@ -5471,7 +5627,7 @@
       return;
     }
     if (!resyncT) resyncT = setInterval(resyncNow, RESYNC_MS);
-    loadEscalation(); loadBroadcasts(); loadGeo(); loadArchive();
+    loadEscalation(); pushInit(); loadBroadcasts(); loadGeo(); loadArchive();
     AS.ready = loadAssistOpen();
     (async () => {   // cascos y posiciones por casco: primero se conocen los registrados
       await Promise.allSettled([loadEquipos()]);

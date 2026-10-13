@@ -6,7 +6,7 @@
  *  - Cross-origin (CDN leaflet/supabase-js, fuentes, tiles): no se tocan.
  *  - NUNCA se cachea: supabase.co, sslip.io (WHEP/video), /auth, /storage, firmadas, no-GET.
  */
-const CACHE_VERSION = 'vigia-2026-10-13e';
+const CACHE_VERSION = 'vigia-2026-10-13f';
 const SHELL = ['./', 'index.html', 'comandos.html', 'config.js', 'app.css', 'app.js',
   'img/vigia-logo-128.png', 'img/vigia-logo-192.png', 'img/vigia-logo.png', 'img/apple-touch-icon.png',
   'img/favicon-32.png', 'img/favicon-64.png', 'manifest.webmanifest'];
@@ -61,5 +61,38 @@ self.addEventListener('fetch', (e) => {
     } catch (_) {
       return (await c.match(req, { ignoreSearch: true })) || Response.error();
     }
+  })());
+});
+
+// ---- Avisos push (Web Push; ver docs/PROTOCOLO-AVISOS.md). Payload: {title, body, url, severity, tag}; sin coordenadas. ----
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) {}
+  const loud = d.severity === 'critica' || d.severity === 'alta';
+  e.waitUntil(self.registration.showNotification(String(d.title || 'Casco Inteligente').slice(0, 120), {
+    body: String(d.body || '').slice(0, 240),
+    tag: String(d.tag || 'casco'),          // mismo evento = misma notificacion (no se duplica; el recordatorio la reemplaza)
+    renotify: true,
+    requireInteraction: loud,               // critica/alta: queda en pantalla hasta que la toquen
+    vibrate: loud ? [300, 150, 300, 150, 600] : [200],
+    icon: 'img/vigia-logo-192.png',
+    badge: 'img/favicon-64.png',
+    data: { url: String(d.url || './') },
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil((async () => {
+    let target = self.registration.scope;
+    try {
+      const u = new URL((e.notification.data && e.notification.data.url) || './', self.registration.scope);
+      if (u.origin === self.location.origin) target = u.href;   // solo el propio visor
+    } catch (_) {}
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of all) {
+      if (c.url.startsWith(self.registration.scope)) { await c.focus(); return; }
+    }
+    await self.clients.openWindow(target);
   })());
 });
