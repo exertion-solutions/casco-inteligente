@@ -30,6 +30,9 @@ Observa `CapPicture`/`CapCamera` de RundeCap y detecta el SOS por teclado.
    crear `config.local.json` (ver `android/app/src/main/java/ar/exertion/casco/Config.java`) y correr
    `tools/instalar-agente.ps1 -Config config.local.json`.
 
+## Dominio propio
+Para publicar el visor en `vigia.exertionai.com` ver `docs/SUBDOMINIO.md` (DNS, GitHub Pages, servidor de video y Supabase, en ese orden).
+
 ## Seguridad
 - Repo publico: **ningun secreto** versionado. `config.local.json` esta en `.gitignore`.
 - La `anon key` es publica; el acceso lo limita RLS por `app_metadata.role` (`device` solo inserta, `viewer` solo lee).
