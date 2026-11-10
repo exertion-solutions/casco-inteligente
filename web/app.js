@@ -308,7 +308,7 @@
     const vstate = mk('span', 'state', ''); vstate.setAttribute('role', 'status'); vstate.setAttribute('aria-live', 'polite');
     const vtime = mk('span', 'mute');
     const vline = mk('span', 'vline'); vline.append(vstate, ' ', vtime);
-    const bMute = mk('button', 'ghost', 'Silenciar'); bMute.type = 'button'; bMute.setAttribute('aria-pressed', 'false');
+    const bMute = mk('button', 'ghost', 'Silenciar mi micrófono'); bMute.type = 'button'; bMute.setAttribute('aria-pressed', 'false');
     bMute.setAttribute('aria-label', 'Silenciar mi micrófono en la llamada con el casco ' + id);
     const bHang = mk('button', 'danger', 'Colgar'); bHang.type = 'button';
     bHang.setAttribute('aria-label', 'Colgar la llamada con el casco ' + id);
@@ -774,6 +774,8 @@
       else if (r.kind === 'busy') endCall(c, 'Error: el casco está ocupado en otra llamada', true, false);
     }
     const addIce = c => p => { try { c.pc.addIceCandidate({ candidate: p.candidate, sdpMid: p.sdpMid, sdpMLineIndex: p.sdpMLineIndex }).catch(() => {}); } catch (_) {} };
+    // Texto del estado en llamada: avisa si el operador solo escucha (microfono silenciado o sin microfono).
+    const callText = c => c.listenOnly ? 'En llamada · solo escuchando (sin micrófono)' : c.muted ? 'En llamada · solo escuchando' : 'En llamada';
     function onConn(c) {
       if (c.ended || !c.pc) return;
       const s = c.pc.connectionState || c.pc.iceConnectionState;
@@ -782,8 +784,8 @@
         if (!c.t0) {
           c.t0 = Date.now(); clearTimeout(c.tAns);
           const tick = () => { vtime.textContent = clock((Date.now() - c.t0) / 1000); };
-          setV('En llamada'); tick(); c.tTick = setInterval(tick, 1000);
-        } else setV('En llamada');
+          setV(callText(c)); tick(); c.tTick = setInterval(tick, 1000);
+        } else setV(callText(c));
       } else if (s === 'disconnected') { c.conn = false; setV('Reconectando…'); }
       else if (s === 'failed') endCall(c, 'Error: se perdió la conexión de audio', true, true);
     }
@@ -791,26 +793,26 @@
       if (L.call) return;
       const c = L.call = { callId: crypto.randomUUID(), seen: new Set(), sentIce: new Set(), iceIn: [], icePend: [], meters: [], offerSent: false, remoteSet: false, muted: false, ended: false };
       bTalk.disabled = true; vrow.classList.remove('hidden'); setCtl(true); vtime.textContent = '';
-      bMute.textContent = 'Silenciar'; bMute.setAttribute('aria-pressed', 'false');
+      bMute.textContent = 'Silenciar mi micrófono'; bMute.setAttribute('aria-pressed', 'false');
       setV('Conectando…');
       try {
-        if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || !window.RTCPeerConnection)
-          throw soft('este navegador no permite llamadas de voz (hace falta HTTPS)');
-        if ((await micPermState()) === 'denied') { showMicHelp(); throw soft('permiso de micrófono denegado: seguí los pasos del cartel'); }
-        try {
-          c.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
-        } catch (e) {
-          const n = e && e.name;
-          if (n === 'NotAllowedError' || n === 'SecurityError') showMicHelp();
-          throw soft(micMsg(n));
+        if (!window.RTCPeerConnection) throw soft('este navegador no permite llamadas de voz (hace falta HTTPS)');
+        // Sin microfono (bloqueado, ausente u ocupado) la llamada sigue en modo "solo escuchar": se oye al casco y no se envia voz.
+        if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) || (await micPermState()) === 'denied') c.listenOnly = true;
+        else {
+          try {
+            c.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+          } catch (_) { c.listenOnly = true; }
         }
-        if (c.ended) { c.stream.getTracks().forEach(t => t.stop()); return; }
+        if (c.ended) { if (c.stream) c.stream.getTracks().forEach(t => t.stop()); return; }
+        if (c.listenOnly) [bMute, lMic, mMic].forEach(e => e.classList.add('hidden'));
         const tok = await getToken();
         if (!tok) throw soft('sin sesión');
         const iceServers = await turnServers(tok);
         if (c.ended) return;
         const pc = c.pc = new RTCPeerConnection({ iceServers });
-        c.stream.getAudioTracks().forEach(t => pc.addTrack(t, c.stream));
+        if (c.stream) c.stream.getAudioTracks().forEach(t => pc.addTrack(t, c.stream));
+        else pc.addTransceiver('audio', { direction: 'recvonly' });
         pc.ontrack = e => {
           const s = (e.streams && e.streams[0]) || new MediaStream([e.track]);
           remote.srcObject = s;
@@ -826,7 +828,7 @@
         };
         pc.onconnectionstatechange = () => onConn(c);
         pc.oniceconnectionstatechange = () => onConn(c);
-        meterOf(c, c.stream, mMic);
+        if (c.stream) meterOf(c, c.stream, mMic);
         c.tLvl = setInterval(() => { for (const [an, buf, el] of c.meters) el.value = c.muted && el === mMic ? 0 : level(an, buf); }, 100);
         await pc.setLocalDescription(await pc.createOffer());
         await gathered(pc, 1500);
@@ -862,8 +864,9 @@
       const c = L.call; if (!c) return;
       c.muted = !c.muted;
       if (c.stream) c.stream.getAudioTracks().forEach(t => { t.enabled = !c.muted; });
-      bMute.textContent = c.muted ? 'Activar micrófono' : 'Silenciar';
+      bMute.textContent = c.muted ? 'Activar mi micrófono' : 'Silenciar mi micrófono';
       bMute.setAttribute('aria-pressed', String(c.muted));
+      if (c.conn) setV(callText(c));
     });
     // Al salir de la pagina: hangup con fetch keepalive (el insert de supabase-js podria cancelarse).
     L.leave = () => {
