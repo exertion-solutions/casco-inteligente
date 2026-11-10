@@ -384,9 +384,11 @@
       await gathered(pc, 2000);
       if (gen !== L.gen) throw Object.assign(new Error('cancelado'), { fatal: true });
       let res;
+      const ac = new AbortController(), acT = setTimeout(() => ac.abort(), 8000);   // un servidor de video que no contesta no deja el intento colgado
       try {
-        res = await fetch(base, { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp });
-      } catch (e) { throw new Error('sin conexión con el servidor'); }
+        res = await fetch(base, { method: 'POST', headers: { Authorization: 'Bearer ' + tok, 'Content-Type': 'application/sdp' }, body: pc.localDescription.sdp, signal: ac.signal });
+      } catch (e) { throw new Error('sin conexión con el servidor de video'); }
+      finally { clearTimeout(acT); }
       if (res.status === 401 || res.status === 403) throw Object.assign(new Error('sin sesión o sin permiso para ver el video (' + res.status + ')'), { fatal: true });
       if (res.status !== 201 && !res.ok) throw new Error('el servidor respondió ' + res.status);
       const loc = res.headers.get('Location');
@@ -1542,7 +1544,7 @@
   });
   $('evacCancel').addEventListener('click', () => { closeEvac(); $('btnEvac').focus(); });
   $('evacGo').addEventListener('click', async () => {
-    const typed = $('evacType').value.trim().toUpperCase() === 'EVACUACION';
+    const typed = $('evacType').value.trim().normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase() === 'EVACUACION';   // vale con o sin tilde
     const now = Date.now();
     if (!typed) {
       if (!armAt || now - armAt > 3000) {   // primer toque: arma la cuenta de 3 s
@@ -2776,7 +2778,7 @@
   // La sirena NO depende de un setInterval (Chrome lo estrangula en pestañas ocultas): las ráfagas se programan
   // por adelantado en el reloj del AudioContext y se re-arman en cada 'ended', en visibilitychange y en el intervalo.
   let sirenT = null, sirenMuted = false, overlayHidden = false, titleFlip = false;
-  let sirenOut = null, sirenNext = 0, ovPrev = null, notifAsked = false;
+  let sirenOut = null, sirenNext = 0, ovPrev = null, ovShownAt = 0, notifAsked = false;
   const notifs = new Set();
   const SIREN_PERIOD = 1.7, SIREN_AHEAD = 45;   // s
   const audioOn = () => !!audioCtx && audioCtx.state === 'running';
@@ -2895,7 +2897,7 @@
     sosOv.hidden = !show;
     if (show) closeDlg();   // el cartel SOS manda: se cierran dialogos (foto, configuracion, confirmaciones)
     $('app').inert = show;
-    if (show) { ovPrev = document.activeElement; (ovAtend.hidden ? ovClose : ovAtend).focus({ preventScroll: true }); }
+    if (show) { ovPrev = document.activeElement; ovShownAt = Date.now(); (ovAtend.hidden ? ovClose : ovAtend).focus({ preventScroll: true }); }
     else {
       const p = ovPrev; ovPrev = null;
       if (p && p !== document.body && p.isConnected && typeof p.focus === 'function') p.focus({ preventScroll: true });
@@ -2915,6 +2917,7 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !sosOv.hidden) e.preventDefault(); });
   ovNote.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ovAtend.click(); } });
   ovAtend.addEventListener('click', () => {
+    if (Date.now() - ovShownAt < 800) return;   // el cartel recien aparecio y tomo el foco: un Enter/Espacio que iba a otro campo no atiende la alerta
     const top = topPending(); if (!top || ovAtend.disabled) return;
     attend(top, ovAtend, ovNote, ovErr);
   });
@@ -3575,7 +3578,9 @@
       if (p.errors.length) { err.textContent = p.errors.join(' '); return; }
       go.disabled = true;
       let res;
-      res = await tryQ(() => sb.from('device_config').upsert({ device_id: dev, config: p.cfg }, { onConflict: 'device_id' }));
+      // update y, si no habia fila, insert: un upsert incluye device_id en el DO UPDATE y el servidor solo concede update(config) -> 42501
+      res = await tryQ(() => sb.from('device_config').update({ config: p.cfg }).eq('device_id', dev).select('device_id'));
+      if (!res.error && !(res.data && res.data.length)) res = await tryQ(() => sb.from('device_config').insert({ device_id: dev, config: p.cfg }));
       go.disabled = false;
       if (tableMissing(res)) { err.textContent = MISSING_TXT; return; }
       if (res.error) {
