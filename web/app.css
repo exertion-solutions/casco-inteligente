@@ -601,7 +601,13 @@ button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
 /* barra de pestanas deslizable cuando no entran (movil / tira) */
 .nav { overflow-x: auto; scrollbar-width: none; }
 .nav::-webkit-scrollbar { display: none; }
-@media (max-width: 1023px) { .nav [role="tab"] { flex: 1 0 60px; } }
+@media (max-width: 1023px) {
+  .nav [role="tab"] { flex: 1 0 60px; }
+  /* pista de que hay mas pestañas a los lados: el borde se desvanece (clases de syncNavFade en app.js) */
+  .nav.more-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent); }
+  .nav.more-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 40px), transparent); }
+  .nav.more-l.more-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); mask-image: linear-gradient(to right, transparent, #000 40px, #000 calc(100% - 40px), transparent); }
+}
 @media (max-width: 420px) {
   .nav [role="tab"] { flex: 1 0 auto; padding: 6px 3px; font-size: 11px; }
   .nav [role="tab"] svg { width: 22px; height: 22px; }

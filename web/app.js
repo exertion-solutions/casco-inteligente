@@ -362,7 +362,21 @@
       const loc = L.loc; L.loc = null; if (!loc) return;
       try { await fetch(loc, { method: 'DELETE', headers: { Authorization: 'Bearer ' + await getToken() }, keepalive: true }); } catch (_) {}
     }
-    function fail(msg) { closePc(); setState('Error: ' + msg, true); bStart.disabled = false; bStop.disabled = true; bRetry.classList.remove('hidden'); }
+    // Presencia de visores (Realtime): "Detener" solo le corta el video al casco si nadie mas lo esta mirando desde otro panel.
+    // Si la presencia no esta disponible se comporta como siempre (manda el stop).
+    const viewKey = crypto.randomUUID();
+    function joinViewers() {
+      if (L.vch) return;
+      try {
+        const ch = L.vch = sb.channel('live-view-' + id, { config: { presence: { key: viewKey } } });
+        ch.on('presence', { event: 'sync' }, () => {}).subscribe(s => {
+          if (s === 'SUBSCRIBED' && L.vch === ch) { try { Promise.resolve(ch.track({ at: Date.now() })).catch(() => {}); } catch (_) {} }
+        });
+      } catch (_) { L.vch = null; }
+    }
+    function leaveViewers() { const ch = L.vch; L.vch = null; if (ch) { try { sb.removeChannel(ch); } catch (_) {} } }
+    const otherViewers = () => { try { return L.vch ? Object.keys(L.vch.presenceState()).filter(k => k !== viewKey).length : 0; } catch (_) { return 0; } };
+    function fail(msg) { closePc(); leaveViewers(); setState('Error: ' + msg, true); bStart.disabled = false; bStop.disabled = true; bRetry.classList.remove('hidden'); }
 
     async function whepOnce(gen) {
       const tok = await getToken();
@@ -420,10 +434,12 @@
         const s = L.pc && L.pc.connectionState;
         if ((s === 'failed' || s === 'closed') && gen === L.gen) { setState('Reconectando…'); closePc(); deleteSession().then(() => run(gen)); }
       };
-      const tKeep = Date.now();   // el casco corta solo si el 'start' (visible 2 min por RLS) vence: se renueva mientras se mira
+      // El casco corta solo si el 'start' (visible 2 min por RLS) vence: se renueva mientras el video siga abierto,
+      // tambien con la pestaña oculta (si no, minimizar 2 min cortaba el video y la grabacion). Se deja de renovar con Detener o al tope.
+      const tKeep = Date.now();
       clearInterval(L.keepT);
       L.keepT = setInterval(() => {
-        if (gen !== L.gen || document.hidden) return;
+        if (gen !== L.gen) return;
         if (Date.now() - tKeep > KEEP_START_MAX_MS) { clearInterval(L.keepT); L.keepT = null; return; }
         try { sb.from('stream_commands').insert({ device_id: id, action: 'start' }).then(() => {}, () => {}); } catch (_) {}
       }, KEEP_START_MS);
@@ -474,6 +490,7 @@
       bRetry.classList.add('hidden');
       bStart.disabled = true; bStop.disabled = false;
       setState('Solicitando…');
+      joinViewers();
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'start' });
       if (gen !== L.gen) return;
       if (error) { fail('no se pudo solicitar: ' + errEs(error)); return; }
@@ -484,7 +501,9 @@
       bStart.disabled = false; bStop.disabled = true;
       closePc(); video.srcObject = null; wrap.classList.add('hidden'); bRetry.classList.add('hidden');
       setState('Deteniendo…');
+      const others = otherViewers(); leaveViewers();
       await deleteSession();
+      if (others) { setState('Detenido en este panel. Otro visor sigue mirando: el casco sigue transmitiendo.'); return; }
       const { error } = await sb.from('stream_commands').insert({ device_id: id, action: 'stop' });
       if (error) setState('Error: no se pudo enviar stop: ' + errEs(error), true); else setState('Detenido');
     };
@@ -910,6 +929,7 @@
   // La mas grave primero; a igual gravedad, la que lleva mas tiempo esperando.
   const topPending = () => [...pending.values()].sort((a, c) => sevOf(c) - sevOf(a) || a.created_at.localeCompare(c.created_at))[0];
   const loudCount = () => { let n = 0; for (const e of pending.values()) if (sevOf(e) >= SEV_LOUD) n++; return n; };
+  const loudFor = dev => { for (const e of pending.values()) if (String(e.device_id) === String(dev) && sevOf(e) >= SEV_LOUD) return true; return false; };
   const nAlertas = n => n + (n === 1 ? ' alerta' : ' alertas');
   const alertLabel = ev => {
     if (ev.type === 'fall') return 'CAÍDA';
@@ -1784,7 +1804,7 @@
   // REGLA: nunca select('*') sobre devices/people (grants por columna). Se piden columnas por nombre
   // o las vistas devices_full / people_full (esta ultima solo devuelve filas al rol admin).
   // ======================================================================
-  let ROLE = 'viewer';
+  let ROLE = 'viewer', ROLE_OK = true;   // ROLE_OK false: la cuenta no trae un rol reconocido (se trata como supervisor, pero el servidor no le muestra datos)
   const EQ = { devices: [], gone: new Set(), people: [], groups: [], assigns: [], err: {}, limited: false, sub: 'dev', loaded: false };
   const DEV_COLS = 'device_id,name,model,group_id,sector,status,created_at,updated_at,deleted_at';
   const DEV_FULL = 'device_id,imei,name,model,group_id,sector,sim1_iccid,sim2_iccid,sim_line,bt_headset_mac,status,notes,created_at,updated_at,deleted_at';
@@ -2938,7 +2958,9 @@
     if (!pending.size || !loudCount()) {   // sin pendientes, o solo avisos de nivel medio: ni sirena ni cartel
       clearInterval(sirenT); sirenT = null; sirenMuted = false; overlayHidden = false;
       document.title = (pending.size ? '(' + pending.size + ') ' : '') + 'MORRION · Casco Inteligente';
-      stopSiren(); setOverlay(false); ovMute.disabled = false; closeNotifs(); ovCur = null; return;
+      stopSiren(); setOverlay(false); ovMute.disabled = false; closeNotifs(); ovCur = null;
+      pumpSaveQueue();   // ya no hay alertas graves: se ofrecen los videos que quedaron en cola
+      return;
     }
     const last = topPending();   // la mas grave; a igual gravedad, la mas vieja
     if (ovCur !== last.id) { ovCur = last.id; ovNote.value = ''; ovErr.textContent = ''; }
@@ -2949,6 +2971,7 @@
     ovMore.textContent = other > 0 ? (other === 1 ? 'Hay otra alerta más sin atender.' : 'Hay otras ' + other + ' alertas más sin atender.') : '';
     ovHint.hidden = audioOn();   // audio bloqueado: el cartel avisa que hay que tocar la pantalla
     setOverlay(!overlayHidden);
+    pumpSaveQueue();   // se atendio la alerta de un casco: su video en cola ya se puede ofrecer
     if (!sirenT) { sirenT = setInterval(alarmTick, 1700); alarmTick(); } else pumpSiren();
   }
   // Tono corto y distinto (seno, 2 notas) para avisos de nivel medio: no es la sirena.
@@ -3025,7 +3048,10 @@
   }
   function pumpSaveQueue() {
     if (!saveCur && saveQ.length) { saveCur = saveQ.shift(); }
-    const show = !!saveCur && sosOv.hidden;   // el cartel SOS manda: el de guardado queda en cola
+    // El cartel SOS manda: el de guardado queda en cola. Tambien espera mientras ESE casco tenga una alerta grave sin atender
+    // (aunque el operador haya pasado a "Ver el panel"): cada corte de video durante su SOS no debe tapar el panel con este cartel.
+    const show = !!saveCur && sosOv.hidden && (saveCur.shown || !loudFor(saveCur.devId));
+    if (show) saveCur.shown = true;
     if (show) renderSave();
     if (show === !saveOv.hidden) return;
     saveOv.hidden = !show;
@@ -3609,7 +3635,8 @@
     if (cur) q = q.or('created_at.lt.' + cur.at + ',and(created_at.eq.' + cur.at + ',' + idCol + '.lt.' + cur.id + ')');
     return q.order('created_at', { ascending: false }).order(idCol, { ascending: false });
   }
-  const normView = r => ({ id: String(r.event_id), at: r.occurred_at || r.created_at, dev: r.device_id, type: r.type, payload: r.payload, lat: numOf(r.lat), lng: numOf(r.lng), att: true,
+  // cat: created_at crudo. El cursor de pagina usa ESTA fecha (la misma del filtro y del orden), no la del hecho (at).
+  const normView = r => ({ id: String(r.event_id), at: r.occurred_at || r.created_at, cat: r.created_at, dev: r.device_id, type: r.type, payload: r.payload, lat: numOf(r.lat), lng: numOf(r.lng), att: true,
     ackAt: r.acked_at || null, ackBy: r.acked_by_email || '', note: r.note || '',
     tta: numOf(r.tta_s) != null ? numOf(r.tta_s) : (r.acked_at ? Math.max(0, (new Date(r.acked_at) - new Date(r.created_at)) / 1000) : null) });
   const normEvent = (e, a) => ({ id: String(e.id), at: e.created_at, dev: e.device_id, type: e.type, payload: e.payload, lat: numOf(e.lat), lng: numOf(e.lng), att: needsAttention(e),
@@ -3917,7 +3944,7 @@
         const r = await fetchPage(o, st.applied, st.cursors[page], PAGE_N);
         st.page = page; st.rows = r.rows; st.more = r.more; st.src = r.src; st.loaded = true;
         st.sel = new Set([...st.sel].filter(id => r.rows.some(x => x.id === id)));
-        if (r.more) { const l = r.rows[r.rows.length - 1]; st.cursors[page + 1] = { at: l.at, id: l.id }; }
+        if (r.more) { const l = r.rows[r.rows.length - 1]; st.cursors[page + 1] = { at: l.cat || l.at, id: l.id }; }
         setStat((r.rows.length ? '' : 'Sin resultados. ') + (o.view && r.src === 'eventos' ? 'La vista de reportes del servidor todavía no está disponible: se calcula desde los eventos.' : ''));
       } catch (e) {
         if (isAuthErr(e)) { sessionExpired(); setStat('Sesión vencida.', true); }
@@ -3961,7 +3988,7 @@
           all.push(...r.rows);
           if (!r.more) break;
           if (i === CSV_MAX_PAGES - 1) trunc = true;
-          const l = r.rows[r.rows.length - 1]; cur = { at: l.at, id: l.id };
+          const l = r.rows[r.rows.length - 1]; cur = { at: l.cat || l.at, id: l.id };
         }
         csvDownload(o.csv + '_' + today() + '.csv', CSV_HEAD, all.map(csvRow));
         setStat('CSV exportado: ' + all.length + ' filas' + (ARC.show ? ' (con archivados)' : '') + (trunc ? ' (tope de ' + CSV_PAGE * CSV_MAX_PAGES + ': acotá las fechas para ver el resto)' : '') + '.');
@@ -5452,6 +5479,14 @@
   }
 
   // ---- Roles en la UI (el servidor tambien lo exige por RLS): admin hace todo; supervisor (viewer) mira, atiende y manda mensajes ----
+  // Barra de pestañas deslizable (celular / tira): desvanece el borde hacia donde quedan pestañas fuera de vista.
+  const syncNavFade = () => {
+    const nav = $('mainNav'), more = nav.scrollWidth - nav.clientWidth;
+    nav.classList.toggle('more-r', more > 4 && nav.scrollLeft < more - 4);
+    nav.classList.toggle('more-l', more > 4 && nav.scrollLeft > 4);
+  };
+  $('mainNav').addEventListener('scroll', syncNavFade, { passive: true });
+  if (window.ResizeObserver) new ResizeObserver(syncNavFade).observe($('mainNav'));
   function applyRole() {
     const adm = isAdmin(), aud = isAuditor();
     const who = $('who'), em = who.dataset.email || '', role = roleName();
@@ -5468,6 +5503,8 @@
     for (const [id, hide] of [['tabLive', aud], ['tabMap', aud], ['tabAud', !(adm || aud)]]) $(id).classList.toggle('hidden', hide);
     for (const id of ['orders', 'testMic']) $(id).classList.toggle('hidden', aud);
     $('toolbarAud').classList.toggle('hidden', !aud);
+    $('toolbarNoRole').classList.toggle('hidden', ROLE_OK);
+    syncNavFade();   // el rol cambia que pestañas se ven
     ovAtend.hidden = ovLive.hidden = ovNoteL.hidden = aud;
     ovMute.hidden = false;
   }
@@ -5576,7 +5613,7 @@
     }
     lives.clear();
     const lv = $('lives'); if (lv) { lv.replaceChildren(); lv.classList.add('hidden'); }
-    ROLE = 'viewer';
+    ROLE = 'viewer'; ROLE_OK = true;
     for (const c of [channel, chOrders, chGeo, AS.ch]) if (c) { try { sb.removeChannel(c); } catch (_) {} }
     channel = chOrders = chGeo = null; AS.ch = null; clearTimeout(asReloadT);
   }
@@ -5692,6 +5729,7 @@
       let r = session.user && session.user.app_metadata && session.user.app_metadata.role;
       if (!r) { try { const c = JSON.parse(atob(String(session.access_token).split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); r = c.app_metadata && c.app_metadata.role; } catch (_) {} }
       ROLE = r === 'admin' ? 'admin' : r === 'auditor' ? 'auditor' : 'viewer';
+      ROLE_OK = r === 'admin' || r === 'auditor' || r === 'viewer';
       MY_ID = session.user && session.user.id ? String(session.user.id) : '';
     }
     resetT4(); applyRole();
