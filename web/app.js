@@ -331,7 +331,7 @@
     const recTime = mk('span', 'mute', '');
     const recNote = mk('p', 'mute', ''); recNote.style.margin = '0';
     rrow.append(bRec, bShot, bAgain, lMicRec, lCasRec, recTime, recState);
-    body.append(row, rrow, recNote, asistMini(id), cmdBar(id), vrow, wrap);
+    body.append(wrap, vrow, row, rrow, recNote, asistMini(id), cmdBar(id));   // el video primero: es lo que se vino a ver; los controles van debajo
     $('lives').append(sec); $('lives').classList.remove('hidden');
 
     const L = { id, sec, bStart, bStop, gen: 0, pc: null, loc: null, statsTimer: null };
@@ -1664,7 +1664,19 @@
     $('histLive').textContent = histNew === 1 ? 'Hay una novedad nueva en Historial' : 'Hay ' + histNew + ' novedades nuevas en Historial';
     $('tabDone').setAttribute('aria-label', 'Historial, ' + (histNew === 1 ? '1 novedad nueva' : histNew + ' novedades nuevas'));
   }
+  // Celular: las pestañas secundarias viven en el menu "Más" (#navSec); en pantallas mas anchas siguen en la barra (CSS).
+  const SEC_TABS = ['asis', 'const', 'rep', 'aud', 'cmd'];
+  const moreOpen = () => $('mainNav').classList.contains('more-open');
+  const setMore = open => { $('mainNav').classList.toggle('more-open', open); $('tabMore').setAttribute('aria-expanded', String(open)); };
+  $('tabMore').addEventListener('click', e => { e.stopPropagation(); setMore(!moreOpen()); });
+  document.addEventListener('click', e => { if (moreOpen() && !$('navSec').contains(e.target)) setMore(false); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && moreOpen()) { setMore(false); $('tabMore').focus(); } });
+  // El boton "Más" lleva un punto si alguna pestaña del menu tiene una insignia (p. ej. una asistencia abierta).
+  const syncMoreDot = () => $('navMoreDot').classList.toggle('hidden', !$('navSec').querySelector('.tab-badge:not(.hidden)'));
+  if (window.MutationObserver) new MutationObserver(syncMoreDot).observe($('navSec'), { subtree: true, attributes: true, attributeFilter: ['class'] });
   function showTab(name) {
+    setMore(false); $('tabMore').classList.toggle('on', SEC_TABS.includes(name));
+    document.body.dataset.tab = name;   // la barra de pruebas y los avisos del dispositivo solo se muestran en Centro (CSS)
     const act = TABS.find(x => x[0] === name) || TABS[0];
     for (const [k, t, pn] of TABS) {
       const on = k === name;

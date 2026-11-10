@@ -75,6 +75,11 @@
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.2a6.5 6.5 0 0 1 3.5 5.8"/></svg>
         <span>Equipos</span>
       </button>
+      <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
+        <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden">0</span>
+      </button>
+      <div class="nav-sec" id="navSec" role="presentation">
       <button type="button" role="tab" id="tabAsis" aria-selected="false" aria-controls="panelAsis" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1"/><rect x="17" y="14" width="4" height="6" rx="1"/><path d="M19 20a4 4 0 0 1-4 2h-2"/></svg>
         <span>Asistencia</span><span id="navAsis" class="tab-badge med hidden">0</span>
@@ -82,10 +87,6 @@
       <button type="button" role="tab" id="tabConst" aria-selected="false" aria-controls="panelConst" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="12" height="17" rx="1"/><path d="M9 4h6v3H9zM9 14l2 2 4-4"/></svg>
         <span>Constancias</span>
-      </button>
-      <button type="button" role="tab" id="tabDone" aria-selected="false" aria-controls="panelDone" tabindex="-1">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>
-        <span>Historial</span><span id="doneCount" class="count">0</span><span id="navHistNew" class="tab-badge hidden">0</span>
       </button>
       <button type="button" role="tab" id="tabRep" aria-selected="false" aria-controls="panelRep" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h7"/></svg>
@@ -98,6 +99,11 @@
       <button type="button" role="tab" id="tabCmd" aria-selected="false" aria-controls="panelCmd" tabindex="-1">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
         <span>Comandos</span>
+      </button>
+      </div>
+      <button type="button" id="tabMore" class="nav-more" aria-haspopup="true" aria-expanded="false" aria-controls="navSec">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>
+        <span>Más</span><span id="navMoreDot" class="tab-badge med hidden" aria-hidden="true">•</span>
       </button>
     </nav>
 

@@ -206,6 +206,38 @@ main { padding: var(--sp-4); }
   .top-tools { gap: var(--sp-2); }
   .clock { display: none; }
 }
+/* Pestañas secundarias (#navSec) y boton "Más". En >= 768 px van en linea con el orden de siempre (display: contents + order);
+   en celular quedan cinco pestañas en la barra y las secundarias se abren en un menu sobre la barra. */
+.nav-sec { display: contents; }
+.nav .nav-more { display: none; }
+@media (min-width: 768px) {
+  #tabMain { order: 1; } #tabLive { order: 2; } #tabMap { order: 3; } #tabEq { order: 4; } #tabAsis { order: 5; }
+  #tabConst { order: 6; } #tabDone { order: 7; } #tabRep { order: 8; } #tabAud { order: 9; } #tabCmd { order: 10; }
+}
+@media (max-width: 767px) {
+  .nav, .nav.more-l, .nav.more-r { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+  .nav .nav-more {
+    display: flex; background: transparent; color: var(--mute); border: 0; border-radius: 0;
+    flex-direction: column; gap: 2px; font-size: var(--fs-1); font-weight: 600; min-height: 56px; flex: 1 0 60px; padding: 6px 4px; position: relative;
+  }
+  .nav .nav-more:hover { background: var(--surface-2); filter: none; }
+  .nav .nav-more.on, .nav .nav-more[aria-expanded="true"] { color: var(--ink); }
+  .nav .nav-more.on svg, .nav .nav-more[aria-expanded="true"] svg { color: var(--accent); }
+  .nav .nav-more.on::after { content: ""; position: absolute; left: 12%; right: 12%; top: 0; height: 3px; background: var(--accent); }
+  .nav-sec {
+    display: none; position: fixed; right: 8px; bottom: calc(var(--bar-h) + env(safe-area-inset-bottom) + 8px); z-index: 31;
+    min-width: 220px; flex-direction: column; padding: 4px 0;
+    background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r); box-shadow: 0 8px 24px rgba(0, 0, 0, .35);
+  }
+  .nav.more-open .nav-sec { display: flex; }
+  .nav .nav-sec [role="tab"] { flex: none; flex-direction: row; justify-content: flex-start; gap: var(--sp-3); font-size: var(--fs-3); padding: 0 var(--sp-4); min-height: 48px; width: 100%; }
+  .nav .nav-sec [role="tab"][aria-selected="true"] { background: var(--surface-2); }
+  .nav .nav-sec [role="tab"][aria-selected="true"]::after { left: 0; right: auto; top: 6px; bottom: 6px; width: 3px; height: auto; }
+  .nav .nav-sec .tab-badge { position: static; margin-left: auto; }
+}
+/* La barra de pruebas (sirena / microfono) y los avisos de este dispositivo solo ocupan lugar en Centro. */
+body[data-tab]:not([data-tab="main"]) .content > .toolbar,
+body[data-tab]:not([data-tab="main"]) #pushBox { display: none; }
 @media (min-width: 768px) and (max-width: 1023px) {
   .nav { border-bottom: 1px solid var(--line); margin: calc(-1 * var(--sp-4)) calc(-1 * var(--sp-4)) var(--sp-4); background: var(--surface); }
   .nav [role="tab"] { flex-direction: row; font-size: var(--fs-3); gap: var(--sp-2); }
